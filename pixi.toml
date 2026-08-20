@@ -38,4 +38,4 @@ actionlint = "find .github/workflows -type f \\( -name '*.yml' -o -name '*.yaml'
 schemas = "python -m social_media_subscriber.schemas.generate"
 schemas-check = { depends-on = ["schemas"], cmd = "git diff --exit-code -- schemas" }
 subscriber = "python -m social_media_subscriber"
-verify = { depends-on = ["format-check", "lint", "typecheck", "test", "actionlint"] }
+verify = { depends-on = ["format-check", "lint", "typecheck", "test", "actionlint", "schemas-check"] }

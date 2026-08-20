@@ -51,6 +51,11 @@ def test_pixi_environment_and_required_tasks_are_declared() -> None:
     for task in REQUIRED_TASKS:
         assert f"{task} =" in pixi_manifest
 
+    verify_task = next(
+        line for line in pixi_manifest.splitlines() if line.startswith("verify =")
+    )
+    assert '"schemas-check"' in verify_task
+
 
 def test_basedpyright_resolves_the_pixi_default_environment() -> None:
     # Given / When
