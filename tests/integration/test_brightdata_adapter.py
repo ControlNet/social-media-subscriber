@@ -20,6 +20,9 @@ from social_media_subscriber.adapters.instance import (
 from social_media_subscriber.adapters.router_outcomes import (
     AccountRouteFailed,
     AccountRouteFailureCategory,
+    InstanceHealthStatus,
+    RouterDiagnosticCategory,
+    RouterRunStatus,
 )
 from social_media_subscriber.bootstrap import bootstrap_runtime
 from social_media_subscriber.domain.account import Account
@@ -151,7 +154,7 @@ async def test_person_and_company_identity_use_only_stable_numeric_ids() -> None
         ),
     )
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), _WINDOW, _NOW
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
     )
 
     # When
@@ -181,7 +184,7 @@ async def test_unknown_non_numeric_identity_is_unresolved_and_unpersisted() -> N
         person_identities=(BrightDataPersonIdentity(linkedin_num_id="slug-fallback"),)
     )
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), _WINDOW, _NOW
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
     )
 
     # When
@@ -204,7 +207,7 @@ async def test_adapter_migrates_slug_alias_without_changing_stable_identity() ->
         )
     )
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), _WINDOW, _NOW
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
     )
 
     # When
@@ -236,7 +239,7 @@ async def test_adapter_rejects_known_alias_returned_with_another_stable_id() -> 
         )
     )
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), _WINDOW, _NOW
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
     )
 
     # When / Then
@@ -253,7 +256,7 @@ async def test_known_alias_skips_identity_call_and_can_collect_zero_posts() -> N
     account = _account(AccountKind.PERSON, "101", "known")
     client = SyntheticBrightDataClient()
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), _WINDOW, _NOW
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
     )
 
     # When
@@ -288,7 +291,7 @@ async def test_collection_preserves_sources_and_counts_nonoriginals() -> None:
         company_posts=(_post(company, "company-image", images=True),),
     )
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), _WINDOW, _NOW
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
     )
 
     # When
@@ -325,7 +328,7 @@ async def test_mixed_returned_account_aborts_without_partial_batch() -> None:
     other = _account(AccountKind.PERSON, "202", "other")
     client = SyntheticBrightDataClient(person_posts=(_post(other, "wrong-owner"),))
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), _WINDOW, _NOW
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
     )
 
     # When
@@ -346,7 +349,7 @@ async def test_accepted_snapshot_failure_propagates_without_retrigger() -> None:
         )
     )
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), _WINDOW, _NOW
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
     )
 
     # When
@@ -363,7 +366,7 @@ async def test_adapter_collect_returns_complete_router_outcome() -> None:
     account = _account(AccountKind.PERSON, "101", "person")
     client = SyntheticBrightDataClient(person_posts=(_post(account, "original"),))
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), _WINDOW, _NOW
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
     )
 
     # When
@@ -372,9 +375,9 @@ async def test_adapter_collect_returns_complete_router_outcome() -> None:
     # Then
     assert isinstance(attempt, BatchCompleted)
     assert isinstance(attempt.outcomes[0], CollectedAccount)
-    assert attempt.outcomes == (
-        CollectedAccount(account.id, (attempt.outcomes[0].posts[0],)),
-    )
+    assert attempt.outcomes[0].account_id == account.id
+    assert len(attempt.outcomes[0].posts) == 1
+    assert len(attempt.outcomes[0].source_records) == 1
 
 
 @pytest.mark.anyio
@@ -384,7 +387,7 @@ async def test_schema_failure_maps_to_abort_without_diagnostics_canaries() -> No
     failure = BrightDataError(BrightDataErrorCategory.SCHEMA)
     client = SyntheticBrightDataClient(failure=failure)
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), _WINDOW, _NOW
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
     )
 
     # When
@@ -430,3 +433,283 @@ async def test_empty_bootstrap_pool_reports_exhaustion_without_client_creation()
         AccountRouteFailed(account.id, AccountRouteFailureCategory.POOL_EXHAUSTED),
     )
     assert clients == []
+
+
+@pytest.mark.anyio
+async def test_public_runtime_routes_identity_through_existing_instance_pool() -> None:
+    # Given
+    known = _account(AccountKind.PERSON, "100", "known")
+    locators = (
+        parse_linkedin_locator(known.profile_url),
+        parse_linkedin_locator("https://linkedin.com/in/new-person"),
+        parse_linkedin_locator("https://linkedin.com/company/new-company"),
+    )
+    client = SyntheticBrightDataClient(
+        person_identities=(
+            BrightDataPersonIdentity(
+                linkedin_num_id="101",
+                url=locators[1].canonical_url,
+            ),
+        ),
+        company_identities=(
+            BrightDataCompanyIdentity(
+                company_id="202",
+                url=locators[2].canonical_url,
+            ),
+        ),
+    )
+    runtime = bootstrap_runtime(
+        AccountInput(
+            locators=locators,
+            bright_data_api_keys=(SecretStr("synthetic-one"),),
+        ),
+        BrightDataAdapterConfig(_WINDOW, _NOW),
+        client_builder=lambda _credential: client,
+    )
+
+    # When
+    result = await runtime.router.resolve_identities(locators, (known,))
+
+    # Then
+    assert result.aggregate.resolved_locators == 3
+    assert result.aggregate.unresolved_locators == 0
+    resolved_ids = [
+        outcome.account.id
+        for outcome in result.outcomes
+        if isinstance(outcome, ResolvedAccountIdentity)
+    ]
+    assert resolved_ids == [
+        known.id,
+        "linkedin:person:101",
+        "linkedin:company:202",
+    ]
+    assert [call.kind for call in client.calls] == [
+        AccountKind.PERSON,
+        AccountKind.COMPANY,
+    ]
+
+
+@pytest.mark.anyio
+async def test_public_runtime_preserves_source_records_and_skips_through_router() -> (
+    None
+):
+    # Given
+    account = _account(AccountKind.PERSON, "101", "person")
+    client = SyntheticBrightDataClient(
+        person_posts=(
+            _post(account, "original"),
+            _post(account, "reply", "reply"),
+        )
+    )
+    runtime = bootstrap_runtime(
+        AccountInput(
+            locators=(parse_linkedin_locator(account.profile_url),),
+            bright_data_api_keys=(SecretStr("synthetic-one"),),
+        ),
+        BrightDataAdapterConfig(_WINDOW, _NOW),
+        client_builder=lambda _credential: client,
+    )
+
+    # When
+    result = await runtime.router.route(
+        (account,),
+        AdapterOperation.COLLECT_ACCOUNT_POSTS,
+    )
+
+    # Then
+    assert len(result.posts) == 1
+    assert [record.platform_post_id for record in result.source_records] == [
+        "original",
+        "reply",
+    ]
+    assert result.skipped.replies == 1
+
+
+@pytest.mark.anyio
+async def test_identity_router_known_alias_requires_zero_provider_io() -> None:
+    # Given
+    known = _account(AccountKind.PERSON, "100", "known")
+    locator = parse_linkedin_locator(known.profile_url)
+    client = SyntheticBrightDataClient(
+        failure=BrightDataError(BrightDataErrorCategory.SCHEMA)
+    )
+    runtime = bootstrap_runtime(
+        AccountInput(
+            locators=(locator,),
+            bright_data_api_keys=(SecretStr("synthetic-one"),),
+        ),
+        BrightDataAdapterConfig(_WINDOW, _NOW),
+        client_builder=lambda _credential: client,
+    )
+
+    # When
+    result = await runtime.router.resolve_identities((locator,), (known,))
+
+    # Then
+    assert result.aggregate.status is RouterRunStatus.SUCCESS
+    assert result.outcomes == (ResolvedAccountIdentity(known),)
+    assert client.calls == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("category", "expected_health", "expected_diagnostic"),
+    [
+        (
+            BrightDataErrorCategory.QUOTA,
+            InstanceHealthStatus.QUOTA_EXHAUSTED,
+            RouterDiagnosticCategory.QUOTA_DISABLED,
+        ),
+        (
+            BrightDataErrorCategory.AUTH,
+            InstanceHealthStatus.INVALID_CREDENTIAL,
+            RouterDiagnosticCategory.CREDENTIAL_DISABLED,
+        ),
+        (
+            BrightDataErrorCategory.RETRYABLE,
+            InstanceHealthStatus.HEALTHY,
+            None,
+        ),
+    ],
+)
+async def test_identity_router_classified_failover_uses_each_instance_once(
+    category: BrightDataErrorCategory,
+    expected_health: InstanceHealthStatus,
+    expected_diagnostic: RouterDiagnosticCategory | None,
+) -> None:
+    # Given
+    locator = parse_linkedin_locator("https://linkedin.com/in/new-person")
+    clients = [
+        SyntheticBrightDataClient(failure=BrightDataError(category)),
+        SyntheticBrightDataClient(
+            person_identities=(
+                BrightDataPersonIdentity(
+                    linkedin_num_id="101",
+                    url=locator.canonical_url,
+                ),
+            )
+        ),
+        SyntheticBrightDataClient(),
+    ]
+    created = iter(clients)
+    runtime = bootstrap_runtime(
+        AccountInput(
+            locators=(locator,),
+            bright_data_api_keys=tuple(
+                SecretStr(f"synthetic-{index}") for index in range(3)
+            ),
+        ),
+        BrightDataAdapterConfig(_WINDOW, _NOW),
+        client_builder=lambda _credential: next(created),
+    )
+
+    # When
+    result = await runtime.router.resolve_identities((locator,), ())
+
+    # Then
+    assert result.aggregate.status is RouterRunStatus.SUCCESS
+    assert result.health[0].status is expected_health
+    assert [len(client.calls) for client in clients] == [1, 1, 0]
+    assert [item.category for item in result.diagnostics] == (
+        [] if expected_diagnostic is None else [expected_diagnostic]
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "category",
+    [BrightDataErrorCategory.INPUT, BrightDataErrorCategory.NOT_FOUND],
+)
+async def test_identity_router_account_failure_never_rotates_credentials(
+    category: BrightDataErrorCategory,
+) -> None:
+    # Given
+    locator = parse_linkedin_locator("https://linkedin.com/in/unresolved")
+    clients = [
+        SyntheticBrightDataClient(failure=BrightDataError(category)),
+        SyntheticBrightDataClient(),
+    ]
+    created = iter(clients)
+    runtime = bootstrap_runtime(
+        AccountInput(
+            locators=(locator,),
+            bright_data_api_keys=(SecretStr("synthetic-a"), SecretStr("synthetic-b")),
+        ),
+        BrightDataAdapterConfig(_WINDOW, _NOW),
+        client_builder=lambda _credential: next(created),
+    )
+
+    # When
+    result = await runtime.router.resolve_identities((locator,), ())
+
+    # Then
+    assert result.outcomes == (UnresolvedAccountIdentity(),)
+    assert result.aggregate.status is RouterRunStatus.PARTIAL
+    assert [len(client.calls) for client in clients] == [1, 0]
+
+
+@pytest.mark.anyio
+async def test_identity_router_accepted_snapshot_failure_never_reroutes() -> None:
+    # Given
+    locator = parse_linkedin_locator("https://linkedin.com/company/unresolved")
+    clients = [
+        SyntheticBrightDataClient(
+            failure=BrightDataError(
+                BrightDataErrorCategory.SNAPSHOT_TIMEOUT,
+                snapshot_accepted=True,
+            )
+        ),
+        SyntheticBrightDataClient(),
+    ]
+    created = iter(clients)
+    runtime = bootstrap_runtime(
+        AccountInput(
+            locators=(locator,),
+            bright_data_api_keys=(SecretStr("synthetic-a"), SecretStr("synthetic-b")),
+        ),
+        BrightDataAdapterConfig(_WINDOW, _NOW),
+        client_builder=lambda _credential: next(created),
+    )
+
+    # When
+    result = await runtime.router.resolve_identities((locator,), ())
+
+    # Then
+    assert result.outcomes == (UnresolvedAccountIdentity(),)
+    assert [len(client.calls) for client in clients] == [1, 0]
+
+
+@pytest.mark.anyio
+async def test_identity_conflict_aborts_without_candidates_or_provider_text() -> None:
+    # Given
+    known = _account(AccountKind.PERSON, "100", "known")
+    locator = parse_linkedin_locator("https://linkedin.com/in/new-person")
+    client = SyntheticBrightDataClient(
+        person_identities=(
+            BrightDataPersonIdentity.model_validate(
+                {
+                    "linkedin_num_id": "999",
+                    "url": known.profile_url,
+                    "instruction": "provider prompt canary",
+                }
+            ),
+        )
+    )
+    runtime = bootstrap_runtime(
+        AccountInput(
+            locators=(locator,),
+            bright_data_api_keys=(SecretStr("credential-canary"),),
+        ),
+        BrightDataAdapterConfig(_WINDOW, _NOW),
+        client_builder=lambda _credential: client,
+    )
+
+    # When
+    result = await runtime.router.resolve_identities((locator,), (known,))
+
+    # Then
+    assert result.aggregate.status is RouterRunStatus.ABORTED
+    assert result.outcomes == ()
+    assert result.diagnostics[0].category is RouterDiagnosticCategory.SCHEMA_ABORT
+    assert "canary" not in repr(result)
+    assert "prompt" not in repr(result)

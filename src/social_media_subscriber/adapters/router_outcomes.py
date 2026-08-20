@@ -4,12 +4,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum, unique
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 if TYPE_CHECKING:
     from social_media_subscriber.adapters.instance import AdapterInstanceOrdinal
+    from social_media_subscriber.adapters.operations import AdapterOperation
     from social_media_subscriber.domain.ids import AccountId, PostId
     from social_media_subscriber.domain.post import Post
+    from social_media_subscriber.providers.brightdata.normalization_outcomes import (
+        AccountIdentityOutcome,
+        SkippedPostCounts,
+    )
+    from social_media_subscriber.providers.brightdata.source_record import (
+        BrightDataLinkedInPostSourceRecord,
+    )
 
 
 @unique
@@ -48,6 +56,17 @@ class RouterRunStatus(StrEnum):
     SUCCESS = "success"
     PARTIAL = "partial"
     ABORTED = "aborted"
+
+
+@dataclass(frozen=True, slots=True)
+class RouterOperationError(Exception):
+    """Reject use of the post-routing surface for another operation."""
+
+    operation: AdapterOperation
+
+    @override
+    def __str__(self) -> str:
+        return f"invalid post Router operation ({self.operation.value})"
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,5 +121,27 @@ class RouterResult:
     aggregate: RouterAggregate
     accounts: tuple[AccountRouteOutcome, ...]
     posts: tuple[Post, ...]
+    source_records: tuple[BrightDataLinkedInPostSourceRecord, ...]
+    skipped: SkippedPostCounts
+    health: tuple[InstanceHealth, ...]
+    diagnostics: tuple[RouterDiagnostic, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityRouterAggregate:
+    """Counts and disposition for one identity-routing run."""
+
+    status: RouterRunStatus
+    resolved_locators: int
+    unresolved_locators: int
+    disabled_instances: int
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityRouterResult:
+    """Immutable ordered identity outcomes from the shared Adapter pool."""
+
+    aggregate: IdentityRouterAggregate
+    outcomes: tuple[AccountIdentityOutcome, ...]
     health: tuple[InstanceHealth, ...]
     diagnostics: tuple[RouterDiagnostic, ...]

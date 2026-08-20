@@ -2,17 +2,28 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum, unique
 from typing import TYPE_CHECKING, NewType, Protocol
+
+from social_media_subscriber.providers.brightdata.normalization_outcomes import (
+    SkippedPostCounts,
+)
 
 if TYPE_CHECKING:
     from pydantic import SecretStr
 
+    from social_media_subscriber.accounts.locator import LinkedInLocator
     from social_media_subscriber.adapters.protocol import AdapterDriver
     from social_media_subscriber.domain.account import Account
     from social_media_subscriber.domain.ids import AccountId
     from social_media_subscriber.domain.post import Post
+    from social_media_subscriber.providers.brightdata.normalization_outcomes import (
+        AccountIdentityOutcome,
+    )
+    from social_media_subscriber.providers.brightdata.source_record import (
+        BrightDataLinkedInPostSourceRecord,
+    )
 
 AdapterInstanceOrdinal = NewType("AdapterInstanceOrdinal", int)
 
@@ -33,11 +44,21 @@ class AdapterBatch:
 
 
 @dataclass(frozen=True, slots=True)
+class AdapterIdentityBatch:
+    """One kind-homogeneous locator batch with immutable known identities."""
+
+    locators: tuple[LinkedInLocator, ...]
+    known_accounts: tuple[Account, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CollectedAccount:
-    """Canonical Posts collected for one Account."""
+    """Complete source and canonical post result for one Account."""
 
     account_id: AccountId
     posts: tuple[Post, ...]
+    source_records: tuple[BrightDataLinkedInPostSourceRecord, ...] = ()
+    skipped: SkippedPostCounts = field(default_factory=SkippedPostCounts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +77,13 @@ class BatchCompleted:
     """A fully classified provider response for every batch Account."""
 
     outcomes: tuple[AdapterAccountOutcome, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityBatchCompleted:
+    """A fully classified identity response preserving locator order."""
+
+    outcomes: tuple[AccountIdentityOutcome, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +120,15 @@ type AdapterAttempt = (
     | AcceptedSnapshotBatchFailure
 )
 
+type AdapterIdentityAttempt = (
+    IdentityBatchCompleted
+    | RetryableBatchFailure
+    | QuotaBatchFailure
+    | InvalidCredentialBatchFailure
+    | SchemaBatchFailure
+    | AcceptedSnapshotBatchFailure
+)
+
 
 class AdapterInstance(Protocol):
     """One opaque credential-bound runtime instance."""
@@ -101,6 +138,13 @@ class AdapterInstance(Protocol):
 
     async def collect(self, batch: AdapterBatch) -> AdapterAttempt:
         """Collect one bounded homogeneous batch after client-level retries."""
+        ...
+
+    async def resolve_identity(
+        self,
+        batch: AdapterIdentityBatch,
+    ) -> AdapterIdentityAttempt:
+        """Resolve one bounded homogeneous locator batch."""
         ...
 
 

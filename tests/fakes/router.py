@@ -12,9 +12,12 @@ from social_media_subscriber.adapters import (
 from social_media_subscriber.adapters.instance import (
     AdapterAttempt,
     AdapterBatch,
+    AdapterIdentityAttempt,
+    AdapterIdentityBatch,
     AdapterInstanceOrdinal,
     BatchCompleted,
     CollectedAccount,
+    SchemaBatchFailure,
 )
 from social_media_subscriber.domain.account import Account
 from social_media_subscriber.domain.ids import (
@@ -95,6 +98,14 @@ class ScriptedInstance:
                 )
             case _:
                 return step
+
+    async def resolve_identity(
+        self,
+        batch: AdapterIdentityBatch,
+    ) -> AdapterIdentityAttempt:
+        """Reject identity use from the collection-only Router fake."""
+        _ = batch
+        return SchemaBatchFailure()
 
 
 @final

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 from pydantic import SecretStr
 
@@ -28,9 +30,17 @@ from social_media_subscriber.adapters.router_outcomes import (
     AccountRouteSucceeded,
     InstanceHealthStatus,
     RouterDiagnosticCategory,
+    RouterOperationError,
     RouterRunStatus,
 )
 from social_media_subscriber.domain.platform import AccountKind, Platform
+from social_media_subscriber.providers.brightdata.models import BrightDataPost
+from social_media_subscriber.providers.brightdata.normalization_outcomes import (
+    SkippedPostCounts,
+)
+from social_media_subscriber.providers.brightdata.source_record import (
+    BrightDataLinkedInPostSourceRecord,
+)
 from tests.fakes.router import (
     CompleteBatch,
     DeclaredFakeDriver,
@@ -40,6 +50,9 @@ from tests.fakes.router import (
     make_account,
     make_post,
 )
+
+if TYPE_CHECKING:
+    from social_media_subscriber.domain.account import Account
 
 
 def _router(
@@ -53,6 +66,22 @@ def _router(
         tuple(SecretStr(key) for key in keys),
     )
     return router, factory
+
+
+def _source_record(
+    account: Account,
+    platform_post_id: str,
+    text: str,
+) -> BrightDataLinkedInPostSourceRecord:
+    post = BrightDataPost(
+        id=platform_post_id,
+        date_posted="2026-08-20T12:00:00+00:00",
+        post_type="post",
+        url=f"https://www.linkedin.com/posts/{platform_post_id}",
+        user_id=account.platform_account_id,
+        post_text=text,
+    )
+    return BrightDataLinkedInPostSourceRecord.from_post(account.id, post)
 
 
 def test_registry_resolution_preserves_declared_candidate_order() -> None:
@@ -91,6 +120,21 @@ async def test_empty_account_set_succeeds_without_provider_calls() -> None:
     # Then
     assert result.aggregate.status is RouterRunStatus.SUCCESS
     assert result.accounts == ()
+    assert factory.calls == []
+
+
+@pytest.mark.anyio
+async def test_post_route_rejects_identity_operation_before_provider_call() -> None:
+    # Given
+    account = make_account(AccountKind.PERSON, 1)
+    router, factory = _router(((),))
+
+    # When / Then
+    with pytest.raises(RouterOperationError):
+        _ = await router.route(
+            (account,),
+            AdapterOperation.RESOLVE_ACCOUNT_IDENTITY,
+        )
     assert factory.calls == []
 
 
@@ -379,3 +423,78 @@ async def test_health_is_fresh_for_each_route_call() -> None:
     assert [call.ordinal for call in factory.calls] == [0, 1, 0]
     assert first.health[0].status is InstanceHealthStatus.QUOTA_EXHAUSTED
     assert second.health[0].status is InstanceHealthStatus.HEALTHY
+
+
+@pytest.mark.anyio
+async def test_equivalent_source_records_collapse_with_deterministic_skips() -> None:
+    # Given
+    account = make_account(AccountKind.PERSON, 1)
+    post = make_post(account.id, 7)
+    source = _source_record(account, "activity-7", "provider source")
+    completed = BatchCompleted(
+        (
+            CollectedAccount(
+                account.id,
+                (post,),
+                (source, source),
+                SkippedPostCounts(replies=1),
+            ),
+        )
+    )
+    router, _factory = _router(((completed,),))
+
+    # When
+    result = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+
+    # Then
+    assert result.source_records == (source,)
+    assert result.skipped == SkippedPostCounts(replies=1)
+    assert result.posts == (post,)
+
+
+@pytest.mark.anyio
+async def test_differing_source_payload_aborts_and_suppresses_all_output() -> None:
+    # Given
+    account = make_account(AccountKind.PERSON, 1)
+    first = _source_record(account, "activity-7", "first payload")
+    second = _source_record(account, "activity-7", "second payload")
+    completed = BatchCompleted(
+        (
+            CollectedAccount(
+                account.id,
+                (),
+                (first, second),
+                SkippedPostCounts(unknown=2),
+            ),
+        )
+    )
+    router, _factory = _router(((completed,),))
+
+    # When
+    result = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+
+    # Then
+    assert result.aggregate.status is RouterRunStatus.ABORTED
+    assert result.posts == ()
+    assert result.source_records == ()
+    assert result.skipped == SkippedPostCounts()
+
+
+@pytest.mark.anyio
+async def test_source_account_ownership_mismatch_aborts_without_output() -> None:
+    # Given
+    account = make_account(AccountKind.PERSON, 1)
+    other = make_account(AccountKind.PERSON, 2)
+    wrong_source = _source_record(other, "activity-7", "wrong owner")
+    completed = BatchCompleted(
+        (CollectedAccount(account.id, (), (wrong_source,), SkippedPostCounts()),)
+    )
+    router, _factory = _router(((completed,),))
+
+    # When
+    result = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+
+    # Then
+    assert result.aggregate.status is RouterRunStatus.ABORTED
+    assert result.source_records == ()
+    assert result.posts == ()
