@@ -24,8 +24,8 @@ from social_media_subscriber.domain.time import canonical_utc
 _SENSITIVE_QUERY_KEYS = frozenset(
     {"access_token", "api_key", "auth", "key", "password", "signature", "token"}
 )
-_URL_CONTROL_PATTERN = re.compile(
-    r"(?:[\x00-\x1f\x7f]|%(?:0[0-9a-f]|1[0-9a-f]|7f))",
+_UNSAFE_URL_PATTERN = re.compile(
+    r"(?:[\x00-\x1f\x7f\\]|%(?:[01][0-9a-f]|7f|2f|5c|2e))",
     re.IGNORECASE,
 )
 _POST_URL_ERROR_CODE: Final = "canonical_post_url"
@@ -69,7 +69,7 @@ def _canonical_post_url(value: str) -> str:
         port = -1
         parsed = urlsplit("")
     if (
-        _URL_CONTROL_PATTERN.search(value) is not None
+        _UNSAFE_URL_PATTERN.search(value) is not None
         or parsed.scheme != "https"
         or parsed.netloc != "www.linkedin.com"
         or parsed.hostname != "www.linkedin.com"
@@ -78,6 +78,7 @@ def _canonical_post_url(value: str) -> str:
         or port is not None
         or parsed.query
         or parsed.fragment
+        or any(segment in {".", ".."} for segment in parsed.path.split("/"))
         or not parsed.path.startswith(("/posts/", "/feed/update/"))
     ):
         raise PydanticCustomError(
@@ -96,13 +97,14 @@ def _approved_link(value: str) -> str:
         parsed = urlsplit("")
     query_keys = frozenset(key.casefold() for key, _value in parse_qsl(parsed.query))
     if (
-        _URL_CONTROL_PATTERN.search(value) is not None
+        _UNSAFE_URL_PATTERN.search(value) is not None
         or parsed.scheme != "https"
         or parsed.hostname is None
         or parsed.username is not None
         or parsed.password is not None
         or port is not None
         or parsed.fragment
+        or any(segment in {".", ".."} for segment in parsed.path.split("/"))
         or query_keys & _SENSITIVE_QUERY_KEYS
     ):
         raise PydanticCustomError(

@@ -2,7 +2,7 @@
 
 import re
 from datetime import datetime
-from typing import Annotated, ClassVar, Final, Literal, Self, assert_never
+from typing import Annotated, ClassVar, Final, Literal, Self, TypedDict, assert_never
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -10,6 +10,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    WithJsonSchema,
     field_validator,
     model_validator,
 )
@@ -24,14 +25,28 @@ from social_media_subscriber.domain.platform import AccountKind, Platform
 from social_media_subscriber.domain.time import canonical_utc
 
 _PROFILE_PATH_PATTERN = re.compile(r"/(?:in|company)/[^/]+/\Z", re.ASCII)
+_UNSAFE_PROFILE_URL_PATTERN = re.compile(
+    r"(?:[\x00-\x1f\x7f\\]|%(?:[01][0-9a-f]|7f|2f|5c|2e))",
+    re.IGNORECASE,
+)
+_PROFILE_URL_SCHEMA_PATTERN: Final = (
+    r"^https://www\.linkedin\.com/(?:in|company)/"
+    r"(?!\.{1,2}/)(?![^/]*(?:\\|%(?:[01][0-9A-Fa-f]|7[fF]|2[fF]|5[cC]|2[eE])))"
+    r"[^/\x00-\x1f\x7f]+/$"
+)
 _CanonicalProfileUrl = Annotated[
     str,
     StringConstraints(pattern=r"^https://www\.linkedin\.com/(?:in|company)/[^/]+/$"),
+    WithJsonSchema({"type": "string", "pattern": _PROFILE_URL_SCHEMA_PATTERN}),
 ]
 _CanonicalPlatformAccountId = Annotated[
     PlatformAccountId,
     StringConstraints(pattern=r"^[0-9]+$"),
 ]
+_CANONICAL_ACCOUNT_ID_PATTERN = re.compile(
+    r"linkedin:(?:person|company):[0-9]+",
+    re.ASCII,
+)
 _PROFILE_URL_ERROR_CODE: Final = "canonical_profile_url"
 _PROFILE_URL_ERROR_MESSAGE: Final = (
     "value must be a canonical public LinkedIn profile URL"
@@ -46,6 +61,11 @@ _ACCOUNT_KIND_URL_ERROR_MESSAGE: Final = (
 )
 
 
+class _AccountBoundaryInput(TypedDict, total=False):
+    id: str | int | float | bool | None
+    platform_account_id: str | int | float | bool | None
+
+
 def _canonical_profile_url(value: str) -> str:
     try:
         parsed = urlsplit(value)
@@ -54,7 +74,8 @@ def _canonical_profile_url(value: str) -> str:
         port = -1
         parsed = urlsplit("")
     if (
-        parsed.scheme != "https"
+        _UNSAFE_PROFILE_URL_PATTERN.search(value) is not None
+        or parsed.scheme != "https"
         or parsed.netloc != "www.linkedin.com"
         or parsed.hostname != "www.linkedin.com"
         or parsed.username is not None
@@ -63,6 +84,7 @@ def _canonical_profile_url(value: str) -> str:
         or parsed.query
         or parsed.fragment
         or _PROFILE_PATH_PATTERN.fullmatch(parsed.path) is None
+        or any(segment in {".", ".."} for segment in parsed.path.split("/"))
     ):
         raise PydanticCustomError(
             _PROFILE_URL_ERROR_CODE,
@@ -77,6 +99,7 @@ class Account(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(
         extra="forbid",
         frozen=True,
+        hide_input_in_errors=True,
         validate_default=True,
     )
 
@@ -90,6 +113,38 @@ class Account(BaseModel):
         json_schema_extra={"uniqueItems": True}
     )
     first_seen_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def redact_invalid_platform_identity(
+        cls,
+        values: _AccountBoundaryInput,
+    ) -> _AccountBoundaryInput:
+        """Replace malformed identity input before Pydantic renders errors."""
+        redacted = values.copy()
+        input_changed = False
+        match values.get("platform_account_id"):
+            case str() as platform_id if (
+                re.fullmatch(
+                    r"[0-9]+",
+                    platform_id,
+                    flags=re.ASCII,
+                )
+                is None
+            ):
+                redacted["platform_account_id"] = "<redacted>"
+                input_changed = True
+            case _:
+                pass
+        match values.get("id"):
+            case str() as account_id if (
+                _CANONICAL_ACCOUNT_ID_PATTERN.fullmatch(account_id) is None
+            ):
+                redacted["id"] = "<redacted>"
+                input_changed = True
+            case _:
+                pass
+        return redacted if input_changed else values
 
     @field_validator("profile_url")
     @classmethod

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
@@ -121,11 +122,26 @@ def test_schema_generation_is_deterministic_and_structural(tmp_path: Path) -> No
     match account_schema:
         case {
             "properties": {
-                "id": {"pattern": account_id_pattern},
-                "platform_account_id": {"pattern": platform_id_pattern},
+                "id": {"pattern": str() as account_id_pattern},
+                "platform_account_id": {"pattern": str() as platform_id_pattern},
+                "profile_url": {"pattern": str() as profile_pattern},
+                "url_aliases": {"items": {"pattern": str() as alias_pattern}},
             }
         }:
             assert account_id_pattern == r"^linkedin:(?:person|company):[0-9]+$"
             assert platform_id_pattern == r"^[0-9]+$"
+            for pattern in (profile_pattern, alias_pattern):
+                assert re.fullmatch(
+                    pattern,
+                    "https://www.linkedin.com/in/synthetic/",
+                )
+                for unsafe_url in (
+                    "https://www.linkedin.com/in/syn\nthetic/",
+                    "https://www.linkedin.com/in/syn%2Fthetic/",
+                    "https://www.linkedin.com/in/syn%5cthetic/",
+                    "https://www.linkedin.com/in/%2e%2E/",
+                    "https://www.linkedin.com/in/../",
+                ):
+                    assert re.fullmatch(pattern, unsafe_url) is None
         case unexpected:
             pytest.fail(f"unexpected Account ID schema: {unexpected!r}")

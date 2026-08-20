@@ -37,7 +37,7 @@
       "type": "string"
     },
     "profile_url": {
-      "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/[^/]+/$",
+      "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%(?:[01][0-9A-Fa-f]|7[fF]|2[fF]|5[cC]|2[eE])))[^/\\x00-\\x1f\\x7f]+/$",
       "title": "Profile Url",
       "type": "string"
     },
@@ -49,7 +49,7 @@
     },
     "url_aliases": {
       "items": {
-        "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/[^/]+/$",
+        "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%(?:[01][0-9A-Fa-f]|7[fF]|2[fF]|5[cC]|2[eE])))[^/\\x00-\\x1f\\x7f]+/$",
         "type": "string"
       },
       "title": "Url Aliases",

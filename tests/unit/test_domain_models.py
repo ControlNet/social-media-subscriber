@@ -45,6 +45,73 @@ MALFORMED_PLATFORM_ACCOUNT_IDS = (
     "123\n",
     "\uff11\uff12\uff13",
 )
+UNSAFE_ACCOUNT_URLS = [
+    "https://www.linkedin.com/in/syn\rthetic/",
+    "https://www.linkedin.com/in/syn\nthetic/",
+    "https://www.linkedin.com/in/syn\tthetic/",
+    "https://www.linkedin.com/in/syn\x7fthetic/",
+    "https://www.linkedin.com/in/syn\\thetic/",
+    "https://www.linkedin.com/in/syn%2fthetic/",
+    "https://www.linkedin.com/in/syn%2Fthetic/",
+    "https://www.linkedin.com/in/syn%5cthetic/",
+    "https://www.linkedin.com/in/syn%5Cthetic/",
+    "https://www.linkedin.com/in/syn%2ethetic/",
+    "https://www.linkedin.com/in/syn%2Ethetic/",
+    "https://www.linkedin.com/in/%2e%2E/",
+    "https://www.linkedin.com/in/syn%09thetic/",
+    "https://www.linkedin.com/in/syn%0athetiC/",
+    "https://www.linkedin.com/in/syn%0Athetic/",
+    "https://www.linkedin.com/in/syn%0dthetic/",
+    "https://www.linkedin.com/in/syn%0Dthetic/",
+    "https://www.linkedin.com/in/syn%7fthetic/",
+    "https://www.linkedin.com/in/syn%7Fthetic/",
+    "https://www.linkedin.com/in/./",
+    "https://www.linkedin.com/in/../",
+]
+UNSAFE_POST_URLS = [
+    "https://www.linkedin.com/posts/syn\\thetic",
+    "https://www.linkedin.com/posts/syn%2fthetic",
+    "https://www.linkedin.com/posts/syn%2Fthetic",
+    "https://www.linkedin.com/posts/syn%5cthetic",
+    "https://www.linkedin.com/posts/syn%5Cthetic",
+    "https://www.linkedin.com/posts/syn%2ethetic",
+    "https://www.linkedin.com/posts/syn%2Ethetic",
+    "https://www.linkedin.com/posts/%2e%2E",
+    "https://www.linkedin.com/posts/syn%09thetic",
+    "https://www.linkedin.com/posts/syn%0athetic",
+    "https://www.linkedin.com/posts/syn%0Athetic",
+    "https://www.linkedin.com/posts/syn%0dthetic",
+    "https://www.linkedin.com/posts/syn%0Dthetic",
+    "https://www.linkedin.com/posts/syn%7fthetic",
+    "https://www.linkedin.com/posts/syn%7Fthetic",
+    "https://www.linkedin.com/posts/./synthetic",
+    "https://www.linkedin.com/posts/../synthetic",
+]
+UNSAFE_APPROVED_LINKS = [
+    "https://example.com/syn\\thetic",
+    "https://example.com/syn%2fthetic",
+    "https://example.com/syn%2Fthetic",
+    "https://example.com/syn%5cthetic",
+    "https://example.com/syn%5Cthetic",
+    "https://example.com/syn%2ethetic",
+    "https://example.com/syn%2Ethetic",
+    "https://example.com/%2e%2E",
+    "https://example.com/./synthetic",
+    "https://example.com/../synthetic",
+    "https://example.com/?next=%2fadmin",
+    "https://example.com/?next=%2Fadmin",
+    "https://example.com/?next=%5cadmin",
+    "https://example.com/?next=%5Cadmin",
+    "https://example.com/?next=%2e%2E",
+    "https://example.com/?next=%2E%2e",
+    "https://example.com/?next=%09admin",
+    "https://example.com/?next=%0aadmin",
+    "https://example.com/?next=%0Aadmin",
+    "https://example.com/?next=%0dadmin",
+    "https://example.com/?next=%0Dadmin",
+    "https://example.com/?next=%7fadmin",
+    "https://example.com/?next=%7Fadmin",
+]
 
 
 def _import_domain_package() -> None:
@@ -331,8 +398,10 @@ def test_account_boundary_rejects_non_ascii_numeric_platform_id(
 @pytest.mark.parametrize(
     "unsafe_url",
     [
+        "https://www.linkedin.com/posts/example-123\r",
         "https://www.linkedin.com/posts/example-123\n",
         "https://www.linkedin.com/po\tsts/example-123",
+        "https://www.linkedin.com/posts/example-123\x7f",
         "https://www.linkedin.com/posts/example%0A123",
     ],
 )
@@ -352,8 +421,10 @@ def test_stable_post_content_rejects_control_characters_in_canonical_url(
 @pytest.mark.parametrize(
     "unsafe_link",
     [
+        "https://example.com/path\r",
         "https://example.com/path\n",
         "https://example.com/pa\tth",
+        "https://example.com/path\x7f",
         "https://example.com/path%0D%0Aheader",
     ],
 )
@@ -368,3 +439,102 @@ def test_stable_post_content_rejects_control_characters_in_approved_link(
     with pytest.raises(PydanticCustomError) as captured:
         _ = stable.normalized()
     assert captured.value.type == "approved_public_link"
+
+
+@pytest.mark.parametrize("field", ["profile_url", "url_aliases"])
+@pytest.mark.parametrize("unsafe_url", UNSAFE_ACCOUNT_URLS)
+def test_account_boundary_rejects_unsafe_encoded_or_control_profile_url(
+    field: str,
+    unsafe_url: str,
+) -> None:
+    # Given
+    values = _account().model_dump()
+    values[field] = (unsafe_url,) if field == "url_aliases" else unsafe_url
+
+    # When / Then
+    with pytest.raises(ValidationError):
+        _ = Account.model_validate(values)
+
+
+@pytest.mark.parametrize("unsafe_url", UNSAFE_POST_URLS)
+def test_stable_post_content_rejects_encoded_structural_canonical_url(
+    unsafe_url: str,
+) -> None:
+    # Given
+    stable = replace(_stable_post(_account().id), canonical_url=unsafe_url)
+
+    # When / Then
+    with pytest.raises(PydanticCustomError) as captured:
+        _ = stable.normalized()
+    assert captured.value.type == "canonical_post_url"
+
+
+@pytest.mark.parametrize("unsafe_link", UNSAFE_APPROVED_LINKS)
+def test_stable_post_content_rejects_encoded_structural_approved_link(
+    unsafe_link: str,
+) -> None:
+    # Given
+    stable = replace(_stable_post(_account().id), links=(unsafe_link,))
+
+    # When / Then
+    with pytest.raises(PydanticCustomError) as captured:
+        _ = stable.normalized()
+    assert captured.value.type == "approved_public_link"
+
+
+def test_account_boundary_error_representations_redact_invalid_id_input() -> None:
+    # Given
+    canary = "invalid-account-id-canary-9f2c6d"
+    values = _account().model_dump()
+    values["id"] = f"linkedin:person:{canary}"
+    values["platform_account_id"] = canary
+
+    # When
+    with pytest.raises(ValidationError) as captured:
+        _ = Account.model_validate(values)
+
+    # Then
+    error = captured.value
+    public_representations = (
+        str(error),
+        repr(error),
+        error.json(),
+        repr(error.errors()),
+        repr(error.args),
+    )
+    assert all(
+        canary not in representation for representation in public_representations
+    )
+    assert error.error_count() >= 1
+    assert error.title == "Account"
+    details = error.errors(include_input=False)
+    assert {detail["loc"] for detail in details} == {
+        ("id",),
+        ("platform_account_id",),
+    }
+    assert {detail["type"] for detail in details} == {"string_pattern_mismatch"}
+
+
+def test_account_boundary_error_representations_redact_invalid_account_id() -> None:
+    # Given
+    canary = "invalid-canonical-account-id-canary-82d1"
+    values = _account().model_dump()
+    values["id"] = canary
+
+    # When
+    with pytest.raises(ValidationError) as captured:
+        _ = Account.model_validate(values)
+
+    # Then
+    error = captured.value
+    public_representations = (
+        str(error),
+        repr(error),
+        error.json(),
+        repr(error.errors()),
+        repr(error.args),
+    )
+    assert all(
+        canary not in representation for representation in public_representations
+    )
+    assert error.errors(include_input=False)[0]["loc"] == ("id",)
