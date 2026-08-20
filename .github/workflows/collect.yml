@@ -1,0 +1,142 @@
+name: Collect and publish dist
+
+"on":
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: Optional inclusive ISO date; requires end_date
+        required: false
+        type: string
+      end_date:
+        description: Optional inclusive ISO date; requires start_date
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: social-media-subscriber-dist
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
+    steps:
+      - name: Gate provider credentials
+        id: gate
+        env:
+          HAS_ACCOUNTS: ${{ secrets.ACCOUNTS != '' }}
+          HAS_BRIGHT_DATA_API_KEYS: ${{ secrets.BRIGHT_DATA_API_KEYS != '' }}
+        run: |
+          set -euo pipefail
+          if [[ "$HAS_ACCOUNTS" == "true" && "$HAS_BRIGHT_DATA_API_KEYS" == "true" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Manual collection requires ACCOUNTS and BRIGHT_DATA_API_KEYS" >&2
+            exit 1
+          else
+            echo "Collection disabled: provider credentials are not configured"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publication:
+    needs: preflight
+    if: needs.preflight.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      ACCOUNTS: ${{ secrets.ACCOUNTS }}
+      BRIGHT_DATA_API_KEYS: ${{ secrets.BRIGHT_DATA_API_KEYS }}
+      GITHUB_TOKEN: ${{ github.token }}
+      START_DATE: ${{ inputs.start_date }}
+      END_DATE: ${{ inputs.end_date }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: true
+      - name: Set up Pixi
+        uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347
+        with:
+          pixi-version: v0.59.0
+          run-install: false
+          locked: true
+          cache: false
+      - name: Install locked environment
+        run: pixi install --locked
+      - name: Verify source
+        run: pixi run verify
+      - name: Observe immutable dist lease
+        run: |
+          set -euo pipefail
+          advertised="$(git ls-remote --heads origin refs/heads/dist)"
+          if [[ -z "$advertised" ]]; then
+            expected_sha=absent
+          else
+            read -r expected_sha advertised_ref extra <<< "$advertised"
+            if [[ -n "${extra:-}" || "$advertised_ref" != "refs/heads/dist" || ! "$expected_sha" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then
+              echo "Malformed dist advertisement" >&2
+              exit 1
+            fi
+          fi
+          echo "EXPECTED_SHA=$expected_sha" >> "$GITHUB_ENV"
+      - name: Materialize exact previous snapshot
+        run: |
+          set -euo pipefail
+          run_root="$RUNNER_TEMP/social-media-subscriber/$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT"
+          previous="$run_root/previous"
+          candidate="$run_root/candidate"
+          baseline_repository="$run_root/baseline-repository"
+          mkdir -p "$previous" "$candidate" "$baseline_repository"
+          if [[ "$EXPECTED_SHA" != "absent" ]]; then
+            git -C "$baseline_repository" init --quiet
+            git -C "$baseline_repository" remote add origin "$(git remote get-url origin)"
+            git -C "$baseline_repository" fetch --quiet --depth=1 origin "$EXPECTED_SHA"
+            git -C "$baseline_repository" read-tree "$EXPECTED_SHA"
+            git -C "$baseline_repository" checkout-index --all "--prefix=$(realpath "$previous")/"
+            pixi run subscriber verify-snapshot "$previous"
+          fi
+          echo "PREVIOUS_SNAPSHOT=$previous" >> "$GITHUB_ENV"
+          echo "CANDIDATE_SNAPSHOT=$candidate" >> "$GITHUB_ENV"
+      - name: Collect candidate
+        run: |
+          set -euo pipefail
+          collect_arguments=(
+            collect
+            --previous-snapshot "$PREVIOUS_SNAPSHOT"
+            --output "$CANDIDATE_SNAPSHOT"
+          )
+          if [[ -n "$START_DATE" || -n "$END_DATE" ]]; then
+            collect_arguments+=(--start-date "$START_DATE" --end-date "$END_DATE")
+          fi
+          set +e
+          pixi run subscriber "${collect_arguments[@]}"
+          COLLECT_STATUS=$?
+          set -e
+          if [[ "$COLLECT_STATUS" -ne 0 && "$COLLECT_STATUS" -ne 4 ]]; then
+            exit "$COLLECT_STATUS"
+          fi
+          echo "COLLECT_STATUS=$COLLECT_STATUS" >> "$GITHUB_ENV"
+      - name: Verify and publish candidate
+        run: |
+          set -euo pipefail
+          pixi run subscriber verify-snapshot "$CANDIDATE_SNAPSHOT"
+          pixi run subscriber publish-dist \
+            --snapshot "$CANDIDATE_SNAPSHOT" \
+            --remote origin \
+            --branch dist \
+            --expected-sha "$EXPECTED_SHA"
+          if [[ "$COLLECT_STATUS" -eq 4 ]]; then
+            echo "Collection was partial; candidate publication completed and operator action is required" >&2
+            exit 4
+          fi
