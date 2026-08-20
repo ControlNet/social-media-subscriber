@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from dataclasses import dataclass
+import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Protocol
 
@@ -11,6 +12,8 @@ from pydantic import TypeAdapter
 from typer.testing import CliRunner
 
 from social_media_subscriber.cli import create_app
+from social_media_subscriber.cli_application import DefaultCliApplication
+from social_media_subscriber.publishing.process import GitCommandResult, run_git
 from social_media_subscriber.storage.repository import SnapshotRepository
 from social_media_subscriber.storage.snapshot import SnapshotState
 
@@ -83,10 +86,49 @@ class ContainedCli:
         return self.runner.invoke(app, arguments, catch_exceptions=False)
 
 
+@dataclass(slots=True)
+class AdvancingRunner:
+    remote: Path
+    advanced: bool = False
+    calls: list[tuple[str, ...]] = field(default_factory=list)
+
+    def __call__(
+        self, arguments: tuple[str, ...], cwd: Path, timeout_seconds: float
+    ) -> GitCommandResult:
+        self.calls.append(arguments)
+        result = run_git(arguments, cwd, timeout_seconds)
+        if arguments[:2] == ("ls-remote", "--heads") and not self.advanced:
+            self._advance_remote()
+            self.advanced = True
+        return result
+
+    def _advance_remote(self) -> None:
+        competitor = self.remote.parent / "competitor"
+        competitor.mkdir()
+        snapshot = competitor / "snapshot"
+        _ = SnapshotRepository(snapshot).write(SnapshotState((), (), ()))
+        _ = _git(competitor, "init", "--quiet")
+        _ = _git(competitor, "add", "snapshot")
+        _ = _git(
+            competitor,
+            "-c",
+            "user.name=contained-test",
+            "-c",
+            "user.email=contained@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "Competing publication",
+        )
+        _ = _git(competitor, "remote", "add", "contained", str(self.remote))
+        _ = _git(competitor, "push", "--quiet", "contained", "HEAD:refs/heads/dist")
+
+
 @pytest.fixture
 def contained_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ContainedCli:
     source, remote = _setup_source(tmp_path)
     monkeypatch.chdir(source)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     contained = ContainedCli(tmp_path, source, remote, CliRunner())
     assert Path.cwd().resolve() == source.resolve()
     assert (
@@ -145,6 +187,7 @@ def test_publish_materializes_exact_baseline_and_preserves_unchanged_sha(
     }
     assert _git(contained_cli.remote, "rev-parse", "refs/heads/dist") == first_sha
     assert not list(tmp_path.glob("snapshot-publish-*"))
+    assert not list(tmp_path.glob("cli-publish-baseline-*"))
 
 
 def test_publish_stale_precheck_exits_six_without_source_mutation(
@@ -206,3 +249,36 @@ def test_containment_guard_blocks_wrong_cwd_before_cli_invocation(
 
     # Then
     assert not (contained_cli.remote / "refs" / "heads" / "dist").exists()
+
+
+def test_post_precheck_race_exits_six_without_force_fallback(
+    tmp_path: Path,
+    contained_cli: ContainedCli,
+) -> None:
+    # Given
+    snapshot = tmp_path / "snapshot"
+    _ = SnapshotRepository(snapshot).write(SnapshotState((), (), ()))
+    runner = AdvancingRunner(contained_cli.remote)
+
+    # When
+    result = contained_cli.invoke(
+        create_app(DefaultCliApplication(runner)),
+        [
+            "publish-dist",
+            "--snapshot",
+            str(snapshot),
+            "--remote",
+            "origin",
+            "--branch",
+            "dist",
+            "--expected-sha",
+            "absent",
+        ],
+    )
+
+    # Then
+    assert result.exit_code == 6
+    assert runner.advanced is True
+    assert not any(arguments[0] == "push" for arguments in runner.calls)
+    assert not list(tmp_path.glob("snapshot-publish-*"))
+    assert not list(tmp_path.glob("cli-publish-baseline-*"))

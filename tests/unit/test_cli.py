@@ -15,8 +15,6 @@ from social_media_subscriber.application.results import (
 )
 from social_media_subscriber.cli import create_app
 from social_media_subscriber.publishing.git import (
-    InvalidPublicationCategory,
-    InvalidPublicationError,
     Published,
 )
 from social_media_subscriber.storage.snapshot import SnapshotManifest
@@ -29,6 +27,10 @@ if TYPE_CHECKING:
     from social_media_subscriber.publishing.git import PublishResult
 
 _REPORT_ADAPTER = TypeAdapter(dict[str, str | int | list[str] | None])
+
+
+class CanaryProviderError(Exception):
+    pass
 
 
 def _successful_collection() -> CollectionResult:
@@ -302,8 +304,8 @@ def test_collect_preserves_application_exit_contract(
 def test_ci_exception_log_preserves_context_and_redacts_secret_url() -> None:
     # Given
     application = FakeApplication(
-        publish_error=InvalidPublicationError(
-            InvalidPublicationCategory.PREVIOUS_MISMATCH
+        publish_error=CanaryProviderError(
+            "provider canary-secret failed at https://canary.invalid/private"
         )
     )
 
@@ -329,8 +331,9 @@ def test_ci_exception_log_preserves_context_and_redacts_secret_url() -> None:
     log = next(
         line for line in result.output.splitlines() if '"event":"cli.failure"' in line
     )
-    assert '"error_type":"InvalidPublicationError"' in log
-    assert '"category":"previous snapshot does not match observed commit"' in log
+    assert '"error_type":"CanaryProviderError"' in log
+    assert '"category":"unhandled"' in log
     assert '"stack":"' in log
+    assert "[REDACTED]" in log
     assert "canary-secret" not in result.output
     assert "https://canary.invalid" not in result.output
