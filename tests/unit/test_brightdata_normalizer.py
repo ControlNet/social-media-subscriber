@@ -21,6 +21,7 @@ from social_media_subscriber.providers.brightdata.models import (
     BrightDataPersonIdentity,
     BrightDataPost,
     BrightDataSnapshotEnvelope,
+    JsonValue,
 )
 from social_media_subscriber.providers.brightdata.normalization_errors import (
     BrightDataNormalizationError,
@@ -130,6 +131,14 @@ def _account(*, kind: AccountKind = AccountKind.PERSON) -> Account:
 
 def _post_fixture(name: str) -> BrightDataPost:
     return BrightDataPost.model_validate_json((FIXTURES / name).read_bytes())
+
+
+def _post_with_links(*links: str) -> BrightDataPost:
+    original = _post_fixture("synthetic-person-original.json")
+    embedded_links: list[JsonValue] = list(links)
+    payload = original.payload.copy()
+    payload["embedded_links"] = embedded_links
+    return BrightDataPost.model_validate_json(canonical_json_value_bytes(payload))
 
 
 def test_provider_models_are_frozen_typed_and_drift_tolerant() -> None:
@@ -370,3 +379,65 @@ def test_transport_and_error_material_is_rejected_without_canary_disclosure() ->
         _ = BrightDataPost.model_validate(payload)
     assert canary not in str(captured.value)
     assert "synthetic-ada" not in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    "media_url",
+    [
+        "https://www.linkedin.com/media/synthetic",
+        "https://www.linkedin.com/media/synthetic?trk=feed#fragment",
+        "https://linkedin.com/MEDIA/synthetic",
+        "https://uk.linkedin.com/media/synthetic",
+        "https://www.linkedin.com/%6dedia/synthetic",
+        "https://www.linkedin.com/me%64ia/synthetic",
+        "https://media.linkedin.com/synthetic",
+        "https://assets.media.linkedin.com/synthetic",
+        "https://media.licdn.com/synthetic",
+        "https://dms.licdn.com/synthetic",
+    ],
+)
+def test_linkedin_media_hosts_and_paths_are_excluded(media_url: str) -> None:
+    # Given
+    post = _post_with_links(media_url)
+
+    # When
+    result = normalize_posts(_account(), (post,), FIRST_SEEN)
+
+    # Then
+    assert result.posts[0].links == ()
+    assert result.source_records[0].payload["embedded_links"] == [media_url]
+
+
+@pytest.mark.parametrize(
+    ("public_url", "expected"),
+    [
+        (
+            "https://www.linkedin.com/posts/synthetic?trk=feed#fragment",
+            "https://www.linkedin.com/posts/synthetic",
+        ),
+        (
+            "https://www.linkedin.com/pulse/synthetic?utm_source=feed",
+            "https://www.linkedin.com/pulse/synthetic",
+        ),
+        (
+            "https://www.linkedin.com/company/synthetic/",
+            "https://www.linkedin.com/company/synthetic/",
+        ),
+        (
+            "https://www.linkedin.com/in/synthetic/",
+            "https://www.linkedin.com/in/synthetic/",
+        ),
+    ],
+)
+def test_legitimate_linkedin_public_links_remain_approved(
+    public_url: str,
+    expected: str,
+) -> None:
+    # Given
+    post = _post_with_links(public_url)
+
+    # When
+    result = normalize_posts(_account(), (post,), FIRST_SEEN)
+
+    # Then
+    assert result.posts[0].links == (expected,)

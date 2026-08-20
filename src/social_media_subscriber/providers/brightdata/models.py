@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from typing import ClassVar, Final, Self, assert_never
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from pydantic import (
     BaseModel,
@@ -221,6 +221,12 @@ def _approved_link(value: str) -> str | None:
         return None
     query = parse_qsl(parsed.query, keep_blank_values=True)
     query_keys = frozenset(key.casefold() for key, _value in query)
+    decoded_path = unquote(parsed.path).casefold()
+    is_linkedin_media_path = (
+        hostname is not None
+        and _LINKEDIN_HOST.fullmatch(hostname.casefold()) is not None
+        and (decoded_path == "/media" or decoded_path.startswith("/media/"))
+    )
     if (
         _UNSAFE_URL.search(value) is not None
         or parsed.scheme.casefold() != "https"
@@ -229,6 +235,7 @@ def _approved_link(value: str) -> str | None:
         or parsed.password is not None
         or port not in {None, 443}
         or query_keys & _SENSITIVE_QUERY_KEYS
+        or is_linkedin_media_path
         or hostname.casefold() == "licdn.com"
         or hostname.casefold().endswith(".licdn.com")
         or hostname.casefold() == "media.linkedin.com"
