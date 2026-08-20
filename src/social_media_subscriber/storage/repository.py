@@ -86,7 +86,7 @@ class SnapshotRepository:
             return None
         try:
             return self._load()
-        except (OSError, ValidationError) as error:
+        except (OSError, RuntimeError, ValidationError, shutil.Error) as error:
             raise SnapshotIntegrityError(type(error).__name__) from error
 
     def _load(self) -> SnapshotState:
@@ -153,7 +153,7 @@ class SnapshotRepository:
                 _ = destination.write_bytes(payload)
             _ = SnapshotRepository(temporary, self._encoder).load_optional()
             self._promote(temporary)
-        except (OSError, ValidationError) as error:
+        except (OSError, RuntimeError, ValidationError, shutil.Error) as error:
             raise SnapshotIntegrityError(type(error).__name__) from error
         else:
             return manifest
@@ -175,9 +175,16 @@ class SnapshotRepository:
         try:
             _ = temporary.replace(self._root)
         except OSError:
-            _ = backup.replace(self._root)
+            self._restore_prior_snapshot(backup)
             raise
         shutil.rmtree(backup)
+
+    def _restore_prior_snapshot(self, backup: Path) -> None:
+        try:
+            _ = backup.replace(self._root)
+        except OSError:
+            _ = shutil.copytree(backup, self._root)
+            shutil.rmtree(backup)
 
     def _files(self, state: SnapshotState) -> dict[Path, bytes]:
         files = {

@@ -244,6 +244,29 @@ def test_serialization_failure_never_promotes_candidate(tmp_path: Path) -> None:
     assert good.load_optional() == _state()
 
 
+def test_runtime_encoding_failure_is_typed_and_preserves_prior_tree(
+    tmp_path: Path,
+) -> None:
+    # Given
+    root = tmp_path / "dist"
+    good = SnapshotRepository(root)
+    _ = good.write(_state())
+    before = _tree(root)
+
+    def fail_encoding(model: JsonBoundaryModel) -> bytes:
+        _ = model
+        message = "injected runtime serialization interruption"
+        raise RuntimeError(message)
+
+    failing = SnapshotRepository(root, encoder=fail_encoding)
+
+    # When / Then
+    with pytest.raises(SnapshotIntegrityError):
+        _ = failing.write(SnapshotState((), (), ()))
+    assert _tree(root) == before
+    assert good.load_optional() == _state()
+
+
 def test_partial_write_failure_never_promotes_candidate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -269,6 +292,37 @@ def test_partial_write_failure_never_promotes_candidate(
     with pytest.raises(SnapshotIntegrityError):
         _ = repository.write(_state())
     assert _tree(root) == before
+
+
+def test_double_promotion_interruption_restores_the_prior_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    root = tmp_path / "dist"
+    repository = SnapshotRepository(root)
+    state = _state()
+    _ = repository.write(state)
+    before = _tree(root)
+    original_replace = Path.replace
+
+    def interrupted_replace(path: Path, target: Path) -> Path:
+        if target == root and ".previous." not in path.name:
+            message = "injected candidate promotion interruption"
+            raise OSError(message)
+        if target == root and ".previous." in path.name:
+            message = "injected rollback promotion interruption"
+            raise OSError(message)
+        return original_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", interrupted_replace)
+
+    # When / Then
+    with pytest.raises(SnapshotIntegrityError):
+        _ = repository.write(SnapshotState((), (), ()))
+    assert root.is_dir()
+    assert _tree(root) == before
+    assert repository.load_optional() == state
+    assert list(tmp_path.glob(".dist.*")) == []
 
 
 def test_record_paths_are_hash_derived_and_cannot_escape(tmp_path: Path) -> None:
