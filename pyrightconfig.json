@@ -1,0 +1,19 @@
+{
+  "typeCheckingMode": "all",
+  "pythonVersion": "3.13",
+  "pythonPlatform": "All",
+  "include": ["src", "tests"],
+  "exclude": ["**/__pycache__", "**/.pixi", "**/build", "**/dist"],
+  "venvPath": ".pixi/envs",
+  "venv": "default",
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "extraPaths": ["src"]
+    }
+  ],
+  "reportUnnecessaryTypeIgnoreComment": "error",
+  "reportUnusedVariable": "error",
+  "reportMissingParameterType": "error",
+  "reportPrivateUsage": "error"
+}

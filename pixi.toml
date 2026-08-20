@@ -1,0 +1,41 @@
+[workspace]
+name = "social-media-subscriber"
+version = "0.1.0"
+description = "A deterministic LinkedIn subscription collector"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = "3.13.*"
+anyio = ">=4.10,<5"
+pydantic = ">=2.12,<3"
+pydantic-settings = ">=2.10,<3"
+rich = ">=14,<15"
+structlog = ">=25,<26"
+typer = ">=0.16,<1"
+pytest = ">=8.4,<10"
+pytest-cov = ">=6.2,<8"
+coverage = ">=7.10,<8"
+hypothesis = ">=6.138,<7"
+ruff = ">=0.12,<1"
+basedpyright = ">=1.31,<2"
+actionlint = ">=1.7,<2"
+pyyaml = ">=6,<7"
+
+[pypi-dependencies]
+httpx2 = { version = ">=2,<3", extras = ["brotli", "http2", "zstd"] }
+
+[activation.env]
+PYTHONPATH = "$PIXI_PROJECT_ROOT/src"
+
+[tasks]
+format = "ruff format ."
+format-check = "ruff format --check ."
+lint = "ruff check ."
+typecheck = "basedpyright"
+test = "pytest"
+actionlint = "find .github/workflows -type f \\( -name '*.yml' -o -name '*.yaml' \\) -exec actionlint '{}' +"
+schemas = "python -m social_media_subscriber.schemas.generate"
+schemas-check = { depends-on = ["schemas"], cmd = "git diff --exit-code -- schemas" }
+subscriber = "python -m social_media_subscriber"
+verify = { depends-on = ["format-check", "lint", "typecheck", "test", "actionlint"] }
