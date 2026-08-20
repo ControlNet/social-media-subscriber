@@ -14,7 +14,12 @@ PostId = NewType("PostId", str)
 PlatformAccountId = NewType("PlatformAccountId", str)
 PlatformPostId = NewType("PlatformPostId", str)
 ContentHash = NewType("ContentHash", str)
+ACCOUNT_ID_PATTERN: Final = r"^linkedin:(?:person|company):[0-9]+$"
 _NUMERIC_PLATFORM_ID_PATTERN: Final = re.compile(r"[0-9]+", re.ASCII)
+_CANONICAL_ACCOUNT_ID_PATTERN: Final = re.compile(
+    r"linkedin:(?:person|company):[0-9]+",
+    re.ASCII,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +32,16 @@ class InvalidPlatformAccountIdError(ValueError):
     def __str__(self) -> str:
         """Describe the required grammar without echoing boundary input."""
         return "platform account ID must contain only ASCII digits"
+
+
+def is_canonical_account_id(value: str) -> bool:
+    """Return whether a value follows the canonical LinkedIn Account ID grammar."""
+    return _CANONICAL_ACCOUNT_ID_PATTERN.fullmatch(value) is not None
+
+
+def redact_invalid_account_id(value: str) -> str:
+    """Replace malformed Account IDs before boundary error rendering."""
+    return value if is_canonical_account_id(value) else "<redacted>"
 
 
 def account_id_for(

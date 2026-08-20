@@ -17,9 +17,11 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from social_media_subscriber.domain.ids import (
+    ACCOUNT_ID_PATTERN,
     AccountId,
     PlatformAccountId,
     account_id_for,
+    is_canonical_account_id,
 )
 from social_media_subscriber.domain.platform import AccountKind, Platform
 from social_media_subscriber.domain.time import canonical_utc
@@ -43,10 +45,6 @@ _CanonicalPlatformAccountId = Annotated[
     PlatformAccountId,
     StringConstraints(pattern=r"^[0-9]+$"),
 ]
-_CANONICAL_ACCOUNT_ID_PATTERN = re.compile(
-    r"linkedin:(?:person|company):[0-9]+",
-    re.ASCII,
-)
 _PROFILE_URL_ERROR_CODE: Final = "canonical_profile_url"
 _PROFILE_URL_ERROR_MESSAGE: Final = (
     "value must be a canonical public LinkedIn profile URL"
@@ -104,7 +102,7 @@ class Account(BaseModel):
     )
 
     schema_version: Literal[1] = 1
-    id: AccountId = Field(pattern=r"^linkedin:(?:person|company):[0-9]+$")
+    id: AccountId = Field(pattern=ACCOUNT_ID_PATTERN)
     platform: Literal[Platform.LINKEDIN]
     kind: AccountKind
     platform_account_id: _CanonicalPlatformAccountId
@@ -137,9 +135,7 @@ class Account(BaseModel):
             case _:
                 pass
         match values.get("id"):
-            case str() as account_id if (
-                _CANONICAL_ACCOUNT_ID_PATTERN.fullmatch(account_id) is None
-            ):
+            case str() as account_id if not is_canonical_account_id(account_id):
                 redacted["id"] = "<redacted>"
                 input_changed = True
             case _:

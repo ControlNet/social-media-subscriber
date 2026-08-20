@@ -6,18 +6,28 @@ import re
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
-from typing import ClassVar, Final, Literal, Self, override
+from typing import Annotated, ClassVar, Final, Literal, Self
 from urllib.parse import parse_qsl, urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from pydantic_core import PydanticCustomError
 
 from social_media_subscriber.domain.ids import (
+    ACCOUNT_ID_PATTERN,
     AccountId,
     ContentHash,
     PlatformPostId,
     PostId,
+    is_canonical_account_id,
     post_id_for,
+    redact_invalid_account_id,
 )
 from social_media_subscriber.domain.time import canonical_utc
 
@@ -36,29 +46,18 @@ _POST_ID_ERROR_CODE: Final = "post_id_mismatch"
 _POST_ID_ERROR_MESSAGE: Final = "post id does not match platform post id"
 _CONTENT_HASH_ERROR_CODE: Final = "content_hash_mismatch"
 _CONTENT_HASH_ERROR_MESSAGE: Final = "content hash does not match stable post fields"
+_ACCOUNT_ID_ERROR_CODE: Final = "canonical_account_id"
+_ACCOUNT_ID_ERROR_MESSAGE: Final = "value must be a canonical LinkedIn Account ID"
+_CanonicalAccountId = Annotated[
+    AccountId,
+    BeforeValidator(redact_invalid_account_id),
+]
 
 
 class PostKind(StrEnum):
     """Canonical Post variants supported in schema version one."""
 
     ORIGINAL = "original"
-
-
-@dataclass(frozen=True, slots=True)
-class PostMergeConflictError(Exception):
-    """A rediscovered Post conflicts with the immutable canonical record."""
-
-    post_id: PostId
-    existing_hash: ContentHash
-    candidate_hash: ContentHash
-
-    @override
-    def __str__(self) -> str:
-        """Return an actionable identifier and both conflicting hashes."""
-        return (
-            f"post {self.post_id} conflicts: "
-            f"{self.existing_hash} != {self.candidate_hash}"
-        )
 
 
 def _canonical_post_url(value: str) -> str:
@@ -131,6 +130,11 @@ class StablePostContent:
 
     def normalized(self) -> Self:
         """Return the deterministic representation used by the boundary model."""
+        if not is_canonical_account_id(self.account_id):
+            raise PydanticCustomError(
+                _ACCOUNT_ID_ERROR_CODE,
+                _ACCOUNT_ID_ERROR_MESSAGE,
+            )
         normalized_text = None
         if self.text is not None:
             candidate = self.text.replace("\r\n", "\n").replace("\r", "\n").strip()
@@ -175,13 +179,14 @@ class Post(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(
         extra="forbid",
         frozen=True,
+        hide_input_in_errors=True,
         validate_default=True,
     )
 
     schema_version: Literal[1] = 1
     id: PostId = Field(pattern=r"^linkedin:post:.+$")
     platform_post_id: PlatformPostId = Field(min_length=1)
-    account_id: AccountId = Field(pattern=r"^linkedin:(?:person|company):.+$")
+    account_id: _CanonicalAccountId = Field(pattern=ACCOUNT_ID_PATTERN)
     canonical_url: str
     published_at: datetime
     text: str | None
@@ -269,14 +274,3 @@ class Post(BaseModel):
                 _CONTENT_HASH_ERROR_MESSAGE,
             )
         return self
-
-
-def merge_post(existing: Post, candidate: Post) -> Post:
-    """Preserve the first canonical record or reject immutable-content drift."""
-    if existing.id == candidate.id and existing.content_hash == candidate.content_hash:
-        return existing
-    raise PostMergeConflictError(
-        post_id=existing.id,
-        existing_hash=existing.content_hash,
-        candidate_hash=candidate.content_hash,
-    )

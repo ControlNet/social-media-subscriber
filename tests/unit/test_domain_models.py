@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta, timezone
 from multiprocessing import get_context
-from typing import assert_type
+from typing import TYPE_CHECKING, assert_type
 
 import pytest
 from pydantic import ValidationError
@@ -24,11 +24,13 @@ from social_media_subscriber.domain.platform import AccountKind, Platform
 from social_media_subscriber.domain.post import (
     Post,
     PostKind,
-    PostMergeConflictError,
     StablePostContent,
-    merge_post,
 )
+from social_media_subscriber.domain.post_merge import PostMergeConflictError, merge_post
 from social_media_subscriber.serialization.json import canonical_json_bytes
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 FIRST_SEEN = datetime(2026, 8, 20, 12, 30, tzinfo=UTC)
 PUBLISHED = datetime(2026, 8, 19, 8, 15, tzinfo=UTC)
@@ -111,6 +113,31 @@ UNSAFE_APPROVED_LINKS = [
     "https://example.com/?next=%0Dadmin",
     "https://example.com/?next=%7fadmin",
     "https://example.com/?next=%7Fadmin",
+]
+VALID_POST_ACCOUNT_IDS = [
+    AccountId("linkedin:person:0"),
+    AccountId("linkedin:person:123"),
+    AccountId("linkedin:company:456"),
+]
+INVALID_POST_ACCOUNT_IDS = [
+    AccountId(""),
+    AccountId(" "),
+    AccountId("123"),
+    AccountId("linkedin:person:"),
+    AccountId("linkedin:person: 123"),
+    AccountId("linkedin:person:123 "),
+    AccountId("linkedin:person:+123"),
+    AccountId("linkedin:person:12.3"),
+    AccountId("linkedin:person:\uff11\uff12\uff13"),
+    AccountId("linkedin:person:abc"),
+    AccountId("linkedin:person:12/34"),
+    AccountId("linkedin:person:../../x"),
+    AccountId("linkedin:person:123:456"),
+    AccountId("linkedin:person:123\n"),
+    AccountId("linkedin:company:../../x"),
+    AccountId("linkedin:group:123"),
+    AccountId("urn:li:person:123"),
+    AccountId("LinkedIn:person:123"),
 ]
 
 
@@ -538,3 +565,73 @@ def test_account_boundary_error_representations_redact_invalid_account_id() -> N
         canary not in representation for representation in public_representations
     )
     assert error.errors(include_input=False)[0]["loc"] == ("id",)
+
+
+@pytest.mark.parametrize("account_id", VALID_POST_ACCOUNT_IDS)
+def test_post_accepts_canonical_ascii_numeric_account_id(account_id: AccountId) -> None:
+    # Given
+    stable = _stable_post(account_id)
+
+    # When
+    post = Post.from_stable(stable, FIRST_SEEN)
+
+    # Then
+    assert post.account_id == account_id
+
+
+@pytest.mark.parametrize("account_id", INVALID_POST_ACCOUNT_IDS)
+def test_post_from_stable_rejects_malformed_account_id_before_hash(
+    account_id: AccountId,
+    tmp_path: Path,
+) -> None:
+    # Given
+    stable = _stable_post(account_id)
+
+    # When / Then
+    with pytest.raises(PydanticCustomError) as captured:
+        _ = Post.from_stable(stable, FIRST_SEEN)
+    assert captured.value.type == "canonical_account_id"
+    assert tuple(tmp_path.iterdir()) == ()
+
+
+@pytest.mark.parametrize("account_id", INVALID_POST_ACCOUNT_IDS)
+def test_post_boundary_rejects_malformed_account_id_with_stable_field_error(
+    account_id: AccountId,
+) -> None:
+    # Given
+    values = _post(_account().id).model_dump()
+    values["account_id"] = account_id
+
+    # When
+    with pytest.raises(ValidationError) as captured:
+        _ = Post.model_validate(values)
+
+    # Then
+    details = captured.value.errors(include_input=False)
+    assert {detail["loc"] for detail in details} == {("account_id",)}
+    assert {detail["type"] for detail in details} == {"string_pattern_mismatch"}
+
+
+def test_post_boundary_error_representations_redact_invalid_account_id() -> None:
+    # Given
+    canary = "linkedin:person:post-account-canary-a17d"
+    values = _post(_account().id).model_dump()
+    values["account_id"] = canary
+
+    # When
+    with pytest.raises(ValidationError) as captured:
+        _ = Post.model_validate(values)
+
+    # Then
+    error = captured.value
+    public_representations = (
+        str(error),
+        repr(error),
+        error.json(),
+        repr(error.errors()),
+        repr(error.args),
+    )
+    assert all(
+        canary not in representation for representation in public_representations
+    )
+    assert error.errors(include_input=False)[0]["loc"] == ("account_id",)

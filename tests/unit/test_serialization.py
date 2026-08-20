@@ -145,3 +145,26 @@ def test_schema_generation_is_deterministic_and_structural(tmp_path: Path) -> No
                     assert re.fullmatch(pattern, unsafe_url) is None
         case unexpected:
             pytest.fail(f"unexpected Account ID schema: {unexpected!r}")
+
+    post_schema = _JSON_ADAPTER.validate_json(first_paths[1].read_bytes())
+    match post_schema:
+        case {
+            "properties": {"account_id": {"pattern": str() as post_account_id_pattern}}
+        }:
+            for valid_id in (
+                "linkedin:person:0",
+                "linkedin:person:123",
+                "linkedin:company:456",
+            ):
+                assert re.fullmatch(post_account_id_pattern, valid_id)
+            for invalid_id in (
+                "",
+                "linkedin:person:abc",
+                "linkedin:company:../../x",
+                "linkedin:person:\uff11\uff12\uff13",
+                "linkedin:person:123/456",
+                "urn:li:person:123",
+            ):
+                assert re.fullmatch(post_account_id_pattern, invalid_id) is None
+        case unexpected:
+            pytest.fail(f"unexpected Post AccountId schema: {unexpected!r}")

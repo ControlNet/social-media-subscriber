@@ -3,7 +3,7 @@
   "description": "Versioned provider-neutral original Post persisted at the boundary.",
   "properties": {
     "account_id": {
-      "pattern": "^linkedin:(?:person|company):.+$",
+      "pattern": "^linkedin:(?:person|company):[0-9]+$",
       "title": "Account Id",
       "type": "string"
     },
