@@ -1,0 +1,29 @@
+{
+  "date_posted": "2026-08-19T09:30:00Z",
+  "embedded_links": [
+    "https://example.test/article?utm_source=linkedin&a=1#section",
+    "https://example.test/plain",
+    "https://example.test:443/default#fragment",
+    "http://unsafe.example.test/",
+    "https://user@example.test/private",
+    "https://example.test:8443/private",
+    "https://example.test/private?access_token=redacted",
+    "https://media.licdn.com/dms/image/synthetic",
+    "https://media.linkedin.com/synthetic"
+  ],
+  "fixture_notice": "EXPLICITLY SYNTHETIC AND REDACTED TEST DATA",
+  "hashtags": ["Testing", "Synthetic", "Testing"],
+  "headline": "Explicitly synthetic headline",
+  "id": "urn:li:activity:1001",
+  "images": ["https://media.licdn.com/dms/image/synthetic?signature=redacted"],
+  "num_comments": 3,
+  "num_likes": 42,
+  "post_text": "Synthetic original post",
+  "post_type": "post",
+  "title": "Explicitly synthetic title",
+  "unknown_nested": {"future": [true, null, {"n": 3}]},
+  "use_url": "https://www.linkedin.com/in/synthetic-ada/",
+  "user_id": "12345",
+  "url": "https://www.linkedin.com/posts/synthetic-ada_example-1001/?trk=synthetic#fragment",
+  "videos": [{"url": "https://media.licdn.com/video/synthetic"}]
+}

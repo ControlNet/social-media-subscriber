@@ -1,0 +1,12 @@
+{
+  "date_posted": "2026-08-18T08:00:00+00:00",
+  "embedded_links": [],
+  "fixture_notice": "EXPLICITLY SYNTHETIC AND REDACTED TEST DATA",
+  "id": "urn:li:activity:2001",
+  "images": ["https://media.licdn.com/dms/image/company-synthetic?signature=redacted"],
+  "post_text": null,
+  "post_type": "post",
+  "use_url": "https://www.linkedin.com/company/synthetic-labs/",
+  "user_id": "67890",
+  "url": "https://www.linkedin.com/feed/update/urn:li:activity:2001/"
+}

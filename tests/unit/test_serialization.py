@@ -105,6 +105,7 @@ def test_schema_generation_is_deterministic_and_structural(tmp_path: Path) -> No
     # Then
     assert tuple(path.name for path in first_paths) == (
         "account.schema.json",
+        "brightdata-linkedin-post.schema.json",
         "post.schema.json",
     )
     assert tuple(path.read_bytes() for path in second_paths) == first_bytes

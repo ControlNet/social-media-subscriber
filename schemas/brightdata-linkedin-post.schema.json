@@ -1,0 +1,87 @@
+{
+  "$defs": {
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "description": "Schema-v1 source record whose identity is the canonical Post ID.",
+  "properties": {
+    "account_id": {
+      "pattern": "^linkedin:(?:person|company):[0-9]+$",
+      "title": "Account Id",
+      "type": "string"
+    },
+    "dataset_id": {
+      "const": "gd_lyy3tktm25m4avu764",
+      "default": "gd_lyy3tktm25m4avu764",
+      "title": "Dataset Id",
+      "type": "string"
+    },
+    "payload": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Payload",
+      "type": "object"
+    },
+    "payload_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Payload Sha256",
+      "type": "string"
+    },
+    "platform_post_id": {
+      "minLength": 1,
+      "title": "Platform Post Id",
+      "type": "string"
+    },
+    "provider": {
+      "const": "brightdata",
+      "default": "brightdata",
+      "title": "Provider",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "platform_post_id",
+    "account_id",
+    "payload_sha256",
+    "payload"
+  ],
+  "title": "BrightDataLinkedInPostSourceRecord",
+  "type": "object"
+}
