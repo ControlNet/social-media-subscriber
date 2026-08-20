@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 import socket
 from typing import ClassVar
@@ -204,6 +205,58 @@ def test_registry_rejects_invalid_metadata(
     # Then
     assert captured.value.driver_name == "InvalidMetadataDriver"
     assert captured.value.violation is violation
+
+
+def test_registry_rejects_non_enum_platform_before_instance_creation() -> None:
+    # Given
+    @adapter(
+        platform=Platform.LINKEDIN,
+        operations=(AdapterOperation.COLLECT_ACCOUNT_POSTS,),
+        account_kinds=(AccountKind.PERSON,),
+        supports_batch=False,
+    )
+    class StringPlatformDriver(_DeclaredAdapterDriver):
+        instances_created: ClassVar[int] = 0
+
+        def __init__(self) -> None:
+            type(self).instances_created += 1
+
+    malformed_metadata = copy.replace(
+        StringPlatformDriver.adapter_metadata,
+        platform="linkedin",
+    )
+    metadata_attribute = "adapter_metadata"
+    setattr(StringPlatformDriver, metadata_attribute, malformed_metadata)
+
+    # When
+    with pytest.raises(InvalidAdapterMetadataError) as captured:
+        _ = AdapterRegistry((StringPlatformDriver,))
+
+    # Then
+    assert captured.value.driver_name == "StringPlatformDriver"
+    assert captured.value.violation is MetadataViolation.INVALID_PLATFORM
+    assert StringPlatformDriver.instances_created == 0
+
+
+def test_registry_rejects_non_metadata_descriptor_before_instance_creation() -> None:
+    # Given
+    class MalformedDescriptorDriver(_DeclaredAdapterDriver):
+        instances_created: ClassVar[int] = 0
+
+        def __init__(self) -> None:
+            type(self).instances_created += 1
+
+    metadata_attribute = "adapter_metadata"
+    setattr(MalformedDescriptorDriver, metadata_attribute, "malformed")
+
+    # When
+    with pytest.raises(InvalidAdapterMetadataError) as captured:
+        _ = AdapterRegistry((MalformedDescriptorDriver,))
+
+    # Then
+    assert captured.value.driver_name == "MalformedDescriptorDriver"
+    assert captured.value.violation is MetadataViolation.MALFORMED_METADATA
+    assert MalformedDescriptorDriver.instances_created == 0
 
 
 def test_registry_construction_has_no_external_or_instance_side_effect(

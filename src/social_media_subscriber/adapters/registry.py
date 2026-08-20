@@ -5,19 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from social_media_subscriber.adapters.metadata import AdapterMetadata
 from social_media_subscriber.adapters.metadata_errors import MetadataViolation
+from social_media_subscriber.adapters.operations import AdapterOperation
 from social_media_subscriber.adapters.registry_errors import (
     DuplicateAdapterDescriptorError,
     DuplicateAdapterDriverError,
     InvalidAdapterMetadataError,
     MissingAdapterMetadataError,
 )
+from social_media_subscriber.domain.platform import AccountKind, Platform
 
 if TYPE_CHECKING:
-    from social_media_subscriber.adapters.metadata import AdapterMetadata
-    from social_media_subscriber.adapters.operations import AdapterOperation
     from social_media_subscriber.adapters.protocol import AdapterDriver
-    from social_media_subscriber.domain.platform import AccountKind, Platform
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,14 +40,48 @@ type AdapterResolution = ResolvedAdapterDrivers | UnsupportedAdapterCapability
 
 
 def _find_metadata_violation(metadata: AdapterMetadata) -> MetadataViolation | None:
-    if not metadata.operations:
-        return MetadataViolation.EMPTY_OPERATIONS
-    if not metadata.account_kinds:
-        return MetadataViolation.EMPTY_ACCOUNT_KINDS
-    if len(frozenset(metadata.operations)) != len(metadata.operations):
-        return MetadataViolation.DUPLICATE_OPERATIONS
-    if len(frozenset(metadata.account_kinds)) != len(metadata.account_kinds):
-        return MetadataViolation.DUPLICATE_ACCOUNT_KINDS
+    shape_checks = (
+        (type(metadata.platform) is not Platform, MetadataViolation.INVALID_PLATFORM),
+        (
+            type(metadata.operations) is not tuple
+            or any(
+                type(operation) is not AdapterOperation
+                for operation in metadata.operations
+            ),
+            MetadataViolation.INVALID_OPERATIONS,
+        ),
+        (
+            type(metadata.account_kinds) is not tuple
+            or any(
+                type(account_kind) is not AccountKind
+                for account_kind in metadata.account_kinds
+            ),
+            MetadataViolation.INVALID_ACCOUNT_KINDS,
+        ),
+        (
+            type(metadata.supports_batch) is not bool,
+            MetadataViolation.INVALID_SUPPORTS_BATCH,
+        ),
+    )
+    for is_invalid, violation in shape_checks:
+        if is_invalid:
+            return violation
+
+    content_checks = (
+        (not metadata.operations, MetadataViolation.EMPTY_OPERATIONS),
+        (not metadata.account_kinds, MetadataViolation.EMPTY_ACCOUNT_KINDS),
+        (
+            len(frozenset(metadata.operations)) != len(metadata.operations),
+            MetadataViolation.DUPLICATE_OPERATIONS,
+        ),
+        (
+            len(frozenset(metadata.account_kinds)) != len(metadata.account_kinds),
+            MetadataViolation.DUPLICATE_ACCOUNT_KINDS,
+        ),
+    )
+    for is_invalid, violation in content_checks:
+        if is_invalid:
+            return violation
     return None
 
 
@@ -77,6 +111,12 @@ class AdapterRegistry:
                 raise MissingAdapterMetadataError(
                     driver_name=driver_class.__name__
                 ) from None
+
+            if type(metadata) is not AdapterMetadata:
+                raise InvalidAdapterMetadataError(
+                    driver_name=driver_class.__name__,
+                    violation=MetadataViolation.MALFORMED_METADATA,
+                )
 
             violation = _find_metadata_violation(metadata)
             if violation is not None:
