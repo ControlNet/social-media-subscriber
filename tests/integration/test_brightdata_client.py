@@ -415,6 +415,56 @@ async def test_malformed_json_is_a_sanitized_schema_failure() -> None:
 
 
 @pytest.mark.anyio
+async def test_include_error_record_is_input_failure_not_identity() -> None:
+    # Given
+    async with fake_server(
+        [(200, [{"error": "provider-canary", "input": {"url": "url-canary"}}])]
+    ) as (_state, base_url):
+        client = BrightDataClient(
+            "credential-canary", HttpClientConfig(base_url=base_url)
+        )
+
+        # When / Then
+        async with client:
+            with pytest.raises(BrightDataError) as captured:
+                _ = await client.resolve_person_identities(
+                    ("https://www.linkedin.com/in/example/",)
+                )
+
+    assert captured.value.category is BrightDataErrorCategory.INPUT
+    assert "canary" not in str(captured.value)
+
+
+@pytest.mark.anyio
+async def test_snapshot_poll_failure_retains_accepted_ownership() -> None:
+    # Given
+    async def sleeper(_delay: float) -> None:
+        return
+
+    responses: list[tuple[int, ResponsePayload]] = [
+        (200, {"snapshot_id": "safe-id"}),
+        (401, {"error": "provider-canary"}),
+    ]
+    async with fake_server(responses) as (state, base_url):
+        client = BrightDataClient(
+            "credential-canary",
+            HttpClientConfig(base_url=base_url),
+            sleeper=sleeper,
+        )
+
+        # When / Then
+        async with client:
+            with pytest.raises(BrightDataError) as captured:
+                _ = await client.resolve_person_identities(
+                    ("https://www.linkedin.com/in/example/",)
+                )
+
+    assert captured.value.category is BrightDataErrorCategory.AUTH
+    assert captured.value.snapshot_accepted
+    assert sum(request.method == "POST" for request in state.requests) == 1
+
+
+@pytest.mark.anyio
 async def test_logs_never_contain_credentials_urls_or_provider_text() -> None:
     # Given
     url_canary = "https://www.linkedin.com/in/url-canary/"

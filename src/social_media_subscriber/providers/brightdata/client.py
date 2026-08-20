@@ -31,6 +31,7 @@ from social_media_subscriber.providers.brightdata.models import (
     BrightDataSnapshotProgress,
     JsonValue,
 )
+from social_media_subscriber.providers.brightdata.parsing import parse_items
 from social_media_subscriber.providers.http import (
     HttpClientConfig,
     create_async_http_client,
@@ -150,7 +151,7 @@ class BrightDataClient:
         response = await self._request("POST", "/datasets/v3/scrape", params, body)
         value = self._json(response)
         if isinstance(value, list):
-            return self._parse_items(value, item_type, accepted=False)
+            return parse_items(value, item_type, snapshot_accepted=False)
         try:
             envelope = BrightDataSnapshotEnvelope.model_validate(value)
         except ValidationError:
@@ -166,7 +167,7 @@ class BrightDataClient:
         polls = int(SNAPSHOT_TIMEOUT_SECONDS / SNAPSHOT_POLL_SECONDS)
         for _poll in range(polls):
             await self._sleeper(SNAPSHOT_POLL_SECONDS)
-            response = await self._request(
+            response = await self._snapshot_request(
                 "GET", f"/datasets/v3/progress/{snapshot_id}", None, None
             )
             try:
@@ -179,7 +180,7 @@ class BrightDataClient:
                 ) from None
             status = progress.status.casefold()
             if status == "ready":
-                downloaded = await self._request(
+                downloaded = await self._snapshot_request(
                     "GET", f"/datasets/v3/snapshot/{snapshot_id}", None, None
                 )
                 value = self._json(downloaded)
@@ -187,7 +188,7 @@ class BrightDataClient:
                     raise BrightDataError(
                         BrightDataErrorCategory.SCHEMA, snapshot_accepted=True
                     )
-                return self._parse_items(value, item_type, accepted=True)
+                return parse_items(value, item_type, snapshot_accepted=True)
             if status in _TERMINAL_SNAPSHOT_STATUSES:
                 raise BrightDataError(
                     BrightDataErrorCategory.SNAPSHOT_TERMINAL,
@@ -200,6 +201,20 @@ class BrightDataClient:
         raise BrightDataError(
             BrightDataErrorCategory.SNAPSHOT_TIMEOUT, snapshot_accepted=True
         )
+
+    async def _snapshot_request(
+        self,
+        method: str,
+        path: str,
+        params: dict[str, str] | None,
+        body: list[dict[str, str | bool]] | None,
+    ) -> httpx2.Response:
+        try:
+            return await self._request(method, path, params, body)
+        except BrightDataError as error:
+            raise BrightDataError(
+                error.category, status=error.status, snapshot_accepted=True
+            ) from None
 
     async def _request(
         self,
@@ -241,18 +256,3 @@ class BrightDataClient:
             return _JSON.validate_json(response.content)
         except ValidationError:
             raise BrightDataError(BrightDataErrorCategory.SCHEMA) from None
-
-    @staticmethod
-    def _parse_items[ModelT](
-        values: list[JsonValue],
-        item_type: type[ModelT],
-        *,
-        accepted: bool,
-    ) -> tuple[ModelT, ...]:
-        adapter = TypeAdapter(tuple[item_type, ...])
-        try:
-            return adapter.validate_python(values)
-        except ValidationError:
-            raise BrightDataError(
-                BrightDataErrorCategory.SCHEMA, snapshot_accepted=accepted
-            ) from None
