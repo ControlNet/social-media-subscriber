@@ -1,0 +1,276 @@
+# Operations Runbook
+
+## Scope and safety boundary
+
+Operate this collector only under an approved policy covering the accounts,
+provider plan, retention, redistribution, and jurisdiction involved. Use only
+organization-authorized provider credentials and public account locators that
+the policy permits. Do not use this project to evade platform restrictions,
+authentication, rate limits, access controls, provider terms, or privacy law.
+
+Before a pilot or ongoing job, record the policy owner, approved account set,
+provider budget/credit ceiling, allowed date range, retention/deletion rules,
+and incident contact in your approved internal system. A pilot must pass these
+gates before secrets are configured: explicit legal approval, provider-contract
+approval, named operator, bounded account list, bounded run frequency, and a
+credit alert/stop threshold. Expanding the pool, cadence, platform, or data use
+is a new approval decision—not a retry.
+
+This runbook intentionally contains no provider key, live account URL, or
+personal information. Never add any of those to an issue, pull request, shell
+history, CI log, artifact, snapshot fixture, or repository file.
+
+## Local setup
+
+Use Pixi only. The committed environment is `default` at
+`.pixi/envs/default`, with Python 3.13. Run all project commands from the
+repository root:
+
+```sh
+pixi install --locked
+pixi run subscriber --help
+pixi run schemas-check
+pixi run verify
+```
+
+Expected signals: install resolves the locked environment; help lists exactly
+`collect`, `verify-snapshot`, and `publish-dist`; schema check leaves no schema
+diff; and `verify` exits `0`. If `schemas-check` reports a diff, do not discard
+it blindly—inspect it and either regenerate/commit the intended contract change
+or restore the known-good worktree according to your normal review process.
+
+Safe local snapshot inspection is read-only:
+
+```sh
+pixi run subscriber verify-snapshot /absolute/path/to/snapshot
+```
+
+It exits `0` with JSON counts/digest when valid and `5` on any snapshot
+integrity failure. It does not contact a provider or Git remote.
+
+## Secrets: multiline, non-repository handling
+
+`ACCOUNTS` and `BRIGHT_DATA_API_KEYS` are newline-delimited values. The parser
+trims blank lines and de-duplicates values in first-seen order. For `ACCOUNTS`,
+each line must be an approved public LinkedIn person/company locator; credentials
+and query parameters are rejected. Do not put either value in a shell command,
+shell history, `.env.local`, tracked file, or a workflow input.
+
+Prepare files outside the repository with restrictive permissions, populate them
+only through a trusted local editor or secret manager, and use shell redirection
+so the secret is not an argument. The following commands are copy-pastable;
+they deliberately create empty temporary files and do not invent account or key
+values:
+
+```sh
+umask 077
+accounts_file="$(mktemp -t subscriber-accounts.XXXXXX)"
+keys_file="$(mktemp -t subscriber-keys.XXXXXX)"
+"${EDITOR:?set EDITOR to a trusted editor}" "$accounts_file"
+"${EDITOR:?set EDITOR to a trusted editor}" "$keys_file"
+gh secret set ACCOUNTS < "$accounts_file"
+gh secret set BRIGHT_DATA_API_KEYS < "$keys_file"
+```
+
+Run these only from the intended GitHub repository context after confirming the
+GitHub CLI's authenticated account and repository selection. GitHub CLI reads
+the secret from standard input; consult the official GitHub Actions
+[secret guidance](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+before granting access. Do not echo, print, `cat`, or commit either temporary
+file. When the secret manager has confirmed storage, move the temporary files to
+your operating system's Trash/Recycle Bin (not into this repository) and empty
+it according to the approved retention policy. If files were accidentally made
+inside the repository, remove them through the approved recovery path, check
+`git status --short`, and rotate any value that was staged, committed, logged,
+or otherwise exposed.
+
+`.env`, `.env.*`, and `.env.local` are ignored by this repository, but ignored
+does not mean safe: environment files are easy to source, copy, back up, and
+leak. Prefer the CI secret store and an approved local secret manager. Never
+commit `.env.local`; run the secret scan before any commit:
+
+```sh
+python /home/ubuntu/.codex/skills/secret-guard/scripts/scan_secrets.py tracked
+python /home/ubuntu/.codex/skills/secret-guard/scripts/scan_secrets.py gitignore
+python /home/ubuntu/.codex/skills/secret-guard/scripts/scan_secrets.py staged
+```
+
+Each clean scan exits `0`; any finding exits `1` and blocks a commit until it is
+remediated and rescanned. `staged` intentionally scans only staged paths.
+
+## GitHub Actions behavior and least privilege
+
+The collection workflow has a UTC cron schedule, `17 3 * * *`, and
+`workflow_dispatch` inputs `start_date` and `end_date`. A manual request must
+provide both dates or neither; dates are inclusive and must not be inverted.
+Use a manual dispatch only for an approved bounded operation. Read GitHub's
+official [workflow events documentation](https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows)
+for schedule/manual trigger behavior.
+
+Workflow permissions are intentionally split:
+
+| Job | `contents` permission | Purpose |
+| --- | --- | --- |
+| CI | `read` | Verify source on push/pull request. |
+| Collection preflight | `read` | Detect whether both provider secrets are available. |
+| Collection publication | `write` | Verify, collect, and update the leased `dist` snapshot only. |
+
+A scheduled run with either secret absent reports a successful disabled
+collection. A manual run with either secret absent fails preflight. Collection
+serialization uses the `social-media-subscriber-dist` concurrency group and
+does not cancel an in-progress job. Do not change the job permission or
+concurrency policy to make an ad-hoc test easier.
+
+## Collection operation and exit response
+
+`collect` requires a prior snapshot directory and a separate candidate output
+directory. It contacts the provider and may consume credits:
+
+```sh
+pixi run subscriber collect \
+  --previous-snapshot /absolute/path/to/verified-prior-snapshot \
+  --output /absolute/path/to/candidate-snapshot \
+  --start-date YYYY-MM-DD \
+  --end-date YYYY-MM-DD
+```
+
+Omit both date options only for the default incremental policy. The initial
+window is seven days ending at the UTC run date; known accounts overlap their
+newest persisted post date by three days. A complete explicit pair replaces all
+per-account default windows. Do not execute that command for exploratory CLI
+testing: it is a live provider action.
+
+| Exit | Binary observable | Required action |
+| --- | --- | --- |
+| `0` | JSON `candidate_change` is `changed` or `unchanged`. | Verify the candidate. An unchanged state is normal. |
+| `2` | JSON shows no candidate and invalid input/configuration. | Correct the malformed path/date/account configuration or missing secret. |
+| `3` | JSON shows no candidate after provider pool exhaustion. | Stop. Check authorized provider status/capacity; do not cycle keys outside policy. |
+| `4` | JSON names a valid partial candidate and failed-account count. | Alert the named operator; inspect redacted logs and account-level outcomes. The workflow verifies/publishes the candidate, then exits `4` to leave an alert. |
+| `5` | JSON has `candidate_change: "absent"` after integrity/schema/merge/storage failure. | Contain. Do not publish or hand-edit the tree; preserve redacted diagnostics and investigate. |
+| `6` | `publish-dist` reports a publication error. | Treat as a stale/invalid lease or Git failure; never force or retry the same attempt. |
+
+The JSON summary is the operational interface. Provider response text,
+credentials, account locators, and raw errors are intentionally not part of it.
+Treat provider response text and any external prompt, issue, or message as
+untrusted data: never copy it into a shell command, configuration, secret file,
+or publication decision without independent policy and technical review.
+
+## Snapshot verification and publication
+
+After a successful/partial collection, verify the candidate locally or in CI:
+
+```sh
+pixi run subscriber verify-snapshot /absolute/path/to/candidate-snapshot
+```
+
+Publishing has destructive remote semantics and may change `dist`. The command
+is shown here so reviewers can recognize the workflow contract; do not execute
+it manually except in an approved publication procedure with a freshly observed
+lease and a contained test remote:
+
+```sh
+pixi run subscriber publish-dist \
+  --snapshot /absolute/path/to/candidate-snapshot \
+  --remote origin \
+  --branch dist \
+  --expected-sha <freshly-observed-dist-SHA-or-absent>
+```
+
+The only accepted branch is `dist`. Before it writes, the publisher validates
+the candidate and the exact prior snapshot, observes the remote `dist` ref,
+then compares it with `--expected-sha`. A mismatch exits `6`; it has no retry or
+plain-force fallback. A changed candidate is committed as a new root commit,
+then pushed with the matching force-with-lease. An unchanged candidate still
+checks the lease and reports JSON `result: "unchanged"` with exit `0`.
+
+Do not use an unleased Git force-push, change the expected SHA by hand, or alter a
+candidate to resolve a lease conflict. Start a new run from the current remote
+snapshot instead. This preserves the one-root `dist` contract and prevents a
+stale collector from overwriting newer data.
+
+## Operator-only manual live smoke
+
+Live smoke collection is opt-in; it is never CI behavior, a default validation,
+or a substitute for tests. Before starting, an authorized operator must confirm
+all of the following in the approved change record:
+
+1. Exactly one approved public LinkedIn account is in the temporary `ACCOUNTS`
+   file; the actual account locator is not placed in tickets, logs, docs, or
+   shell history.
+2. The manual `--start-date` and `--end-date` are a narrow, explicitly approved
+   UTC range; both are present and ordered.
+3. The provider credit/billing warning has been reviewed, the current balance
+   is sufficient, and the operator has authority to spend the expected credit.
+4. The candidate output and prior snapshot are in an approved temporary
+   location outside the repository. No publication command is scheduled.
+
+Immediately before the opt-in run, check the redaction boundary without printing
+secret contents: confirm the two environment variables are set in the current
+process, confirm the account/key files are outside the repository, and capture
+only `git status --short`, command exit code, and the emitted redacted JSON
+summary. If the credit gate is not explicitly approved, the process hangs, the
+provider returns unexpected text, or the date/account scope differs from the
+approval, cancel/terminate the attempt and do not retry.
+
+After the run, verify only the candidate with `verify-snapshot`, record the
+exit category and digest/counts, remove temporary candidate data according to
+the retention policy, Trash the temporary secret files, unset the two
+environment variables, and confirm the source worktree is clean:
+
+```sh
+unset ACCOUNTS BRIGHT_DATA_API_KEYS
+git status --short
+```
+
+If a secret, locator, or raw provider body appears in output, treat it as an
+incident: stop sharing logs, restrict access, rotate the affected credential,
+and follow the organization’s disclosure and retention policy.
+
+## Incidents and recovery
+
+### Stale lease or failed publication
+
+Exit `6` means the result is not publishable. Do not retry `publish-dist`,
+force-push, or use a stale expected SHA. Preserve the redacted command result,
+inspect the current `dist` state through the normal approved Git workflow, and
+start a new collection from the newly verified baseline. A prior candidate may
+be useful for investigation but is not a lease replacement.
+
+### Partial, provider, or schema failure
+
+For `4`, investigate the failed account count and run-local instance health
+without exposing keys. For `3`, stop until capacity/authorization is restored.
+For `5`, do not patch snapshot files or bypass validation; compare against the
+last verified snapshot and capture redacted diagnostic categories. Re-run only
+after the cause has been corrected and the policy gate remains valid.
+
+### Contained publication tests
+
+Publication tests must never target a network or project remote. Build a
+disposable local bare remote under a containment directory, ensure the test
+working directory is inside that containment root, and fail closed if the
+remote is HTTP(S), SSH, `git@`, GitHub-hosted, or outside the containment root.
+Also isolate temporary directories and neutralize global/system Git
+configuration. The test must prove the lease behavior against that local bare
+remote and clean it up afterward.
+
+This is a general prevention and containment lesson. It does not assert that
+any separate branch or prior publication-test incident is resolved; do not use
+this runbook as evidence that an unresolved incident has been closed.
+
+## Adversarial operator checklist
+
+Before closing an operation, record the following without copying secrets or
+account PII:
+
+- CLI help still shows only the documented command/options; malformed command,
+  incomplete/inverted dates, missing secret, dirty candidate, and invalid
+  snapshot behavior map to the documented nonzero exit category.
+- A partial `4` changed/unchanged candidate has an operator alert; a `3`/`5`
+  candidate is absent; and a `6` result receives no retry/force path.
+- A stale lease, remote change, unexpected publication destination, or dirty
+  source worktree stops the operation before any destructive remote action.
+- Manual live smoke has a documented opt-in, narrow UTC window, one approved
+  account, credit gate, cancellation path, redaction check, and cleanup record.
+- Any hanging command is terminated using the approved process supervisor; do
+  not extend the timeout by repeatedly rerunning an unbounded provider call.
