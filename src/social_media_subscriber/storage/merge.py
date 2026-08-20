@@ -142,15 +142,13 @@ def _merge_sources(
 
 def merge_snapshot(
     previous: SnapshotState | None,
-    accounts: tuple[Account, ...],
-    posts: tuple[Post, ...],
-    source_records: tuple[BrightDataLinkedInPostSourceRecord, ...],
+    current: SnapshotState,
 ) -> SnapshotState:
     """Merge a partial successful run without deleting absent prior records."""
     baseline = previous or SnapshotState((), (), ())
-    merged_accounts = _merge_accounts(baseline.accounts, accounts)
-    merged_posts = _merge_posts(baseline.posts, posts)
-    merged_sources = _merge_sources(baseline.source_records, source_records)
+    merged_accounts = _merge_accounts(baseline.accounts, current.accounts)
+    merged_posts = _merge_posts(baseline.posts, current.posts)
+    merged_sources = _merge_sources(baseline.source_records, current.source_records)
     known_accounts = {account.id for account in merged_accounts}
     post_owners = {post.id: post.account_id for post in merged_posts}
     for post in merged_posts:

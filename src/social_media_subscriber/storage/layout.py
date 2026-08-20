@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 ACCOUNTS_DIRECTORY: Final = Path("accounts")
 POSTS_DIRECTORY: Final = Path("posts/linkedin")
@@ -14,7 +17,7 @@ FEED_INDEX: Final = Path("feed.json")
 MANIFEST: Final = Path("snapshot.json")
 
 
-def snapshot_digest(files: dict[Path, bytes]) -> str:
+def snapshot_digest(files: Mapping[Path, bytes]) -> str:
     """Hash sorted relative paths and bytes with an unambiguous separator."""
     digest = hashlib.sha256()
     for relative_path in sorted(files, key=lambda path: path.as_posix()):

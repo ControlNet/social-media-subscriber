@@ -91,7 +91,7 @@ def test_merge_preserves_first_seen_and_adds_sorted_aliases() -> None:
     previous = SnapshotState(accounts=(old,), posts=(), source_records=())
 
     # When
-    result = merge_snapshot(previous, (rediscovered,), (), ())
+    result = merge_snapshot(previous, SnapshotState((rediscovered,), (), ()))
 
     # Then
     assert result.accounts == (
@@ -116,7 +116,9 @@ def test_merge_updates_post_and_source_at_stable_identity() -> None:
     metric_source = _source(account, metric=2)
 
     # When
-    result = merge_snapshot(previous, (), (edited_post,), (metric_source,))
+    result = merge_snapshot(
+        previous, SnapshotState((), (edited_post,), (metric_source,))
+    )
 
     # Then
     assert result.posts[0].text == "Edited"
@@ -130,7 +132,7 @@ def test_merge_retains_absent_records() -> None:
     previous = SnapshotState((account,), (_post(account),), (_source(account),))
 
     # When
-    result = merge_snapshot(previous, (), (), ())
+    result = merge_snapshot(previous, SnapshotState((), (), ()))
 
     # Then
     assert result == previous
@@ -159,7 +161,7 @@ def test_merge_aborts_integrity_conflicts(
 ) -> None:
     # Given / When / Then
     with pytest.raises(SnapshotConflictError):
-        _ = merge_snapshot(None, accounts, posts, sources)
+        _ = merge_snapshot(None, SnapshotState(accounts, posts, sources))
 
 
 def test_merge_is_independent_of_input_order() -> None:
@@ -170,8 +172,10 @@ def test_merge_is_independent_of_input_order() -> None:
     sources = (_source(first, "p2"), _source(second, "p1"))
 
     # When
-    forward = merge_snapshot(None, (first, second), posts, sources)
-    reverse = merge_snapshot(None, (second, first), posts[::-1], sources[::-1])
+    forward = merge_snapshot(None, SnapshotState((first, second), posts, sources))
+    reverse = merge_snapshot(
+        None, SnapshotState((second, first), posts[::-1], sources[::-1])
+    )
 
     # Then
     assert forward == reverse
