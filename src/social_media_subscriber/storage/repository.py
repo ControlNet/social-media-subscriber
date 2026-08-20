@@ -183,7 +183,21 @@ class SnapshotRepository:
         try:
             _ = backup.replace(self._root)
         except OSError:
-            _ = shutil.copytree(backup, self._root)
+            recovery = Path(
+                tempfile.mkdtemp(
+                    prefix=f".{self._root.name}.previous-recovery.",
+                    dir=self._root.parent,
+                )
+            )
+            recovery.rmdir()
+            try:
+                _ = shutil.copytree(backup, recovery)
+                _ = recovery.rename(self._root)
+            except (OSError, shutil.Error):
+                if recovery.exists():
+                    shutil.rmtree(recovery)
+                _ = backup.replace(self._root)
+                raise
             shutil.rmtree(backup)
 
     def _files(self, state: SnapshotState) -> dict[Path, bytes]:
