@@ -1,0 +1,71 @@
+{
+  "$defs": {
+    "AccountKind": {
+      "description": "Public identity shape supported by a platform.",
+      "enum": [
+        "person",
+        "company"
+      ],
+      "title": "AccountKind",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Versioned provider-neutral Account record persisted at the boundary.",
+  "properties": {
+    "first_seen_at": {
+      "format": "date-time",
+      "title": "First Seen At",
+      "type": "string"
+    },
+    "id": {
+      "pattern": "^linkedin:(?:person|company):.+$",
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/AccountKind"
+    },
+    "platform": {
+      "const": "linkedin",
+      "title": "Platform",
+      "type": "string"
+    },
+    "platform_account_id": {
+      "minLength": 1,
+      "title": "Platform Account Id",
+      "type": "string"
+    },
+    "profile_url": {
+      "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/[^/]+/$",
+      "title": "Profile Url",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "url_aliases": {
+      "items": {
+        "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/[^/]+/$",
+        "type": "string"
+      },
+      "title": "Url Aliases",
+      "type": "array",
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "id",
+    "platform",
+    "kind",
+    "platform_account_id",
+    "profile_url",
+    "url_aliases",
+    "first_seen_at"
+  ],
+  "title": "Account",
+  "type": "object"
+}
