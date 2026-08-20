@@ -2,7 +2,7 @@
 
 import re
 from datetime import datetime
-from typing import Annotated, ClassVar, Final, Literal, Self
+from typing import Annotated, ClassVar, Final, Literal, Self, assert_never
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -27,6 +27,10 @@ _PROFILE_PATH_PATTERN = re.compile(r"/(?:in|company)/[^/]+/\Z", re.ASCII)
 _CanonicalProfileUrl = Annotated[
     str,
     StringConstraints(pattern=r"^https://www\.linkedin\.com/(?:in|company)/[^/]+/$"),
+]
+_CanonicalPlatformAccountId = Annotated[
+    PlatformAccountId,
+    StringConstraints(pattern=r"^[0-9]+$"),
 ]
 _PROFILE_URL_ERROR_CODE: Final = "canonical_profile_url"
 _PROFILE_URL_ERROR_MESSAGE: Final = (
@@ -77,10 +81,10 @@ class Account(BaseModel):
     )
 
     schema_version: Literal[1] = 1
-    id: AccountId = Field(pattern=r"^linkedin:(?:person|company):.+$")
+    id: AccountId = Field(pattern=r"^linkedin:(?:person|company):[0-9]+$")
     platform: Literal[Platform.LINKEDIN]
     kind: AccountKind
-    platform_account_id: PlatformAccountId = Field(min_length=1)
+    platform_account_id: _CanonicalPlatformAccountId
     profile_url: _CanonicalProfileUrl
     url_aliases: tuple[_CanonicalProfileUrl, ...] = Field(
         json_schema_extra={"uniqueItems": True}
@@ -114,11 +118,7 @@ class Account(BaseModel):
                 _ACCOUNT_ID_ERROR_CODE,
                 _ACCOUNT_ID_ERROR_MESSAGE,
             )
-        match self.kind:
-            case AccountKind.PERSON:
-                expected_path = "/in/"
-            case AccountKind.COMPANY:
-                expected_path = "/company/"
+        expected_path = _account_kind_path(self.kind)
         all_urls = (self.profile_url, *self.url_aliases)
         if not all(
             urlsplit(value).path.startswith(expected_path) for value in all_urls
@@ -128,3 +128,12 @@ class Account(BaseModel):
                 _ACCOUNT_KIND_URL_ERROR_MESSAGE,
             )
         return self
+
+
+def _account_kind_path(kind: AccountKind) -> str:
+    match kind:
+        case AccountKind.PERSON:
+            return "/in/"
+        case AccountKind.COMPANY:
+            return "/company/"
+    assert_never(kind)

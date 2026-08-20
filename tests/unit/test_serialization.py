@@ -116,3 +116,16 @@ def test_schema_generation_is_deterministic_and_structural(tmp_path: Path) -> No
                 pass
             case unexpected:
                 pytest.fail(f"unexpected schema structure: {unexpected!r}")
+
+    account_schema = _JSON_ADAPTER.validate_json(first_paths[0].read_bytes())
+    match account_schema:
+        case {
+            "properties": {
+                "id": {"pattern": account_id_pattern},
+                "platform_account_id": {"pattern": platform_id_pattern},
+            }
+        }:
+            assert account_id_pattern == r"^linkedin:(?:person|company):[0-9]+$"
+            assert platform_id_pattern == r"^[0-9]+$"
+        case unexpected:
+            pytest.fail(f"unexpected Account ID schema: {unexpected!r}")

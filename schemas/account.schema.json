@@ -19,7 +19,7 @@
       "type": "string"
     },
     "id": {
-      "pattern": "^linkedin:(?:person|company):.+$",
+      "pattern": "^linkedin:(?:person|company):[0-9]+$",
       "title": "Id",
       "type": "string"
     },
@@ -32,7 +32,7 @@
       "type": "string"
     },
     "platform_account_id": {
-      "minLength": 1,
+      "pattern": "^[0-9]+$",
       "title": "Platform Account Id",
       "type": "string"
     },

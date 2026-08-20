@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
@@ -22,6 +23,10 @@ from social_media_subscriber.domain.time import canonical_utc
 
 _SENSITIVE_QUERY_KEYS = frozenset(
     {"access_token", "api_key", "auth", "key", "password", "signature", "token"}
+)
+_URL_CONTROL_PATTERN = re.compile(
+    r"(?:[\x00-\x1f\x7f]|%(?:0[0-9a-f]|1[0-9a-f]|7f))",
+    re.IGNORECASE,
 )
 _POST_URL_ERROR_CODE: Final = "canonical_post_url"
 _POST_URL_ERROR_MESSAGE: Final = "value must be a canonical public LinkedIn post URL"
@@ -64,7 +69,8 @@ def _canonical_post_url(value: str) -> str:
         port = -1
         parsed = urlsplit("")
     if (
-        parsed.scheme != "https"
+        _URL_CONTROL_PATTERN.search(value) is not None
+        or parsed.scheme != "https"
         or parsed.netloc != "www.linkedin.com"
         or parsed.hostname != "www.linkedin.com"
         or parsed.username is not None
@@ -90,7 +96,8 @@ def _approved_link(value: str) -> str:
         parsed = urlsplit("")
     query_keys = frozenset(key.casefold() for key, _value in parse_qsl(parsed.query))
     if (
-        parsed.scheme != "https"
+        _URL_CONTROL_PATTERN.search(value) is not None
+        or parsed.scheme != "https"
         or parsed.hostname is None
         or parsed.username is not None
         or parsed.password is not None

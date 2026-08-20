@@ -7,10 +7,12 @@ from typing import assert_type
 
 import pytest
 from pydantic import ValidationError
+from pydantic_core import PydanticCustomError
 
 from social_media_subscriber.domain.account import Account
 from social_media_subscriber.domain.ids import (
     AccountId,
+    InvalidPlatformAccountIdError,
     PlatformAccountId,
     PlatformPostId,
     PostId,
@@ -30,6 +32,19 @@ from social_media_subscriber.serialization.json import canonical_json_bytes
 
 FIRST_SEEN = datetime(2026, 8, 20, 12, 30, tzinfo=UTC)
 PUBLISHED = datetime(2026, 8, 19, 8, 15, tzinfo=UTC)
+MALFORMED_PLATFORM_ACCOUNT_IDS = (
+    "",
+    "abc",
+    "../../x",
+    "urn:li:person:123",
+    "12/34",
+    "12.34",
+    "+123",
+    " 123",
+    "123 ",
+    "123\n",
+    "\uff11\uff12\uff13",
+)
 
 
 def _import_domain_package() -> None:
@@ -225,8 +240,14 @@ def test_account_rejects_invalid_boundary_values(
         ("published_at", "2026-08-19T08:15:00"),
         ("id", "linkedin:person:12345"),
         ("canonical_url", "https://evil.example/posts/123"),
+        ("canonical_url", "https://www.linkedin.com/posts/example-123\n"),
+        ("canonical_url", "https://www.linkedin.com/po\tsts/example-123"),
+        ("canonical_url", "https://www.linkedin.com/posts/example%0A123"),
         ("kind", "repost"),
         ("links", ("https://example.com/?access_token=canary",)),
+        ("links", ("https://example.com/path\n",)),
+        ("links", ("https://example.com/pa\tth",)),
+        ("links", ("https://example.com/path%0D%0Aheader",)),
     ],
 )
 def test_post_rejects_invalid_boundary_values(
@@ -265,3 +286,85 @@ def test_record_filename_is_safe_for_malicious_external_ids() -> None:
     assert filename.endswith(".json")
     assert filename[:-5].isalnum()
     assert filename[:-5] == filename[:-5].lower()
+
+
+@pytest.mark.parametrize("kind", tuple(AccountKind))
+@pytest.mark.parametrize("malformed_id", MALFORMED_PLATFORM_ACCOUNT_IDS)
+def test_account_id_constructor_rejects_non_ascii_numeric_platform_id(
+    kind: AccountKind,
+    malformed_id: str,
+) -> None:
+    # Given
+    platform_account_id = PlatformAccountId(malformed_id)
+
+    # When / Then
+    with pytest.raises(InvalidPlatformAccountIdError):
+        _ = account_id_for(kind, platform_account_id)
+
+
+@pytest.mark.parametrize("kind", tuple(AccountKind))
+@pytest.mark.parametrize("malformed_id", MALFORMED_PLATFORM_ACCOUNT_IDS)
+def test_account_boundary_rejects_non_ascii_numeric_platform_id(
+    kind: AccountKind,
+    malformed_id: str,
+) -> None:
+    # Given
+    kind_path = {
+        AccountKind.PERSON: "in",
+        AccountKind.COMPANY: "company",
+    }[kind]
+    values = {
+        "id": f"linkedin:{kind.value}:{malformed_id}",
+        "platform": Platform.LINKEDIN,
+        "kind": kind,
+        "platform_account_id": malformed_id,
+        "profile_url": f"https://www.linkedin.com/{kind_path}/synthetic/",
+        "url_aliases": (f"https://www.linkedin.com/{kind_path}/synthetic/",),
+        "first_seen_at": FIRST_SEEN,
+    }
+
+    # When / Then
+    with pytest.raises(ValidationError):
+        _ = Account.model_validate(values)
+
+
+@pytest.mark.parametrize(
+    "unsafe_url",
+    [
+        "https://www.linkedin.com/posts/example-123\n",
+        "https://www.linkedin.com/po\tsts/example-123",
+        "https://www.linkedin.com/posts/example%0A123",
+    ],
+)
+def test_stable_post_content_rejects_control_characters_in_canonical_url(
+    unsafe_url: str,
+) -> None:
+    # Given
+    account = _account()
+    stable = replace(_stable_post(account.id), canonical_url=unsafe_url)
+
+    # When / Then
+    with pytest.raises(PydanticCustomError) as captured:
+        _ = stable.normalized()
+    assert captured.value.type == "canonical_post_url"
+
+
+@pytest.mark.parametrize(
+    "unsafe_link",
+    [
+        "https://example.com/path\n",
+        "https://example.com/pa\tth",
+        "https://example.com/path%0D%0Aheader",
+    ],
+)
+def test_stable_post_content_rejects_control_characters_in_approved_link(
+    unsafe_link: str,
+) -> None:
+    # Given
+    account = _account()
+    stable = replace(_stable_post(account.id), links=(unsafe_link,))
+
+    # When / Then
+    with pytest.raises(PydanticCustomError) as captured:
+        _ = stable.normalized()
+    assert captured.value.type == "approved_public_link"
