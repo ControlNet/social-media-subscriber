@@ -30,10 +30,12 @@ if TYPE_CHECKING:
     from social_media_subscriber.adapters.instance import (
         AdapterInstance,
         AdapterInstanceFactory,
+        AdapterPostRequest,
     )
     from social_media_subscriber.adapters.registry import AdapterRegistry
     from social_media_subscriber.adapters.router_outcomes import IdentityRouterResult
     from social_media_subscriber.domain.account import Account
+    from social_media_subscriber.domain.ids import AccountId
 
 _MAX_BATCH_SIZE: Final = 20
 _KIND_ORDER: Final = (AccountKind.PERSON, AccountKind.COMPANY)
@@ -71,7 +73,7 @@ class Router:
 
     async def route(
         self,
-        accounts: tuple[Account, ...],
+        requests: tuple[AdapterPostRequest, ...],
         operation: AdapterOperation,
     ) -> RouterResult:
         """Collect Accounts deterministically with health scoped to this call."""
@@ -80,19 +82,30 @@ class Router:
                 pass
             case AdapterOperation.RESOLVE_ACCOUNT_IDENTITY:
                 raise RouterOperationError(operation)
-        unique_accounts = {account.id: account for account in accounts}
-        ordered_accounts = tuple(
-            sorted(unique_accounts.values(), key=lambda account: str(account.id))
+        unique_requests: dict[AccountId, AdapterPostRequest] = {}
+        for request in requests:
+            existing = unique_requests.get(request.account.id)
+            if existing is not None and (
+                existing.start_date != request.start_date
+                or existing.end_date != request.end_date
+            ):
+                raise instance_contract.AdapterRequestError(
+                    instance_contract.AdapterRequestErrorCategory.CONFLICTING_WINDOW
+                )
+            if existing is None:
+                unique_requests[request.account.id] = request
+        ordered_requests = tuple(
+            unique_requests[key] for key in sorted(unique_requests, key=str)
         )
         state = RouterRunState.for_instances(self._instances)
         batch_number = 0
         for kind in _KIND_ORDER:
-            kind_accounts = tuple(
-                account for account in ordered_accounts if account.kind is kind
+            kind_requests = tuple(
+                request for request in ordered_requests if request.account.kind is kind
             )
-            for offset in range(0, len(kind_accounts), _MAX_BATCH_SIZE):
+            for offset in range(0, len(kind_requests), _MAX_BATCH_SIZE):
                 batch = instance_contract.AdapterBatch(
-                    accounts=kind_accounts[offset : offset + _MAX_BATCH_SIZE]
+                    requests=kind_requests[offset : offset + _MAX_BATCH_SIZE]
                 )
                 if await self._route_batch(batch, batch_number, state):
                     return state.result(RouterRunStatus.ABORTED, include_posts=False)

@@ -15,6 +15,7 @@ from social_media_subscriber.adapters.instance import (
     AcceptedSnapshotBatchFailure,
     AccountRejectionCategory,
     AdapterInstanceOrdinal,
+    AdapterPostRequest,
     BatchCompleted,
     CollectedAccount,
     IdentityBatchCompleted,
@@ -25,12 +26,6 @@ from social_media_subscriber.adapters.instance import (
     SchemaBatchFailure,
 )
 from social_media_subscriber.domain.platform import AccountKind, Platform
-from social_media_subscriber.providers.brightdata.adapter_contracts import (
-    AccountPostRequest,
-    BrightDataAdapterConfig,
-    BrightDataClientContract,
-    BrightDataPostBatchResult,
-)
 from social_media_subscriber.providers.brightdata.adapter_identity import (
     BrightDataIdentityResolver,
 )
@@ -63,6 +58,11 @@ if TYPE_CHECKING:
     )
     from social_media_subscriber.adapters.protocol import AdapterDriver
     from social_media_subscriber.domain.account import Account
+    from social_media_subscriber.providers.brightdata.adapter_contracts import (
+        BrightDataAdapterConfig,
+        BrightDataClientContract,
+        BrightDataPostBatchResult,
+    )
     from social_media_subscriber.providers.brightdata.normalization_outcomes import (
         AccountIdentityOutcome,
     )
@@ -110,7 +110,7 @@ class BrightDataLinkedInAdapter(_DeclaredAdapter):
 
     async def collect_account_posts(
         self,
-        requests: tuple[AccountPostRequest, ...],
+        requests: tuple[AdapterPostRequest, ...],
     ) -> BrightDataPostBatchResult:
         """Collect and normalize complete records for kind-separated Accounts."""
         return await BrightDataPostCollector(
@@ -121,16 +121,7 @@ class BrightDataLinkedInAdapter(_DeclaredAdapter):
     async def collect(self, batch: AdapterBatch) -> AdapterAttempt:
         """Map provider and normalization failures into Router classifications."""
         try:
-            result = await self.collect_account_posts(
-                tuple(
-                    AccountPostRequest(
-                        account,
-                        self._config.collection_window.start_date,
-                        self._config.collection_window.end_date,
-                    )
-                    for account in batch.accounts
-                )
-            )
+            result = await self.collect_account_posts(batch.requests)
         except BrightDataNormalizationError:
             return SchemaBatchFailure()
         except BrightDataError as error:

@@ -22,10 +22,10 @@ from social_media_subscriber.providers.brightdata.requests import PostDiscoveryI
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from social_media_subscriber.adapters.instance import AdapterPostRequest
     from social_media_subscriber.domain.account import Account
     from social_media_subscriber.domain.ids import AccountId
     from social_media_subscriber.providers.brightdata.adapter_contracts import (
-        AccountPostRequest,
         BrightDataClientContract,
     )
     from social_media_subscriber.providers.brightdata.models import BrightDataPost
@@ -40,7 +40,7 @@ class BrightDataPostCollector:
 
     async def collect(
         self,
-        requests: tuple[AccountPostRequest, ...],
+        requests: tuple[AdapterPostRequest, ...],
     ) -> BrightDataPostBatchResult:
         """Normalize all records atomically after ownership classification."""
         if len({request.account.id for request in requests}) != len(requests):

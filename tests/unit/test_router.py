@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import TYPE_CHECKING
 
 import pytest
@@ -15,6 +16,7 @@ from social_media_subscriber.adapters.instance import (
     AcceptedSnapshotBatchFailure,
     AccountRejectionCategory,
     AdapterInstanceOrdinal,
+    AdapterPostRequest,
     BatchCompleted,
     CollectedAccount,
     InvalidCredentialBatchFailure,
@@ -66,6 +68,17 @@ def _router(
         tuple(SecretStr(key) for key in keys),
     )
     return router, factory
+
+
+def _requests(accounts: tuple[Account, ...]) -> tuple[AdapterPostRequest, ...]:
+    return tuple(
+        AdapterPostRequest(
+            account,
+            date(2026, 8, 13),
+            date(2026, 8, 20),
+        )
+        for account in accounts
+    )
 
 
 def _source_record(
@@ -132,7 +145,7 @@ async def test_post_route_rejects_identity_operation_before_provider_call() -> N
     # When / Then
     with pytest.raises(RouterOperationError):
         _ = await router.route(
-            (account,),
+            _requests((account,)),
             AdapterOperation.RESOLVE_ACCOUNT_IDENTITY,
         )
     assert factory.calls == []
@@ -181,7 +194,9 @@ async def test_zero_instance_pool_returns_account_scoped_exhaustion() -> None:
     router, factory = _router((), ())
 
     # When
-    result = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+    result = await router.route(
+        _requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
+    )
 
     # Then
     assert result.accounts == (
@@ -201,7 +216,9 @@ async def test_batches_are_bounded_and_stably_distributed(size: int) -> None:
     router, factory = _router(((), (), ()), ("key-a", "key-b", "key-c"))
 
     # When
-    result = await router.route(accounts, AdapterOperation.COLLECT_ACCOUNT_POSTS)
+    result = await router.route(
+        _requests(accounts), AdapterOperation.COLLECT_ACCOUNT_POSTS
+    )
 
     # Then
     assert result.aggregate.status is RouterRunStatus.SUCCESS
@@ -225,7 +242,7 @@ async def test_person_and_company_batches_are_separate_and_stable() -> None:
 
     # When
     _ = await router.route(
-        (*companies, *people),
+        _requests((*companies, *people)),
         AdapterOperation.COLLECT_ACCOUNT_POSTS,
     )
 
@@ -265,7 +282,9 @@ async def test_disabled_instance_fails_over_once_for_the_run(
     router, factory = _router(((first_step,), (CompleteBatch(),)))
 
     # When
-    result = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+    result = await router.route(
+        _requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
+    )
 
     # Then
     assert [call.ordinal for call in factory.calls] == [0, 1]
@@ -281,7 +300,9 @@ async def test_transient_pre_acceptance_failure_tries_each_instance_once() -> No
     router, factory = _router(((RetryableBatchFailure(),), (RetryableBatchFailure(),)))
 
     # When
-    result = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+    result = await router.route(
+        _requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
+    )
 
     # Then
     assert [call.ordinal for call in factory.calls] == [0, 1]
@@ -297,7 +318,9 @@ async def test_accepted_snapshot_failure_never_retriggers_another_instance() -> 
     router, factory = _router(((AcceptedSnapshotBatchFailure(),), (CompleteBatch(),)))
 
     # When
-    result = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+    result = await router.route(
+        _requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
+    )
 
     # Then
     assert [call.ordinal for call in factory.calls] == [0]
@@ -319,7 +342,9 @@ async def test_invalid_account_result_never_rotates_credentials() -> None:
     router, factory = _router(((rejected,), (CompleteBatch(),)))
 
     # When
-    result = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+    result = await router.route(
+        _requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
+    )
 
     # Then
     assert [call.ordinal for call in factory.calls] == [0]
@@ -343,7 +368,7 @@ async def test_not_found_account_is_partial_without_credential_rotation() -> Non
 
     # When
     result = await router.route(
-        (missing, found),
+        _requests((missing, found)),
         AdapterOperation.COLLECT_ACCOUNT_POSTS,
     )
 
@@ -368,7 +393,9 @@ async def test_schema_failure_aborts_without_failover_or_posts() -> None:
     router, factory = _router(((SchemaBatchFailure(),), (CompleteBatch(),)))
 
     # When
-    result = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+    result = await router.route(
+        _requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
+    )
 
     # Then
     assert [call.ordinal for call in factory.calls] == [0]
@@ -384,7 +411,9 @@ async def test_inconsistent_batch_identity_aborts_as_schema_corruption() -> None
     router, factory = _router(((BatchCompleted(()),), (CompleteBatch(),)))
 
     # When
-    result = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+    result = await router.route(
+        _requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
+    )
 
     # Then
     assert [call.ordinal for call in factory.calls] == [0]
@@ -400,7 +429,9 @@ async def test_duplicate_post_ids_are_idempotent_within_a_result() -> None:
     router, _factory = _router(((CompleteBatch(((post, post),)),),))
 
     # When
-    result = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+    result = await router.route(
+        _requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
+    )
 
     # Then
     assert result.posts == (post,)
@@ -416,8 +447,12 @@ async def test_health_is_fresh_for_each_route_call() -> None:
     )
 
     # When
-    first = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
-    second = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+    first = await router.route(
+        _requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
+    )
+    second = await router.route(
+        _requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
+    )
 
     # Then
     assert [call.ordinal for call in factory.calls] == [0, 1, 0]
@@ -444,7 +479,9 @@ async def test_equivalent_source_records_collapse_with_deterministic_skips() -> 
     router, _factory = _router(((completed,),))
 
     # When
-    result = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+    result = await router.route(
+        _requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
+    )
 
     # Then
     assert result.source_records == (source,)
@@ -471,7 +508,9 @@ async def test_differing_source_payload_aborts_and_suppresses_all_output() -> No
     router, _factory = _router(((completed,),))
 
     # When
-    result = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+    result = await router.route(
+        _requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
+    )
 
     # Then
     assert result.aggregate.status is RouterRunStatus.ABORTED
@@ -492,7 +531,9 @@ async def test_source_account_ownership_mismatch_aborts_without_output() -> None
     router, _factory = _router(((completed,),))
 
     # When
-    result = await router.route((account,), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+    result = await router.route(
+        _requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
+    )
 
     # Then
     assert result.aggregate.status is RouterRunStatus.ABORTED

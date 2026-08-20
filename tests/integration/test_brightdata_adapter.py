@@ -13,6 +13,9 @@ from social_media_subscriber.adapters.instance import (
     AcceptedSnapshotBatchFailure,
     AdapterBatch,
     AdapterInstanceOrdinal,
+    AdapterPostRequest,
+    AdapterRequestError,
+    AdapterRequestErrorCategory,
     BatchCompleted,
     CollectedAccount,
     SchemaBatchFailure,
@@ -32,10 +35,8 @@ from social_media_subscriber.providers.brightdata.adapter import (
     BrightDataLinkedInAdapter,
 )
 from social_media_subscriber.providers.brightdata.adapter_contracts import (
-    AccountPostRequest,
     BrightDataAdapterConfig,
     BrightDataPostBatchResult,
-    FixedCollectionWindow,
 )
 from social_media_subscriber.providers.brightdata.errors import (
     BrightDataError,
@@ -53,7 +54,6 @@ from social_media_subscriber.providers.brightdata.normalization_outcomes import 
 from tests.fakes.brightdata_adapter import SyntheticBrightDataClient
 
 _NOW = datetime(2026, 8, 20, tzinfo=UTC)
-_WINDOW = FixedCollectionWindow(date(2026, 8, 13), date(2026, 8, 20))
 
 
 def _account(kind: AccountKind, platform_id: str, slug: str) -> Account:
@@ -115,7 +115,7 @@ async def test_decorated_capabilities_and_bootstrap_are_exact() -> None:
     # When
     runtime = bootstrap_runtime(
         account_input,
-        BrightDataAdapterConfig(_WINDOW, _NOW),
+        BrightDataAdapterConfig(_NOW),
         client_builder=client_builder,
     )
 
@@ -154,7 +154,7 @@ async def test_person_and_company_identity_use_only_stable_numeric_ids() -> None
         ),
     )
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
     )
 
     # When
@@ -184,7 +184,7 @@ async def test_unknown_non_numeric_identity_is_unresolved_and_unpersisted() -> N
         person_identities=(BrightDataPersonIdentity(linkedin_num_id="slug-fallback"),)
     )
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
     )
 
     # When
@@ -207,7 +207,7 @@ async def test_adapter_migrates_slug_alias_without_changing_stable_identity() ->
         )
     )
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
     )
 
     # When
@@ -239,7 +239,7 @@ async def test_adapter_rejects_known_alias_returned_with_another_stable_id() -> 
         )
     )
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
     )
 
     # When / Then
@@ -256,7 +256,7 @@ async def test_known_alias_skips_identity_call_and_can_collect_zero_posts() -> N
     account = _account(AccountKind.PERSON, "101", "known")
     client = SyntheticBrightDataClient()
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
     )
 
     # When
@@ -264,7 +264,7 @@ async def test_known_alias_skips_identity_call_and_can_collect_zero_posts() -> N
         (parse_linkedin_locator(account.profile_url),), (account,)
     )
     result = await adapter.collect_account_posts(
-        (AccountPostRequest(account, date(2026, 8, 13), date(2026, 8, 20)),)
+        (AdapterPostRequest(account, date(2026, 8, 13), date(2026, 8, 20)),)
     )
 
     # Then
@@ -291,14 +291,14 @@ async def test_collection_preserves_sources_and_counts_nonoriginals() -> None:
         company_posts=(_post(company, "company-image", images=True),),
     )
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
     )
 
     # When
     result = await adapter.collect_account_posts(
         (
-            AccountPostRequest(person, date(2026, 8, 13), date(2026, 8, 20)),
-            AccountPostRequest(company, date(2026, 8, 14), date(2026, 8, 19)),
+            AdapterPostRequest(person, date(2026, 8, 13), date(2026, 8, 20)),
+            AdapterPostRequest(company, date(2026, 8, 14), date(2026, 8, 19)),
         )
     )
 
@@ -328,11 +328,15 @@ async def test_mixed_returned_account_aborts_without_partial_batch() -> None:
     other = _account(AccountKind.PERSON, "202", "other")
     client = SyntheticBrightDataClient(person_posts=(_post(other, "wrong-owner"),))
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
     )
 
     # When
-    attempt = await adapter.collect(AdapterBatch((expected,)))
+    attempt = await adapter.collect(
+        AdapterBatch(
+            (AdapterPostRequest(expected, date(2026, 8, 13), date(2026, 8, 20)),)
+        )
+    )
 
     # Then
     assert isinstance(attempt, SchemaBatchFailure)
@@ -349,11 +353,15 @@ async def test_accepted_snapshot_failure_propagates_without_retrigger() -> None:
         )
     )
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
     )
 
     # When
-    attempt = await adapter.collect(AdapterBatch((account,)))
+    attempt = await adapter.collect(
+        AdapterBatch(
+            (AdapterPostRequest(account, date(2026, 8, 13), date(2026, 8, 20)),)
+        )
+    )
 
     # Then
     assert isinstance(attempt, AcceptedSnapshotBatchFailure)
@@ -366,11 +374,15 @@ async def test_adapter_collect_returns_complete_router_outcome() -> None:
     account = _account(AccountKind.PERSON, "101", "person")
     client = SyntheticBrightDataClient(person_posts=(_post(account, "original"),))
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
     )
 
     # When
-    attempt = await adapter.collect(AdapterBatch((account,)))
+    attempt = await adapter.collect(
+        AdapterBatch(
+            (AdapterPostRequest(account, date(2026, 8, 13), date(2026, 8, 20)),)
+        )
+    )
 
     # Then
     assert isinstance(attempt, BatchCompleted)
@@ -387,11 +399,15 @@ async def test_schema_failure_maps_to_abort_without_diagnostics_canaries() -> No
     failure = BrightDataError(BrightDataErrorCategory.SCHEMA)
     client = SyntheticBrightDataClient(failure=failure)
     adapter = BrightDataLinkedInAdapter(
-        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_WINDOW, _NOW)
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
     )
 
     # When
-    attempt = await adapter.collect(AdapterBatch((account,)))
+    attempt = await adapter.collect(
+        AdapterBatch(
+            (AdapterPostRequest(account, date(2026, 8, 13), date(2026, 8, 20)),)
+        )
+    )
 
     # Then
     assert isinstance(attempt, SchemaBatchFailure)
@@ -418,13 +434,13 @@ async def test_empty_bootstrap_pool_reports_exhaustion_without_client_creation()
 
     runtime = bootstrap_runtime(
         account_input,
-        BrightDataAdapterConfig(_WINDOW, _NOW),
+        BrightDataAdapterConfig(_NOW),
         client_builder=client_builder,
     )
 
     # When
     result = await runtime.router.route(
-        (account,),
+        (AdapterPostRequest(account, date(2026, 8, 13), date(2026, 8, 20)),),
         AdapterOperation.COLLECT_ACCOUNT_POSTS,
     )
 
@@ -463,7 +479,7 @@ async def test_public_runtime_routes_identity_through_existing_instance_pool() -
             locators=locators,
             bright_data_api_keys=(SecretStr("synthetic-one"),),
         ),
-        BrightDataAdapterConfig(_WINDOW, _NOW),
+        BrightDataAdapterConfig(_NOW),
         client_builder=lambda _credential: client,
     )
 
@@ -506,13 +522,13 @@ async def test_public_runtime_preserves_source_records_and_skips_through_router(
             locators=(parse_linkedin_locator(account.profile_url),),
             bright_data_api_keys=(SecretStr("synthetic-one"),),
         ),
-        BrightDataAdapterConfig(_WINDOW, _NOW),
+        BrightDataAdapterConfig(_NOW),
         client_builder=lambda _credential: client,
     )
 
     # When
     result = await runtime.router.route(
-        (account,),
+        (AdapterPostRequest(account, date(2026, 8, 13), date(2026, 8, 20)),),
         AdapterOperation.COLLECT_ACCOUNT_POSTS,
     )
 
@@ -538,7 +554,7 @@ async def test_identity_router_known_alias_requires_zero_provider_io() -> None:
             locators=(locator,),
             bright_data_api_keys=(SecretStr("synthetic-one"),),
         ),
-        BrightDataAdapterConfig(_WINDOW, _NOW),
+        BrightDataAdapterConfig(_NOW),
         client_builder=lambda _credential: client,
     )
 
@@ -599,7 +615,7 @@ async def test_identity_router_classified_failover_uses_each_instance_once(
                 SecretStr(f"synthetic-{index}") for index in range(3)
             ),
         ),
-        BrightDataAdapterConfig(_WINDOW, _NOW),
+        BrightDataAdapterConfig(_NOW),
         client_builder=lambda _credential: next(created),
     )
 
@@ -635,7 +651,7 @@ async def test_identity_router_account_failure_never_rotates_credentials(
             locators=(locator,),
             bright_data_api_keys=(SecretStr("synthetic-a"), SecretStr("synthetic-b")),
         ),
-        BrightDataAdapterConfig(_WINDOW, _NOW),
+        BrightDataAdapterConfig(_NOW),
         client_builder=lambda _credential: next(created),
     )
 
@@ -667,7 +683,7 @@ async def test_identity_router_accepted_snapshot_failure_never_reroutes() -> Non
             locators=(locator,),
             bright_data_api_keys=(SecretStr("synthetic-a"), SecretStr("synthetic-b")),
         ),
-        BrightDataAdapterConfig(_WINDOW, _NOW),
+        BrightDataAdapterConfig(_NOW),
         client_builder=lambda _credential: next(created),
     )
 
@@ -700,7 +716,7 @@ async def test_identity_conflict_aborts_without_candidates_or_provider_text() ->
             locators=(locator,),
             bright_data_api_keys=(SecretStr("credential-canary"),),
         ),
-        BrightDataAdapterConfig(_WINDOW, _NOW),
+        BrightDataAdapterConfig(_NOW),
         client_builder=lambda _credential: client,
     )
 
@@ -713,3 +729,109 @@ async def test_identity_conflict_aborts_without_candidates_or_provider_text() ->
     assert result.diagnostics[0].category is RouterDiagnosticCategory.SCHEMA_ABORT
     assert "canary" not in repr(result)
     assert "prompt" not in repr(result)
+
+
+@pytest.mark.anyio
+async def test_router_preserves_each_account_collection_window() -> None:
+    # Given
+    person = _account(AccountKind.PERSON, "101", "person")
+    company = _account(AccountKind.COMPANY, "202", "company")
+    client = SyntheticBrightDataClient()
+    runtime = bootstrap_runtime(
+        AccountInput(
+            locators=(
+                parse_linkedin_locator(person.profile_url),
+                parse_linkedin_locator(company.profile_url),
+            ),
+            bright_data_api_keys=(SecretStr("synthetic-one"),),
+        ),
+        BrightDataAdapterConfig(_NOW),
+        client_builder=lambda _credential: client,
+    )
+    requests = (
+        AdapterPostRequest(person, date(2026, 8, 1), date(2026, 8, 2)),
+        AdapterPostRequest(company, date(2026, 8, 17), date(2026, 8, 19)),
+    )
+
+    # When
+    _ = await runtime.router.route(requests, AdapterOperation.COLLECT_ACCOUNT_POSTS)
+
+    # Then
+    assert [call.windows for call in client.calls] == [
+        ((date(2026, 8, 1), date(2026, 8, 2), True),),
+        ((date(2026, 8, 17), date(2026, 8, 19), True),),
+    ]
+
+
+@pytest.mark.anyio
+async def test_conflicting_duplicate_collection_windows_fail_before_provider_io() -> (
+    None
+):
+    # Given
+    account = _account(AccountKind.PERSON, "101", "person")
+    client = SyntheticBrightDataClient()
+    runtime = bootstrap_runtime(
+        AccountInput(
+            locators=(parse_linkedin_locator(account.profile_url),),
+            bright_data_api_keys=(SecretStr("synthetic-one"),),
+        ),
+        BrightDataAdapterConfig(_NOW),
+        client_builder=lambda _credential: client,
+    )
+    requests = (
+        AdapterPostRequest(account, date(2026, 8, 1), date(2026, 8, 2)),
+        AdapterPostRequest(account, date(2026, 8, 3), date(2026, 8, 4)),
+    )
+
+    # When / Then
+    with pytest.raises(AdapterRequestError) as captured:
+        _ = await runtime.router.route(
+            requests,
+            AdapterOperation.COLLECT_ACCOUNT_POSTS,
+        )
+    assert client.calls == []
+    assert captured.value.category is AdapterRequestErrorCategory.CONFLICTING_WINDOW
+
+
+@pytest.mark.anyio
+async def test_equivalent_duplicate_collection_windows_deduplicate() -> None:
+    # Given
+    account = _account(AccountKind.PERSON, "101", "person")
+    client = SyntheticBrightDataClient()
+    runtime = bootstrap_runtime(
+        AccountInput(
+            locators=(parse_linkedin_locator(account.profile_url),),
+            bright_data_api_keys=(SecretStr("synthetic-one"),),
+        ),
+        BrightDataAdapterConfig(_NOW),
+        client_builder=lambda _credential: client,
+    )
+    request = AdapterPostRequest(
+        account,
+        date(2026, 8, 1),
+        date(2026, 8, 2),
+    )
+
+    # When
+    result = await runtime.router.route(
+        (request, request),
+        AdapterOperation.COLLECT_ACCOUNT_POSTS,
+    )
+
+    # Then
+    assert result.aggregate.succeeded_accounts == 1
+    assert client.calls[0].urls == (account.profile_url,)
+
+
+def test_inverted_collection_window_fails_typed_before_provider_io() -> None:
+    # Given
+    account = _account(AccountKind.PERSON, "101", "person")
+
+    # When / Then
+    with pytest.raises(AdapterRequestError) as captured:
+        _ = AdapterPostRequest(
+            account,
+            date(2026, 8, 2),
+            date(2026, 8, 1),
+        )
+    assert captured.value.category is AdapterRequestErrorCategory.INVERTED_WINDOW

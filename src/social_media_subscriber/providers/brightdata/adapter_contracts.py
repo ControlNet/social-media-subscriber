@@ -5,16 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from social_media_subscriber.providers.brightdata.errors import (
-    BrightDataError,
-    BrightDataErrorCategory,
-)
-
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from datetime import date, datetime
+    from datetime import datetime
 
-    from social_media_subscriber.domain.account import Account
     from social_media_subscriber.domain.ids import AccountId
     from social_media_subscriber.domain.post import Post
     from social_media_subscriber.providers.brightdata.models import (
@@ -60,38 +54,10 @@ class BrightDataClientContract(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class FixedCollectionWindow:
-    """Inclusive collection dates used by Router-driven batches."""
-
-    start_date: date
-    end_date: date
-
-    def __post_init__(self) -> None:
-        """Reject an inverted provider date window."""
-        if self.start_date > self.end_date:
-            raise BrightDataError(BrightDataErrorCategory.INPUT)
-
-
-@dataclass(frozen=True, slots=True)
 class BrightDataAdapterConfig:
     """Run-scoped deterministic values shared by credential instances."""
 
-    collection_window: FixedCollectionWindow
     first_seen_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class AccountPostRequest:
-    """One Account and its normalized inclusive provider date window."""
-
-    account: Account
-    start_date: date
-    end_date: date
-
-    def __post_init__(self) -> None:
-        """Reject an inverted per-Account date window."""
-        if self.start_date > self.end_date:
-            raise BrightDataError(BrightDataErrorCategory.INPUT)
 
 
 @dataclass(frozen=True, slots=True)

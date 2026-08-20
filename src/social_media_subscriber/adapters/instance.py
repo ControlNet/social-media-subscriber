@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum, unique
-from typing import TYPE_CHECKING, NewType, Protocol
+from typing import TYPE_CHECKING, NewType, Protocol, override
 
 from social_media_subscriber.providers.brightdata.normalization_outcomes import (
     SkippedPostCounts,
 )
 
 if TYPE_CHECKING:
+    from datetime import date
+
     from pydantic import SecretStr
 
     from social_media_subscriber.accounts.locator import LinkedInLocator
@@ -36,11 +38,49 @@ class AccountRejectionCategory(StrEnum):
     NOT_FOUND = "account_not_found"
 
 
+@unique
+class AdapterRequestErrorCategory(StrEnum):
+    """Machine-readable post-request integrity failure."""
+
+    INVERTED_WINDOW = "inverted_window"
+    CONFLICTING_WINDOW = "conflicting_window"
+
+
+@dataclass(frozen=True, slots=True)
+class AdapterRequestError(ValueError):
+    """Reject invalid collection requests without exposing Account details."""
+
+    category: AdapterRequestErrorCategory
+
+    @override
+    def __str__(self) -> str:
+        return f"invalid Adapter post request ({self.category.value})"
+
+
+@dataclass(frozen=True, slots=True)
+class AdapterPostRequest:
+    """Provider-neutral Account plus inclusive post collection dates."""
+
+    account: Account
+    start_date: date
+    end_date: date
+
+    def __post_init__(self) -> None:
+        """Reject inverted dates before an Adapter instance can run."""
+        if self.start_date > self.end_date:
+            raise AdapterRequestError(AdapterRequestErrorCategory.INVERTED_WINDOW)
+
+
 @dataclass(frozen=True, slots=True)
 class AdapterBatch:
-    """One kind-homogeneous batch bounded by the Router."""
+    """One kind-homogeneous post-request batch bounded by the Router."""
 
-    accounts: tuple[Account, ...]
+    requests: tuple[AdapterPostRequest, ...]
+
+    @property
+    def accounts(self) -> tuple[Account, ...]:
+        """Return ordered Accounts for result identity validation."""
+        return tuple(request.account for request in self.requests)
 
 
 @dataclass(frozen=True, slots=True)
