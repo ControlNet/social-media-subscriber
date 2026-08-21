@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 import pytest
 from pydantic import SecretStr
@@ -18,18 +18,24 @@ from social_media_subscriber.adapters.instance import (
     AcceptedSnapshotBatchFailure,
     AccountRejectionCategory,
     AdapterInstanceOrdinal,
-    AdapterPostLocatorBatch,
     AdapterPostLocatorRequest,
     AdapterPostRequest,
     BatchCompleted,
     CollectedAccount,
     InvalidCredentialBatchFailure,
+    LocatorPostsBatchCompleted,
     QuotaBatchFailure,
     RejectedAccount,
+    ResolvedLocatorPosts,
     RetryableBatchFailure,
     SchemaBatchFailure,
+    UnresolvedLocatorPosts,
 )
 from social_media_subscriber.adapters.router import Router
+from social_media_subscriber.adapters.router_discovery_state import (
+    DiscoveryFailureCategory,
+    DiscoveryLocatorFailed,
+)
 from social_media_subscriber.adapters.router_outcomes import (
     AccountRouteFailed,
     AccountRouteFailureCategory,
@@ -42,12 +48,6 @@ from social_media_subscriber.adapters.router_outcomes import (
 from social_media_subscriber.application import windows as window_contract
 from social_media_subscriber.application.windows import ExplicitWindow, WindowContext
 from social_media_subscriber.domain.platform import AccountKind, Platform
-from social_media_subscriber.providers.brightdata.adapter import (
-    BrightDataLinkedInAdapter,
-)
-from social_media_subscriber.providers.brightdata.adapter_contracts import (
-    BrightDataAdapterConfig,
-)
 from social_media_subscriber.providers.brightdata.models import BrightDataPost
 from social_media_subscriber.providers.brightdata.normalization_outcomes import (
     SkippedPostCounts,
@@ -55,7 +55,6 @@ from social_media_subscriber.providers.brightdata.normalization_outcomes import 
 from social_media_subscriber.providers.brightdata.source_record import (
     BrightDataLinkedInPostSourceRecord,
 )
-from tests.fakes.brightdata_adapter import SyntheticBrightDataClient
 from tests.fakes.router import (
     CompleteBatch,
     DeclaredFakeDriver,
@@ -67,20 +66,44 @@ from tests.fakes.router import (
 )
 
 if TYPE_CHECKING:
+    from social_media_subscriber.adapters.router_discovery_state import (
+        DiscoveryRouterResult,
+    )
     from social_media_subscriber.domain.account import Account
+    from social_media_subscriber.domain.post import Post
+
+_DISCOVERY_START: Final = date(2026, 8, 14)
+_NO_SKIPS: Final = SkippedPostCounts()
 
 
 def _router(
     scripts: tuple[tuple[FakeStep, ...], ...],
     keys: tuple[str, ...] = ("test-credential-a", "test-credential-b"),
+    locator_scripts: tuple[
+        tuple[instance_contract.AdapterPostLocatorAttempt, ...], ...
+    ] = (),
 ) -> tuple[Router, ScriptedFactory]:
-    factory = ScriptedFactory(scripts)
+    factory = ScriptedFactory(scripts, locator_scripts)
     router = Router(
         AdapterRegistry((FakeDriver,)),
         factory,
         tuple(SecretStr(key) for key in keys),
     )
     return router, factory
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_empty_requests_succeed_without_provider_calls() -> (
+    None
+):
+    # Given
+    router, factory = _router(((),))
+
+    # When / Then
+    assert hasattr(router, "discover_posts")
+    result = await router.discover_posts(())
+    assert result.aggregate.status is RouterRunStatus.SUCCESS
+    assert factory.locator_calls == []
 
 
 def _requests(accounts: tuple[Account, ...]) -> tuple[AdapterPostRequest, ...]:
@@ -91,6 +114,34 @@ def _requests(accounts: tuple[Account, ...]) -> tuple[AdapterPostRequest, ...]:
             date(2026, 8, 20),
         )
         for account in accounts
+    )
+
+
+def _locator_request(
+    kind: AccountKind,
+    number: int,
+    *,
+    start_date: date = _DISCOVERY_START,
+) -> AdapterPostLocatorRequest:
+    path = "in" if kind is AccountKind.PERSON else "company"
+    locator = parse_linkedin_locator(
+        f"https://www.linkedin.com/{path}/router-test-{number}/"
+    )
+    return AdapterPostLocatorRequest(locator, start_date, date(2026, 8, 21))
+
+
+def _resolved_locator(
+    request: AdapterPostLocatorRequest,
+    account: Account,
+    *,
+    posts: tuple[Post, ...] = (),
+    sources: tuple[BrightDataLinkedInPostSourceRecord, ...] = (),
+    skipped: SkippedPostCounts = _NO_SKIPS,
+) -> ResolvedLocatorPosts:
+    return ResolvedLocatorPosts(
+        request.locator,
+        account,
+        CollectedAccount(account.id, posts, sources, skipped),
     )
 
 
@@ -270,30 +321,6 @@ async def test_post_route_rejects_discovery_before_provider_call() -> None:
             AdapterOperation.DISCOVER_LOCATOR_POSTS,
         )
     assert factory.calls == []
-
-
-@pytest.mark.anyio
-async def test_bright_data_locator_discovery_is_safe_schema_failure_before_wiring() -> (
-    None
-):
-    # Given
-    client = SyntheticBrightDataClient()
-    adapter_instance = BrightDataLinkedInAdapter(
-        client,
-        AdapterInstanceOrdinal(0),
-        BrightDataAdapterConfig(datetime(2026, 8, 21, tzinfo=UTC)),
-    )
-    locator = parse_linkedin_locator("https://www.linkedin.com/in/example-person/")
-    batch = AdapterPostLocatorBatch(
-        (AdapterPostLocatorRequest(locator, date(2026, 8, 14), date(2026, 8, 21)),)
-    )
-
-    # When
-    attempt = await adapter_instance.discover_posts(batch)
-
-    # Then
-    assert isinstance(attempt, SchemaBatchFailure)
-    assert client.calls == []
 
 
 def _source_record(
@@ -754,3 +781,445 @@ async def test_source_account_ownership_mismatch_aborts_without_output() -> None
     assert result.aggregate.status is RouterRunStatus.ABORTED
     assert result.source_records == ()
     assert result.posts == ()
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_batch_21_is_20_plus_1_in_stable_order() -> None:
+    # Given
+    requests = tuple(
+        _locator_request(AccountKind.PERSON, number) for number in range(21, 0, -1)
+    )
+    router, factory = _router(
+        ((), (), ()),
+        ("key-a", "key-b", "key-c"),
+    )
+
+    # When
+    result = await router.discover_posts(requests)
+
+    # Then
+    assert result.aggregate.status is RouterRunStatus.PARTIAL
+    assert [
+        (call.ordinal, len(call.locator_urls)) for call in factory.locator_calls
+    ] == [
+        (AdapterInstanceOrdinal(0), 20),
+        (AdapterInstanceOrdinal(1), 1),
+    ]
+    assert tuple(
+        locator_url
+        for call in factory.locator_calls
+        for locator_url in call.locator_urls
+    ) == tuple(sorted(request.locator.canonical_url for request in requests))
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_kind_partitions_people_before_companies() -> None:
+    # Given
+    people = tuple(
+        _locator_request(AccountKind.PERSON, number) for number in range(21, 0, -1)
+    )
+    companies = tuple(
+        _locator_request(AccountKind.COMPANY, number) for number in (2, 1)
+    )
+    router, factory = _router(
+        ((), (), ()),
+        ("key-a", "key-b", "key-c"),
+    )
+
+    # When
+    _ = await router.discover_posts((*companies, *people))
+
+    # Then
+    assert [
+        (call.ordinal, call.kind, len(call.locator_urls))
+        for call in factory.locator_calls
+    ] == [
+        (AdapterInstanceOrdinal(0), AccountKind.PERSON, 20),
+        (AdapterInstanceOrdinal(1), AccountKind.PERSON, 1),
+        (AdapterInstanceOrdinal(2), AccountKind.COMPANY, 2),
+    ]
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_canonical_dedupe_and_conflicting_window() -> None:
+    # Given
+    first = _locator_request(AccountKind.PERSON, 1)
+    equivalent = AdapterPostLocatorRequest(
+        parse_linkedin_locator(
+            first.locator.canonical_url.replace("www.linkedin.com", "linkedin.com")
+        ),
+        first.start_date,
+        first.end_date,
+    )
+    conflicting = AdapterPostLocatorRequest(
+        first.locator,
+        date(2026, 8, 15),
+        first.end_date,
+    )
+    router, factory = _router(((),))
+
+    # When
+    deduplicated = await router.discover_posts((first, equivalent))
+
+    # Then
+    assert deduplicated.aggregate.unresolved_locators == 1
+    assert len(factory.locator_calls) == 1
+    with pytest.raises(instance_contract.AdapterRequestError) as captured:
+        _ = await router.discover_posts((first, conflicting))
+    assert (
+        captured.value.category
+        is instance_contract.AdapterRequestErrorCategory.CONFLICTING_WINDOW
+    )
+    assert len(factory.locator_calls) == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("failure", "health", "diagnostic"),
+    [
+        (
+            QuotaBatchFailure(),
+            InstanceHealthStatus.QUOTA_EXHAUSTED,
+            RouterDiagnosticCategory.QUOTA_DISABLED,
+        ),
+        (
+            InvalidCredentialBatchFailure(),
+            InstanceHealthStatus.INVALID_CREDENTIAL,
+            RouterDiagnosticCategory.CREDENTIAL_DISABLED,
+        ),
+    ],
+)
+async def test_locator_discovery_failover_disables_instance(
+    failure: QuotaBatchFailure | InvalidCredentialBatchFailure,
+    health: InstanceHealthStatus,
+    diagnostic: RouterDiagnosticCategory,
+) -> None:
+    # Given
+    request = _locator_request(AccountKind.PERSON, 1)
+    account = make_account(AccountKind.PERSON, 1)
+    completed = LocatorPostsBatchCompleted((_resolved_locator(request, account),))
+    router, factory = _router(
+        ((), ()),
+        locator_scripts=((failure,), (completed,)),
+    )
+
+    # When
+    result = await router.discover_posts((request,))
+
+    # Then
+    assert [call.ordinal for call in factory.locator_calls] == [0, 1]
+    assert result.health[0].status is health
+    assert result.diagnostics[0].category is diagnostic
+    assert result.accounts == (account,)
+    assert result.aggregate.status is RouterRunStatus.SUCCESS
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_retryable_failure_rotates_without_disabling() -> None:
+    # Given
+    request = _locator_request(AccountKind.PERSON, 1)
+    account = make_account(AccountKind.PERSON, 1)
+    completed = LocatorPostsBatchCompleted((_resolved_locator(request, account),))
+    router, factory = _router(
+        ((), ()),
+        locator_scripts=((RetryableBatchFailure(),), (completed,)),
+    )
+
+    # When
+    result = await router.discover_posts((request,))
+
+    # Then
+    assert [call.ordinal for call in factory.locator_calls] == [0, 1]
+    assert tuple(item.status for item in result.health) == (
+        InstanceHealthStatus.HEALTHY,
+        InstanceHealthStatus.HEALTHY,
+    )
+    assert result.diagnostics == ()
+    assert result.accounts == (account,)
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_health_is_fresh_for_each_call() -> None:
+    # Given
+    request = _locator_request(AccountKind.PERSON, 1)
+    router, factory = _router(
+        ((), ()),
+        locator_scripts=((QuotaBatchFailure(),), ()),
+    )
+
+    # When
+    first = await router.discover_posts((request,))
+    second = await router.discover_posts((request,))
+
+    # Then
+    assert [call.ordinal for call in factory.locator_calls] == [0, 1, 0]
+    assert first.health[0].status is InstanceHealthStatus.QUOTA_EXHAUSTED
+    assert second.health[0].status is InstanceHealthStatus.HEALTHY
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("registry_supports_discovery", "keys", "category"),
+    [
+        (False, ("key-a",), "unsupported_capability"),
+        (True, (), "pool_exhausted"),
+    ],
+)
+async def test_locator_discovery_fail_attribution_for_unsupported_or_empty_pool(
+    registry_supports_discovery: bool,
+    keys: tuple[str, ...],
+    category: str,
+) -> None:
+    # Given
+    @adapter(
+        platform=Platform.LINKEDIN,
+        operations=(AdapterOperation.COLLECT_ACCOUNT_POSTS,),
+        account_kinds=(AccountKind.PERSON,),
+        supports_batch=True,
+    )
+    class CollectionOnlyDriver(DeclaredFakeDriver):
+        pass
+
+    factory = ScriptedFactory(((),))
+    driver = FakeDriver if registry_supports_discovery else CollectionOnlyDriver
+    router = Router(
+        AdapterRegistry((driver,)),
+        factory,
+        tuple(SecretStr(key) for key in keys),
+    )
+    request = _locator_request(AccountKind.PERSON, 1)
+
+    # When
+    result = await router.discover_posts((request,))
+
+    # Then
+    assert result.aggregate.status is RouterRunStatus.PARTIAL
+    outcome = result.outcomes[0]
+    assert isinstance(outcome, DiscoveryLocatorFailed)
+    assert outcome.category.value == category
+    assert factory.locator_calls == []
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_accepted_snapshot_is_terminal_no_reroute() -> None:
+    # Given
+    request = _locator_request(AccountKind.PERSON, 1)
+    account = make_account(AccountKind.PERSON, 1)
+    completed = LocatorPostsBatchCompleted((_resolved_locator(request, account),))
+    router, factory = _router(
+        ((), ()),
+        locator_scripts=((AcceptedSnapshotBatchFailure(),), (completed,)),
+    )
+
+    # When
+    result = await router.discover_posts((request,))
+
+    # Then
+    assert [call.ordinal for call in factory.locator_calls] == [0]
+    outcome = result.outcomes[0]
+    assert isinstance(outcome, DiscoveryLocatorFailed)
+    assert outcome.category is DiscoveryFailureCategory.ACCEPTED_SNAPSHOT_FAILED
+    assert result.accounts == ()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("shape", ["missing", "extra", "duplicate"])
+async def test_locator_discovery_schema_requires_exact_complete_coverage(
+    shape: str,
+) -> None:
+    # Given
+    request = _locator_request(AccountKind.PERSON, 1)
+    extra = _locator_request(AccountKind.PERSON, 2)
+    match shape:
+        case "missing":
+            outcomes: tuple[instance_contract.AdapterPostLocatorOutcome, ...] = ()
+        case "extra":
+            outcomes = (
+                UnresolvedLocatorPosts(request.locator),
+                UnresolvedLocatorPosts(extra.locator),
+            )
+        case "duplicate":
+            outcomes = (
+                UnresolvedLocatorPosts(request.locator),
+                UnresolvedLocatorPosts(request.locator),
+            )
+        case unreachable:
+            raise AssertionError(unreachable)
+    completed = LocatorPostsBatchCompleted(outcomes)
+    router, _factory = _router(((),), locator_scripts=((completed,),))
+
+    # When
+    result = await router.discover_posts((request,))
+
+    # Then
+    _assert_locator_schema_abort(result)
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_cross_locator_account_owner_aborts() -> None:
+    # Given
+    first = _locator_request(AccountKind.PERSON, 1)
+    second = _locator_request(AccountKind.PERSON, 2)
+    account = make_account(AccountKind.PERSON, 1)
+    completed = LocatorPostsBatchCompleted(
+        (_resolved_locator(first, account), _resolved_locator(second, account))
+    )
+    router, _factory = _router(((),), locator_scripts=((completed,),))
+
+    # When
+    result = await router.discover_posts((first, second))
+
+    # Then
+    _assert_locator_schema_abort(result)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("ownership", ["collected", "post", "source"])
+async def test_locator_discovery_ownership_mismatch_aborts(ownership: str) -> None:
+    # Given
+    request = _locator_request(AccountKind.PERSON, 1)
+    account = make_account(AccountKind.PERSON, 1)
+    other = make_account(AccountKind.PERSON, 2)
+    post = make_post(other.id, 7) if ownership == "post" else None
+    source = (
+        _source_record(other, "activity-7", "wrong owner")
+        if ownership == "source"
+        else None
+    )
+    collected_id = other.id if ownership == "collected" else account.id
+    outcome = ResolvedLocatorPosts(
+        request.locator,
+        account,
+        CollectedAccount(
+            collected_id,
+            () if post is None else (post,),
+            () if source is None else (source,),
+        ),
+    )
+    router, _factory = _router(
+        ((),), locator_scripts=((LocatorPostsBatchCompleted((outcome,)),),)
+    )
+
+    # When
+    result = await router.discover_posts((request,))
+
+    # Then
+    _assert_locator_schema_abort(result)
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_schema_conflicting_duplicate_sources_abort() -> None:
+    # Given
+    request = _locator_request(AccountKind.PERSON, 1)
+    account = make_account(AccountKind.PERSON, 1)
+    first = _source_record(account, "activity-7", "first")
+    second = _source_record(account, "activity-7", "second")
+    completed = LocatorPostsBatchCompleted(
+        (
+            _resolved_locator(
+                request,
+                account,
+                sources=(first, second),
+                skipped=SkippedPostCounts(unknown=2),
+            ),
+        )
+    )
+    router, _factory = _router(((),), locator_scripts=((completed,),))
+
+    # When
+    result = await router.discover_posts((request,))
+
+    # Then
+    _assert_locator_schema_abort(result)
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_schema_conflicting_duplicate_posts_abort() -> None:
+    # Given
+    request = _locator_request(AccountKind.PERSON, 1)
+    account = make_account(AccountKind.PERSON, 1)
+    first = make_post(account.id, 7)
+    conflicting = make_post(account.id, 8).model_copy(update={"id": first.id})
+    completed = LocatorPostsBatchCompleted(
+        (_resolved_locator(request, account, posts=(first, conflicting)),)
+    )
+    router, _factory = _router(((),), locator_scripts=((completed,),))
+
+    # When
+    result = await router.discover_posts((request,))
+
+    # Then
+    _assert_locator_schema_abort(result)
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_late_schema_abort_suppresses_prior_batch() -> None:
+    # Given
+    requests = tuple(
+        _locator_request(AccountKind.PERSON, number) for number in range(1, 22)
+    )
+    ordered = tuple(sorted(requests, key=lambda request: request.locator.canonical_url))
+    first_batch = LocatorPostsBatchCompleted(
+        tuple(
+            _resolved_locator(request, make_account(AccountKind.PERSON, number))
+            for number, request in enumerate(ordered[:20], start=1)
+        )
+    )
+    router, factory = _router(
+        ((), ()),
+        locator_scripts=((first_batch,), (SchemaBatchFailure(),)),
+    )
+
+    # When
+    result = await router.discover_posts(requests)
+
+    # Then
+    assert [call.ordinal for call in factory.locator_calls] == [0, 1]
+    _assert_locator_schema_abort(result)
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_resolved_unresolved_and_posts_are_complete() -> None:
+    # Given
+    resolved_request = _locator_request(AccountKind.PERSON, 1)
+    unresolved_request = _locator_request(AccountKind.PERSON, 2)
+    account = make_account(AccountKind.PERSON, 1)
+    post = make_post(account.id, 7)
+    source = _source_record(account, "activity-7", "source")
+    completed = LocatorPostsBatchCompleted(
+        (
+            _resolved_locator(
+                resolved_request,
+                account,
+                posts=(post,),
+                sources=(source,),
+                skipped=SkippedPostCounts(replies=1),
+            ),
+            UnresolvedLocatorPosts(unresolved_request.locator),
+        )
+    )
+    router, _factory = _router(((),), locator_scripts=((completed,),))
+
+    # When
+    result = await router.discover_posts((resolved_request, unresolved_request))
+
+    # Then
+    assert result.aggregate.status is RouterRunStatus.PARTIAL
+    assert result.aggregate.resolved_locators == 1
+    assert result.aggregate.unresolved_locators == 1
+    assert result.accounts == (account,)
+    assert result.posts == (post,)
+    assert result.source_records == (source,)
+    assert result.skipped == SkippedPostCounts(replies=1)
+
+
+def _assert_locator_schema_abort(result: DiscoveryRouterResult) -> None:
+    assert result.aggregate.status is RouterRunStatus.ABORTED
+    assert result.accounts == ()
+    assert result.outcomes == ()
+    assert result.posts == ()
+    assert result.source_records == ()
+    assert result.skipped == SkippedPostCounts()
+    assert tuple(item.category for item in result.diagnostics) == (
+        RouterDiagnosticCategory.SCHEMA_ABORT,
+    )

@@ -19,7 +19,9 @@ from social_media_subscriber.adapters.instance import (
     AdapterPostLocatorBatch,
     BatchCompleted,
     CollectedAccount,
+    LocatorPostsBatchCompleted,
     SchemaBatchFailure,
+    UnresolvedLocatorPosts,
 )
 from social_media_subscriber.domain.account import Account
 from social_media_subscriber.domain.ids import (
@@ -71,13 +73,22 @@ class RouterCall:
     kind: AccountKind
 
 
+@dataclass(frozen=True, slots=True)
+class LocatorRouterCall:
+    ordinal: AdapterInstanceOrdinal
+    locator_urls: tuple[str, ...]
+    kind: AccountKind
+
+
 @final
 @dataclass(slots=True)
 class ScriptedInstance:
     driver_class: type[AdapterDriver]
     ordinal: AdapterInstanceOrdinal
     steps: list[FakeStep]
+    locator_steps: list[AdapterPostLocatorAttempt]
     calls: list[RouterCall]
+    locator_calls: list[LocatorRouterCall]
     close_calls: int = 0
 
     async def aclose(self) -> None:
@@ -112,9 +123,19 @@ class ScriptedInstance:
         self,
         batch: AdapterPostLocatorBatch,
     ) -> AdapterPostLocatorAttempt:
-        """Reject discovery use from the collection-only Router fake."""
-        _ = batch
-        return SchemaBatchFailure()
+        """Record a discovery batch and return one complete scripted attempt."""
+        self.locator_calls.append(
+            LocatorRouterCall(
+                self.ordinal,
+                tuple(request.locator.canonical_url for request in batch.requests),
+                batch.requests[0].locator.kind,
+            )
+        )
+        if self.locator_steps:
+            return self.locator_steps.pop(0)
+        return LocatorPostsBatchCompleted(
+            tuple(UnresolvedLocatorPosts(request.locator) for request in batch.requests)
+        )
 
     async def resolve_identity(
         self,
@@ -129,7 +150,9 @@ class ScriptedInstance:
 @dataclass(slots=True)
 class ScriptedFactory:
     scripts: tuple[tuple[FakeStep, ...], ...]
+    locator_scripts: tuple[tuple[AdapterPostLocatorAttempt, ...], ...] = ()
     calls: list[RouterCall] = field(default_factory=list)
+    locator_calls: list[LocatorRouterCall] = field(default_factory=list)
     created_ordinals: list[AdapterInstanceOrdinal] = field(default_factory=list)
 
     def create(
@@ -140,7 +163,17 @@ class ScriptedFactory:
         _ = credential
         self.created_ordinals.append(ordinal)
         script = self.scripts[ordinal] if ordinal < len(self.scripts) else ()
-        return ScriptedInstance(FakeDriver, ordinal, list(script), self.calls)
+        locator_script = (
+            self.locator_scripts[ordinal] if ordinal < len(self.locator_scripts) else ()
+        )
+        return ScriptedInstance(
+            FakeDriver,
+            ordinal,
+            list(script),
+            list(locator_script),
+            self.calls,
+            self.locator_calls,
+        )
 
 
 def make_account(kind: AccountKind, number: int) -> Account:

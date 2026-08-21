@@ -11,6 +11,7 @@ from social_media_subscriber.adapters.registry import (
     ResolvedAdapterDrivers,
     UnsupportedAdapterCapability,
 )
+from social_media_subscriber.adapters.router_discovery import DiscoveryRouter
 from social_media_subscriber.adapters.router_identity import IdentityRouter
 from social_media_subscriber.adapters.router_outcomes import (
     AccountRouteFailed,
@@ -31,9 +32,13 @@ if TYPE_CHECKING:
     from social_media_subscriber.adapters.instance import (
         AdapterInstance,
         AdapterInstanceFactory,
+        AdapterPostLocatorRequest,
         AdapterPostRequest,
     )
     from social_media_subscriber.adapters.registry import AdapterRegistry
+    from social_media_subscriber.adapters.router_discovery_state import (
+        DiscoveryRouterResult,
+    )
     from social_media_subscriber.adapters.router_outcomes import IdentityRouterResult
     from social_media_subscriber.domain.account import Account
     from social_media_subscriber.domain.ids import AccountId
@@ -146,6 +151,13 @@ class Router:
             self._registry,
             self._instances,
         ).resolve(locators, known_accounts)
+
+    async def discover_posts(
+        self,
+        requests: tuple[AdapterPostLocatorRequest, ...],
+    ) -> DiscoveryRouterResult:
+        """Discover locator Posts through the shared credential-bound pool."""
+        return await DiscoveryRouter(self._registry, self._instances).discover(requests)
 
     def _compatible_instances(
         self,
