@@ -13,12 +13,20 @@ from social_media_subscriber.adapters.instance import (
     AcceptedSnapshotBatchFailure,
     AdapterBatch,
     AdapterInstanceOrdinal,
+    AdapterPostLocatorBatch,
+    AdapterPostLocatorRequest,
     AdapterPostRequest,
     AdapterRequestError,
     AdapterRequestErrorCategory,
     BatchCompleted,
     CollectedAccount,
+    InvalidCredentialBatchFailure,
+    LocatorPostsBatchCompleted,
+    QuotaBatchFailure,
+    ResolvedLocatorPosts,
+    RetryableBatchFailure,
     SchemaBatchFailure,
+    UnresolvedLocatorPosts,
 )
 from social_media_subscriber.adapters.router_outcomes import (
     AccountRouteFailed,
@@ -126,6 +134,7 @@ async def test_decorated_capabilities_and_bootstrap_are_exact() -> None:
     assert metadata.operations == (
         AdapterOperation.RESOLVE_ACCOUNT_IDENTITY,
         AdapterOperation.COLLECT_ACCOUNT_POSTS,
+        AdapterOperation.DISCOVER_LOCATOR_POSTS,
     )
     assert metadata.account_kinds == (AccountKind.PERSON, AccountKind.COMPANY)
     for operation in metadata.operations:
@@ -256,9 +265,7 @@ async def test_known_alias_skips_identity_call_and_can_collect_zero_posts() -> N
     account = _account(AccountKind.PERSON, "101", "known")
     client = SyntheticBrightDataClient(
         person_identities=(
-            BrightDataPersonIdentity(
-                linkedin_num_id="101", url=account.profile_url
-            ),
+            BrightDataPersonIdentity(linkedin_num_id="101", url=account.profile_url),
         )
     )
     adapter = BrightDataLinkedInAdapter(
@@ -287,6 +294,332 @@ async def test_known_alias_skips_identity_call_and_can_collect_zero_posts() -> N
     assert result.accounts[0].posts == ()
     assert result.accounts[0].source_records == ()
     assert result.accounts[0].skipped.total == 0
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_numeric_collects_posts_without_identity_io() -> None:
+    # Given
+    locator = parse_linkedin_locator("https://linkedin.com/in/discovery-person")
+    discovered = _account(AccountKind.PERSON, "303", "discovery-person")
+    client = SyntheticBrightDataClient(
+        person_posts=(_post(discovered, "discovery-original"),)
+    )
+    adapter = BrightDataLinkedInAdapter(
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
+    )
+    batch = AdapterPostLocatorBatch(
+        (AdapterPostLocatorRequest(locator, date(2026, 8, 13), date(2026, 8, 20)),)
+    )
+
+    # When
+    attempt = await adapter.discover_posts(batch)
+
+    # Then
+    assert isinstance(attempt, LocatorPostsBatchCompleted)
+    assert len(attempt.outcomes) == 1
+    outcome = attempt.outcomes[0]
+    assert isinstance(outcome, ResolvedLocatorPosts)
+    assert outcome.locator == locator
+    assert outcome.account.id == "linkedin:person:303"
+    assert len(outcome.collected.posts) == 1
+    assert [
+        (call.operation, call.kind, call.urls, call.windows) for call in client.calls
+    ] == [
+        (
+            "posts",
+            AccountKind.PERSON,
+            (locator.canonical_url,),
+            ((date(2026, 8, 13), date(2026, 8, 20), True),),
+        )
+    ]
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_numeric_company_uses_company_posts_only() -> None:
+    # Given
+    locator = parse_linkedin_locator("https://linkedin.com/company/discovery-org")
+    discovered = _account(AccountKind.COMPANY, "404", "discovery-org")
+    client = SyntheticBrightDataClient(
+        company_posts=(_post(discovered, "company-original"),)
+    )
+    adapter = BrightDataLinkedInAdapter(
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
+    )
+    batch = AdapterPostLocatorBatch(
+        (AdapterPostLocatorRequest(locator, date(2026, 8, 14), date(2026, 8, 20)),)
+    )
+
+    # When
+    attempt = await adapter.discover_posts(batch)
+
+    # Then
+    assert isinstance(attempt, LocatorPostsBatchCompleted)
+    assert isinstance(attempt.outcomes[0], ResolvedLocatorPosts)
+    assert [(call.operation, call.kind) for call in client.calls] == [
+        ("posts", AccountKind.COMPANY)
+    ]
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_alias_canonicalization_remains_stable() -> None:
+    # Given
+    locator = parse_linkedin_locator(
+        "https://www.linkedin.com/in/discovery-person/?trk=synthetic"
+    )
+    discovered = _account(AccountKind.PERSON, "303", "discovery-person")
+    client = SyntheticBrightDataClient(
+        person_posts=(_post(discovered, "canonical-original"),)
+    )
+    adapter = BrightDataLinkedInAdapter(
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
+    )
+    batch = AdapterPostLocatorBatch(
+        (AdapterPostLocatorRequest(locator, date(2026, 8, 13), date(2026, 8, 20)),)
+    )
+
+    # When
+    attempt = await adapter.discover_posts(batch)
+
+    # Then
+    assert isinstance(attempt, LocatorPostsBatchCompleted)
+    outcome = attempt.outcomes[0]
+    assert isinstance(outcome, ResolvedLocatorPosts)
+    assert outcome.account.profile_url == locator.canonical_url
+    assert client.calls[0].urls == (locator.canonical_url,)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("records", [(), ("repost",)])
+async def test_locator_discovery_no_identity_returns_unresolved_without_records(
+    records: tuple[str, ...],
+) -> None:
+    # Given
+    locator = parse_linkedin_locator("https://linkedin.com/in/no-identity")
+    account = _account(AccountKind.PERSON, "505", "no-identity")
+    provider_records = tuple(_post(account, kind, kind) for kind in records)
+    client = SyntheticBrightDataClient(person_posts=provider_records)
+    adapter = BrightDataLinkedInAdapter(
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
+    )
+    batch = AdapterPostLocatorBatch(
+        (AdapterPostLocatorRequest(locator, date(2026, 8, 13), date(2026, 8, 20)),)
+    )
+
+    # When
+    attempt = await adapter.discover_posts(batch)
+
+    # Then
+    assert isinstance(attempt, LocatorPostsBatchCompleted)
+    assert attempt.outcomes == (UnresolvedLocatorPosts(locator),)
+    assert [call.operation for call in client.calls] == ["posts"]
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_accepted_snapshot_is_terminal_one_shot() -> None:
+    # Given
+    locator = parse_linkedin_locator("https://linkedin.com/in/accepted")
+    client = SyntheticBrightDataClient(
+        failure=BrightDataError(
+            BrightDataErrorCategory.RETRYABLE,
+            snapshot_accepted=True,
+        )
+    )
+    adapter = BrightDataLinkedInAdapter(
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
+    )
+    batch = AdapterPostLocatorBatch(
+        (AdapterPostLocatorRequest(locator, date(2026, 8, 13), date(2026, 8, 20)),)
+    )
+
+    # When
+    attempt = await adapter.discover_posts(batch)
+
+    # Then
+    assert isinstance(attempt, AcceptedSnapshotBatchFailure)
+    assert [call.operation for call in client.calls] == ["posts"]
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_mixed_ids_abort_atomically() -> None:
+    # Given
+    locator = parse_linkedin_locator("https://linkedin.com/in/mixed")
+    first = _account(AccountKind.PERSON, "601", "mixed")
+    second = _account(AccountKind.PERSON, "602", "mixed")
+    client = SyntheticBrightDataClient(
+        person_posts=(_post(first, "mixed-first"), _post(second, "mixed-second"))
+    )
+    adapter = BrightDataLinkedInAdapter(
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
+    )
+    batch = AdapterPostLocatorBatch(
+        (AdapterPostLocatorRequest(locator, date(2026, 8, 13), date(2026, 8, 20)),)
+    )
+
+    # When
+    attempt = await adapter.discover_posts(batch)
+
+    # Then
+    assert isinstance(attempt, SchemaBatchFailure)
+    assert not isinstance(attempt, LocatorPostsBatchCompleted)
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_malformed_actor_aborts_without_provider_text() -> None:
+    # Given
+    locator = parse_linkedin_locator("https://linkedin.com/in/malformed")
+    account = _account(AccountKind.PERSON, "701", "malformed")
+    record = _post(account, "malformed-original").model_copy(
+        update={
+            "user_url": "provider-prompt-canary",
+            "provider_note": "credential-canary",
+        }
+    )
+    client = SyntheticBrightDataClient(person_posts=(record,))
+    adapter = BrightDataLinkedInAdapter(
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
+    )
+    batch = AdapterPostLocatorBatch(
+        (AdapterPostLocatorRequest(locator, date(2026, 8, 13), date(2026, 8, 20)),)
+    )
+
+    # When
+    attempt = await adapter.discover_posts(batch)
+
+    # Then
+    assert isinstance(attempt, SchemaBatchFailure)
+    assert "canary" not in repr(attempt)
+    assert "prompt" not in repr(attempt)
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_conflict_cross_owner_aborts_atomically() -> None:
+    # Given
+    first_locator = parse_linkedin_locator("https://linkedin.com/in/owner-one")
+    second_locator = parse_linkedin_locator("https://linkedin.com/in/owner-two")
+    first = _account(AccountKind.PERSON, "751", "owner-one")
+    record = _post(first, "cross-owner").model_copy(
+        update={"profile_url": second_locator.canonical_url}
+    )
+    client = SyntheticBrightDataClient(person_posts=(record,))
+    adapter = BrightDataLinkedInAdapter(
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
+    )
+    batch = AdapterPostLocatorBatch(
+        (
+            AdapterPostLocatorRequest(
+                first_locator, date(2026, 8, 13), date(2026, 8, 20)
+            ),
+            AdapterPostLocatorRequest(
+                second_locator, date(2026, 8, 13), date(2026, 8, 20)
+            ),
+        )
+    )
+
+    # When
+    attempt = await adapter.discover_posts(batch)
+
+    # Then
+    assert isinstance(attempt, SchemaBatchFailure)
+    assert not isinstance(attempt, LocatorPostsBatchCompleted)
+
+
+@pytest.mark.anyio
+async def test_locator_discovery_conflict_new_account_id_aborts_whole_batch() -> None:
+    # Given
+    first_locator = parse_linkedin_locator("https://linkedin.com/in/conflict-one")
+    second_locator = parse_linkedin_locator("https://linkedin.com/in/conflict-two")
+    first = _account(AccountKind.PERSON, "801", "conflict-one")
+    second = _account(AccountKind.PERSON, "801", "conflict-two")
+    client = SyntheticBrightDataClient(
+        person_posts=(_post(first, "conflict-first"), _post(second, "conflict-second"))
+    )
+    adapter = BrightDataLinkedInAdapter(
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
+    )
+    batch = AdapterPostLocatorBatch(
+        (
+            AdapterPostLocatorRequest(
+                first_locator, date(2026, 8, 13), date(2026, 8, 20)
+            ),
+            AdapterPostLocatorRequest(
+                second_locator, date(2026, 8, 13), date(2026, 8, 20)
+            ),
+        )
+    )
+
+    # When
+    attempt = await adapter.discover_posts(batch)
+
+    # Then
+    assert isinstance(attempt, SchemaBatchFailure)
+    assert not isinstance(attempt, LocatorPostsBatchCompleted)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("category", "expected_type"),
+    [
+        (BrightDataErrorCategory.AUTH, InvalidCredentialBatchFailure),
+        (BrightDataErrorCategory.QUOTA, QuotaBatchFailure),
+        (BrightDataErrorCategory.RETRYABLE, RetryableBatchFailure),
+        (BrightDataErrorCategory.TIMEOUT, RetryableBatchFailure),
+        (BrightDataErrorCategory.SCHEMA, SchemaBatchFailure),
+        (BrightDataErrorCategory.SNAPSHOT_TIMEOUT, SchemaBatchFailure),
+        (BrightDataErrorCategory.SNAPSHOT_TERMINAL, SchemaBatchFailure),
+    ],
+)
+async def test_locator_discovery_provider_failure_category_mapping(
+    category: BrightDataErrorCategory,
+    expected_type: type[
+        InvalidCredentialBatchFailure
+        | QuotaBatchFailure
+        | RetryableBatchFailure
+        | SchemaBatchFailure
+    ],
+) -> None:
+    # Given
+    locator = parse_linkedin_locator("https://linkedin.com/in/failure")
+    client = SyntheticBrightDataClient(failure=BrightDataError(category))
+    adapter = BrightDataLinkedInAdapter(
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
+    )
+    batch = AdapterPostLocatorBatch(
+        (AdapterPostLocatorRequest(locator, date(2026, 8, 13), date(2026, 8, 20)),)
+    )
+
+    # When
+    attempt = await adapter.discover_posts(batch)
+
+    # Then
+    assert isinstance(attempt, expected_type)
+    assert [call.operation for call in client.calls] == ["posts"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "category",
+    [BrightDataErrorCategory.INPUT, BrightDataErrorCategory.NOT_FOUND],
+)
+async def test_locator_discovery_no_identity_provider_result_is_unresolved(
+    category: BrightDataErrorCategory,
+) -> None:
+    # Given
+    locator = parse_linkedin_locator("https://linkedin.com/in/not-found")
+    client = SyntheticBrightDataClient(failure=BrightDataError(category))
+    adapter = BrightDataLinkedInAdapter(
+        client, AdapterInstanceOrdinal(0), BrightDataAdapterConfig(_NOW)
+    )
+    batch = AdapterPostLocatorBatch(
+        (AdapterPostLocatorRequest(locator, date(2026, 8, 13), date(2026, 8, 20)),)
+    )
+
+    # When
+    attempt = await adapter.discover_posts(batch)
+
+    # Then
+    assert isinstance(attempt, LocatorPostsBatchCompleted)
+    assert attempt.outcomes == (UnresolvedLocatorPosts(locator),)
+    assert [call.operation for call in client.calls] == ["posts"]
 
 
 @pytest.mark.anyio

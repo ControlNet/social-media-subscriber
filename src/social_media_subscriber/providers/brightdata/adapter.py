@@ -22,12 +22,17 @@ from social_media_subscriber.adapters.instance import (
     CollectedAccount,
     IdentityBatchCompleted,
     InvalidCredentialBatchFailure,
+    LocatorPostsBatchCompleted,
     QuotaBatchFailure,
     RejectedAccount,
     RetryableBatchFailure,
     SchemaBatchFailure,
+    UnresolvedLocatorPosts,
 )
 from social_media_subscriber.domain.platform import AccountKind, Platform
+from social_media_subscriber.providers.brightdata.adapter_discovery import (
+    BrightDataLocatorPostCollector,
+)
 from social_media_subscriber.providers.brightdata.adapter_identity import (
     BrightDataIdentityResolver,
 )
@@ -80,6 +85,7 @@ class _DeclaredAdapter:
     operations=(
         AdapterOperation.RESOLVE_ACCOUNT_IDENTITY,
         AdapterOperation.COLLECT_ACCOUNT_POSTS,
+        AdapterOperation.DISCOVER_LOCATOR_POSTS,
     ),
     account_kinds=(AccountKind.PERSON, AccountKind.COMPANY),
     supports_batch=True,
@@ -148,9 +154,17 @@ class BrightDataLinkedInAdapter(_DeclaredAdapter):
         self,
         batch: AdapterPostLocatorBatch,
     ) -> AdapterPostLocatorAttempt:
-        """Return a safe failure until locator Posts discovery is wired."""
-        _ = batch
-        return SchemaBatchFailure()
+        """Collect locator Posts and map failures into Router classifications."""
+        try:
+            result = await BrightDataLocatorPostCollector(
+                self._client,
+                self._config.first_seen_at,
+            ).collect(batch.requests)
+        except BrightDataNormalizationError:
+            return SchemaBatchFailure()
+        except BrightDataError as error:
+            return _map_locator_error(batch, error)
+        return LocatorPostsBatchCompleted(result.outcomes)
 
     async def resolve_identity(
         self,
@@ -237,6 +251,35 @@ def _map_identity_error(
         case BrightDataErrorCategory.NOT_FOUND | BrightDataErrorCategory.INPUT:
             result = IdentityBatchCompleted(
                 tuple(UnresolvedAccountIdentity() for _index in range(locator_count))
+            )
+        case BrightDataErrorCategory.RETRYABLE | BrightDataErrorCategory.TIMEOUT:
+            result = RetryableBatchFailure()
+        case (
+            BrightDataErrorCategory.SNAPSHOT_TIMEOUT
+            | BrightDataErrorCategory.SNAPSHOT_TERMINAL
+            | BrightDataErrorCategory.SCHEMA
+        ):
+            result = SchemaBatchFailure()
+    return result
+
+
+def _map_locator_error(
+    batch: AdapterPostLocatorBatch,
+    error: BrightDataError,
+) -> AdapterPostLocatorAttempt:
+    if error.snapshot_accepted:
+        return AcceptedSnapshotBatchFailure()
+    match error.category:
+        case BrightDataErrorCategory.AUTH:
+            result: AdapterPostLocatorAttempt = InvalidCredentialBatchFailure()
+        case BrightDataErrorCategory.QUOTA:
+            result = QuotaBatchFailure()
+        case BrightDataErrorCategory.NOT_FOUND | BrightDataErrorCategory.INPUT:
+            result = LocatorPostsBatchCompleted(
+                tuple(
+                    UnresolvedLocatorPosts(request.locator)
+                    for request in batch.requests
+                )
             )
         case BrightDataErrorCategory.RETRYABLE | BrightDataErrorCategory.TIMEOUT:
             result = RetryableBatchFailure()
