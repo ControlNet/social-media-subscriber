@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 import anyio
 from anyio.lowlevel import checkpoint
@@ -21,6 +21,7 @@ from social_media_subscriber.providers.brightdata.client import BrightDataClient
 from social_media_subscriber.providers.http import HttpClientConfig
 from tests.e2e.brightdata_server import (
     ACTIVE_VALUE,
+    COMPANY_URL,
     PERSON_URL,
     REVOKED_VALUE,
     FakeBrightDataServer,
@@ -38,6 +39,8 @@ if TYPE_CHECKING:
 
 _RUNNER: Final = CliRunner()
 _REPORT: Final = TypeAdapter(dict[str, str | int | list[str] | None])
+NOT_FOUND_PERSON_URL: Final = "https://www.linkedin.com/in/synthetic-not-found/"
+type ContainedScenario = Literal["success", "not-found"]
 
 
 async def _no_wait(_delay: float) -> None:
@@ -97,6 +100,34 @@ def invoke_collect(
         },
         catch_exceptions=False,
     )
+
+
+def invoke_contained_scenario(
+    scenario: ContainedScenario,
+    root: Path,
+) -> CliResult:
+    """Run one synthetic CLI scenario through the real loopback HTTP stack."""
+    root.mkdir(parents=True, exist_ok=True)
+    candidate = root / "candidate"
+    if candidate.exists():
+        raise FileExistsError(candidate)
+    server = FakeBrightDataServer()
+    if scenario == "not-found":
+        server.scenario.fail_person_posts = True
+        accounts = NOT_FOUND_PERSON_URL
+    else:
+        accounts = f"{PERSON_URL}\n{COMPANY_URL}"
+    with server:
+        result = invoke_collect(
+            server,
+            root / "previous",
+            candidate,
+            accounts=accounts,
+            credentials=ACTIVE_VALUE,
+        )
+        assert server.base_url.startswith("http://127.0.0.1:")
+    assert not server.thread_alive
+    return result
 
 
 def report(result: CliResult) -> dict[str, str | int | list[str] | None]:
