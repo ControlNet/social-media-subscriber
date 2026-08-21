@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import StrEnum, unique
 from typing import TYPE_CHECKING, final
 
 from social_media_subscriber.adapters.instance import (
     ResolvedLocatorPosts,
     UnresolvedLocatorPosts,
+)
+from social_media_subscriber.adapters.router_discovery_outcomes import (
+    DiscoveryFailureCategory,
+    DiscoveryLocatorFailed,
+    DiscoveryLocatorOutcome,
+    DiscoveryLocatorResolved,
+    DiscoveryLocatorUnresolved,
+    DiscoveryRouterAggregate,
+    DiscoveryRouterResult,
+)
+from social_media_subscriber.adapters.router_discovery_validation import (
+    covers_batch,
+    merge_posts,
+    resolution_mismatch,
 )
 from social_media_subscriber.adapters.router_outcomes import (
     InstanceHealth,
@@ -17,13 +29,21 @@ from social_media_subscriber.adapters.router_outcomes import (
     RouterDiagnosticCategory,
     RouterRunStatus,
 )
-from social_media_subscriber.domain.post_merge import PostMergeConflictError, merge_post
 from social_media_subscriber.providers.brightdata.normalization_outcomes import (
     SkippedPostCounts,
 )
 
+__all__ = (
+    "DiscoveryFailureCategory",
+    "DiscoveryLocatorFailed",
+    "DiscoveryLocatorOutcome",
+    "DiscoveryLocatorResolved",
+    "DiscoveryLocatorUnresolved",
+    "DiscoveryRouterAggregate",
+    "DiscoveryRouterResult",
+)
+
 if TYPE_CHECKING:
-    from social_media_subscriber.accounts.locator import LinkedInLocator
     from social_media_subscriber.adapters.instance import (
         AdapterInstance,
         AdapterInstanceOrdinal,
@@ -41,68 +61,6 @@ if TYPE_CHECKING:
     from social_media_subscriber.providers.brightdata.source_record import (
         BrightDataLinkedInPostSourceRecord,
     )
-
-
-@unique
-class DiscoveryFailureCategory(StrEnum):
-    """Locator-scoped terminal failure retained inside collection orchestration."""
-
-    POOL_EXHAUSTED = "pool_exhausted"
-    ACCEPTED_SNAPSHOT_FAILED = "accepted_snapshot_failed"
-    UNSUPPORTED_CAPABILITY = "unsupported_capability"
-
-
-@dataclass(frozen=True, slots=True)
-class DiscoveryLocatorResolved:
-    """One locator resolved to a canonical Account."""
-
-    locator: LinkedInLocator
-    account_id: AccountId
-
-
-@dataclass(frozen=True, slots=True)
-class DiscoveryLocatorUnresolved:
-    """One locator completed without sufficient Account evidence."""
-
-    locator: LinkedInLocator
-
-
-@dataclass(frozen=True, slots=True)
-class DiscoveryLocatorFailed:
-    """One locator ended in a classified Router failure."""
-
-    locator: LinkedInLocator
-    category: DiscoveryFailureCategory
-
-
-type DiscoveryLocatorOutcome = (
-    DiscoveryLocatorResolved | DiscoveryLocatorUnresolved | DiscoveryLocatorFailed
-)
-
-
-@dataclass(frozen=True, slots=True)
-class DiscoveryRouterAggregate:
-    """Counts and disposition for one locator discovery run."""
-
-    status: RouterRunStatus
-    resolved_locators: int
-    unresolved_locators: int
-    failed_locators: int
-    disabled_instances: int
-
-
-@dataclass(frozen=True, slots=True)
-class DiscoveryRouterResult:
-    """Internal collection result for unknown locator discovery."""
-
-    aggregate: DiscoveryRouterAggregate
-    accounts: tuple[Account, ...]
-    outcomes: tuple[DiscoveryLocatorOutcome, ...]
-    posts: tuple[Post, ...]
-    source_records: tuple[BrightDataLinkedInPostSourceRecord, ...]
-    skipped: SkippedPostCounts
-    health: tuple[InstanceHealth, ...]
-    diagnostics: tuple[RouterDiagnostic, ...]
 
 
 @final
@@ -135,7 +93,7 @@ class DiscoveryRouterState:
         outcomes: tuple[AdapterPostLocatorOutcome, ...],
     ) -> bool:
         """Accept exactly one ownership-consistent outcome per requested locator."""
-        if not _covers_batch(batch, outcomes):
+        if not covers_batch(batch, outcomes):
             self.abort_schema()
             return False
 
@@ -154,9 +112,9 @@ class DiscoveryRouterState:
                     collected=collected,
                 ):
                     owner = owners.get(account.id)
-                    if _resolution_mismatch(
+                    if resolution_mismatch(
                         outcome, owner, locator_url
-                    ) or not _merge_posts(posts, collected.posts, account.id):
+                    ) or not merge_posts(posts, collected.posts, account.id):
                         self.abort_schema()
                         return False
                     for source in collected.source_records:
@@ -286,42 +244,3 @@ def _sum_skipped(
         quotes=first.quotes + second.quotes,
         unknown=first.unknown + second.unknown,
     )
-
-
-def _covers_batch(
-    batch: AdapterPostLocatorBatch,
-    outcomes: tuple[AdapterPostLocatorOutcome, ...],
-) -> bool:
-    expected = {request.locator.canonical_url for request in batch.requests}
-    received = {outcome.locator.canonical_url for outcome in outcomes}
-    return received == expected and len(received) == len(outcomes)
-
-
-def _resolution_mismatch(
-    outcome: ResolvedLocatorPosts,
-    owner: str | None,
-    locator_url: str,
-) -> bool:
-    return (
-        outcome.collected.account_id != outcome.account.id
-        or outcome.account.kind is not outcome.locator.kind
-        or (owner is not None and owner != locator_url)
-    )
-
-
-def _merge_posts(
-    destination: dict[PostId, Post],
-    incoming: tuple[Post, ...],
-    account_id: AccountId,
-) -> bool:
-    try:
-        for post in incoming:
-            if post.account_id != account_id:
-                return False
-            existing = destination.get(post.id)
-            destination[post.id] = (
-                post if existing is None else merge_post(existing, post)
-            )
-    except PostMergeConflictError:
-        return False
-    return True
