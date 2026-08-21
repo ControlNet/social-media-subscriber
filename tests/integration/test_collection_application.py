@@ -9,6 +9,7 @@ import pytest
 from pydantic import SecretStr
 
 from social_media_subscriber.adapters.router_outcomes import RouterRunStatus
+from social_media_subscriber.application import collect as collect_module
 from social_media_subscriber.application.collect import (
     CollectionRequest,
     collect_snapshot,
@@ -28,11 +29,12 @@ from social_media_subscriber.providers.brightdata.models import (
     BrightDataPost,
 )
 from social_media_subscriber.settings import Settings
+from social_media_subscriber.storage.merge import merge_snapshot
 from social_media_subscriber.storage.repository import (
     SnapshotIntegrityError,
     SnapshotRepository,
 )
-from social_media_subscriber.storage.snapshot import SnapshotState
+from social_media_subscriber.storage.snapshot import SnapshotManifest, SnapshotState
 from tests.fakes.router import make_account
 
 if TYPE_CHECKING:
@@ -199,6 +201,49 @@ async def test_all_success_new_run_writes_valid_candidate(tmp_path: Path) -> Non
 
 
 @pytest.mark.anyio
+async def test_posts_first_unknown_uses_posts_without_identity_lookup(
+    tmp_path: Path,
+) -> None:
+    # Given
+    client = ApplicationClient()
+
+    # When
+    result = await _run(_request(tmp_path, _settings(PERSON_URL)), (client,))
+
+    # Then
+    state = SnapshotRepository(tmp_path / "candidate").load_optional()
+    assert result.exit_code is CollectionExitCode.SUCCESS
+    assert result.failed_accounts == 0
+    assert state is not None
+    assert (len(state.accounts), len(state.posts), len(state.source_records)) == (
+        1,
+        1,
+        1,
+    )
+    assert client.calls == [("person_posts", ((date(2026, 8, 13), date(2026, 8, 20)),))]
+
+
+@pytest.mark.anyio
+async def test_posts_first_unknown_respects_explicit_window(tmp_path: Path) -> None:
+    # Given
+    client = ApplicationClient()
+
+    # When
+    result = await _run(
+        _request(
+            tmp_path,
+            _settings(PERSON_URL),
+            window=(date(2026, 7, 1), date(2026, 7, 2)),
+        ),
+        (client,),
+    )
+
+    # Then
+    assert result.exit_code is CollectionExitCode.SUCCESS
+    assert client.calls == [("person_posts", ((date(2026, 7, 1), date(2026, 7, 2)),))]
+
+
+@pytest.mark.anyio
 async def test_overlap_rerun_is_byte_identical_no_change(tmp_path: Path) -> None:
     # Given
     first = await _run(
@@ -279,11 +324,145 @@ async def test_known_zero_posts_preserves_history(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_unresolved_new_account_is_partial_valid_candidate(
+async def test_mixed_known_unknown_uses_incremental_and_discovery_windows(
     tmp_path: Path,
 ) -> None:
     # Given
-    client = ApplicationClient(person_identity=BrightDataPersonIdentity())
+    _ = await _run(_request(tmp_path, _settings(PERSON_URL)), (ApplicationClient(),))
+    _ = shutil.copytree(tmp_path / "candidate", tmp_path / "previous")
+    client = ApplicationClient(company_posts=(_post("company-1", actor_id="202"),))
+
+    # When
+    result = await _run(
+        _request(
+            tmp_path,
+            _settings(PERSON_URL, COMPANY_URL),
+            paths=("previous", "mixed"),
+        ),
+        (client,),
+    )
+
+    # Then
+    state = SnapshotRepository(tmp_path / "mixed").load_optional()
+    assert result.exit_code is CollectionExitCode.SUCCESS
+    assert state is not None
+    assert (len(state.accounts), len(state.posts), len(state.source_records)) == (
+        2,
+        2,
+        2,
+    )
+    assert {post.account_id for post in state.posts} == {
+        account.id for account in state.accounts
+    }
+    assert {source.account_id for source in state.source_records} == {
+        account.id for account in state.accounts
+    }
+    assert client.calls == [
+        ("person_posts", ((date(2026, 8, 15), date(2026, 8, 20)),)),
+        ("company_posts", ((date(2026, 8, 13), date(2026, 8, 20)),)),
+    ]
+
+
+@pytest.mark.anyio
+async def test_mixed_known_unknown_merges_and_writes_exactly_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    _ = await _run(_request(tmp_path, _settings(PERSON_URL)), (ApplicationClient(),))
+    _ = shutil.copytree(tmp_path / "candidate", tmp_path / "previous")
+    original_merge = merge_snapshot
+    original_write = SnapshotRepository.write
+    merge_calls = 0
+    write_calls = 0
+
+    def track_merge(
+        previous: SnapshotState | None,
+        current: SnapshotState,
+    ) -> SnapshotState:
+        nonlocal merge_calls
+        merge_calls += 1
+        return original_merge(previous, current)
+
+    def track_write(
+        repository: SnapshotRepository,
+        state: SnapshotState,
+    ) -> SnapshotManifest:
+        nonlocal write_calls
+        write_calls += 1
+        return original_write(repository, state)
+
+    monkeypatch.setattr(collect_module, "merge_snapshot", track_merge)
+    monkeypatch.setattr(SnapshotRepository, "write", track_write)
+    client = ApplicationClient(company_posts=(_post("company-1", actor_id="202"),))
+
+    # When
+    result = await _run(
+        _request(
+            tmp_path,
+            _settings(PERSON_URL, COMPANY_URL),
+            paths=("previous", "single-write"),
+        ),
+        (client,),
+    )
+
+    # Then
+    assert result.exit_code is CollectionExitCode.SUCCESS
+    assert merge_calls == write_calls == 1
+    assert client.calls == [
+        ("person_posts", ((date(2026, 8, 15), date(2026, 8, 20)),)),
+        ("company_posts", ((date(2026, 8, 13), date(2026, 8, 20)),)),
+    ]
+
+
+@pytest.mark.anyio
+async def test_mixed_known_unknown_validates_discovery_before_any_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    _ = await _run(_request(tmp_path, _settings(PERSON_URL)), (ApplicationClient(),))
+    _ = shutil.copytree(tmp_path / "candidate", tmp_path / "previous")
+
+    def reject_write(
+        _repository: SnapshotRepository,
+        _state: SnapshotState,
+    ) -> SnapshotManifest:
+        reason = "candidate write occurred before discovery validation"
+        raise AssertionError(reason)
+
+    monkeypatch.setattr(SnapshotRepository, "write", reject_write)
+    invalid_company_post = _post("company-1", actor_id="202").model_copy(
+        update={"user_id": None}
+    )
+    client = ApplicationClient(company_posts=(invalid_company_post,))
+
+    # When
+    result = await _run(
+        _request(
+            tmp_path,
+            _settings(PERSON_URL, COMPANY_URL),
+            paths=("previous", "integrity"),
+        ),
+        (client,),
+    )
+
+    # Then
+    assert result.exit_code is CollectionExitCode.INTEGRITY
+    assert result.candidate_change is CandidateChange.ABSENT
+    assert not (tmp_path / "integrity").exists()
+    assert client.calls == [
+        ("person_posts", ((date(2026, 8, 15), date(2026, 8, 20)),)),
+        ("company_posts", ((date(2026, 8, 13), date(2026, 8, 20)),)),
+    ]
+
+
+@pytest.mark.anyio
+async def test_unknown_unresolved_new_account_is_partial_valid_candidate(
+    tmp_path: Path,
+) -> None:
+    # Given
+    client = ApplicationClient(person_posts=())
 
     # When
     result = await _run(_request(tmp_path, _settings(PERSON_URL)), (client,))
@@ -295,6 +474,38 @@ async def test_unresolved_new_account_is_partial_valid_candidate(
     assert result.failed_account_ids == ()
     assert state is not None
     assert state.accounts == ()
+    assert state.posts == ()
+    assert state.source_records == ()
+    assert client.calls == [("person_posts", ((date(2026, 8, 13), date(2026, 8, 20)),))]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "posts",
+    [
+        (),
+        (_post().model_copy(update={"post_type": "repost"}),),
+    ],
+    ids=("zero", "nonoriginal"),
+)
+async def test_unknown_zero_or_nonoriginal_is_partial_without_fabricated_identity(
+    tmp_path: Path,
+    posts: tuple[BrightDataPost, ...],
+) -> None:
+    # Given
+    client = ApplicationClient(person_posts=posts)
+
+    # When
+    result = await _run(_request(tmp_path, _settings(PERSON_URL)), (client,))
+
+    # Then
+    state = SnapshotRepository(tmp_path / "candidate").load_optional()
+    assert result.exit_code is CollectionExitCode.PARTIAL
+    assert result.failed_accounts == 1
+    assert result.failed_account_ids == ()
+    assert state is not None
+    assert state == SnapshotState((), (), ())
+    assert client.calls == [("person_posts", ((date(2026, 8, 13), date(2026, 8, 20)),))]
 
 
 @pytest.mark.anyio
@@ -383,12 +594,17 @@ async def test_total_pool_failure_writes_no_candidate(tmp_path: Path) -> None:
     assert result.exit_code is CollectionExitCode.PROVIDER
     assert result.candidate_change is CandidateChange.ABSENT
     assert not (tmp_path / "candidate").exists()
+    assert [call[0] for client in clients for call in client.calls] == [
+        "person_posts",
+        "person_posts",
+    ]
 
 
 @pytest.mark.anyio
 async def test_schema_abort_writes_no_candidate(tmp_path: Path) -> None:
     # Given
-    client = ApplicationClient(person_identity=None)
+    invalid_post = _post().model_copy(update={"user_id": None})
+    client = ApplicationClient(person_posts=(invalid_post,))
 
     # When
     result = await _run(_request(tmp_path, _settings(PERSON_URL)), (client,))

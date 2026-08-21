@@ -163,7 +163,13 @@ async def test_production_collection_closes_transport_once_on_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given
-    transport_factory = _TrackingHttpFactory(_success_handler)
+    requests: list[httpx2.Request] = []
+
+    def tracked_success(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return _success_handler(request)
+
+    transport_factory = _TrackingHttpFactory(tracked_success)
     monkeypatch.setattr(
         client_module,
         "create_async_http_client",
@@ -180,6 +186,9 @@ async def test_production_collection_closes_transport_once_on_success(
     assert len(transport_factory.clients) == 2
     assert all(client.is_closed for client in transport_factory.clients)
     assert [client.close_calls for client in transport_factory.clients] == [1, 1]
+    assert PERSON_IDENTITY_DATASET not in {
+        request.url.params.get("dataset_id") for request in requests
+    }
 
 
 @pytest.mark.anyio

@@ -9,13 +9,22 @@ import anyio
 from pydantic_core import PydanticCustomError
 
 from social_media_subscriber.accounts.errors import AccountInputError
+from social_media_subscriber.accounts.identity import (
+    AccountIdentityConflictError,
+    AccountIdentityService,
+)
 from social_media_subscriber.accounts.input import load_account_input
 from social_media_subscriber.adapters.operations import AdapterOperation
+from social_media_subscriber.adapters.router_discovery_state import (
+    DiscoveryFailureCategory,
+    DiscoveryLocatorFailed,
+    DiscoveryLocatorResolved,
+    DiscoveryLocatorUnresolved,
+)
 from social_media_subscriber.adapters.router_outcomes import (
     AccountRouteFailed,
     AccountRouteFailureCategory,
     AccountRouteSucceeded,
-    InstanceHealthStatus,
     RouterRunStatus,
 )
 from social_media_subscriber.application.results import (
@@ -28,6 +37,7 @@ from social_media_subscriber.application.windows import (
     ExplicitWindow,
     WindowContext,
     WindowInputError,
+    build_locator_post_requests,
     build_post_requests,
 )
 from social_media_subscriber.bootstrap import bootstrap_runtime
@@ -36,10 +46,6 @@ from social_media_subscriber.providers.brightdata.adapter_contracts import (
     BrightDataAdapterConfig,
 )
 from social_media_subscriber.providers.brightdata.client import BrightDataClient
-from social_media_subscriber.providers.brightdata.normalization_outcomes import (
-    ResolvedAccountIdentity,
-    UnresolvedAccountIdentity,
-)
 from social_media_subscriber.storage.merge import SnapshotConflictError, merge_snapshot
 from social_media_subscriber.storage.repository import (
     SnapshotIntegrityError,
@@ -53,8 +59,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from social_media_subscriber.accounts.input import AccountInput
+    from social_media_subscriber.accounts.locator import LinkedInLocator
+    from social_media_subscriber.adapters.router_discovery_state import (
+        DiscoveryRouterResult,
+    )
     from social_media_subscriber.adapters.router_outcomes import (
-        IdentityRouterResult,
         RouterResult,
     )
     from social_media_subscriber.bootstrap import SubscriberRuntime
@@ -89,64 +98,58 @@ class _PreparedRun:
 
 
 @dataclass(frozen=True, slots=True)
-class _IdentityPhase:
-    runtime: SubscriberRuntime
-    accounts: tuple[Account, ...]
-    unresolved_count: int
+class _CollectionPartition:
+    known_accounts: tuple[Account, ...]
+    unknown_locators: tuple[LinkedInLocator, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class _PostPhase:
     current: SnapshotState
     succeeded_count: int
+    failed_count: int
     failed_ids: tuple[AccountId, ...]
+    pool_exhausted_count: int
 
 
 def _build_client(credential: str) -> BrightDataClient:
     return BrightDataClient(credential)
 
 
-def _resolved_accounts(
-    identity_result: IdentityRouterResult,
-) -> tuple[tuple[Account, ...], int]:
-    accounts: dict[AccountId, Account] = {}
-    unresolved = 0
-    for outcome in identity_result.outcomes:
-        match outcome:
-            case ResolvedAccountIdentity(account=account):
-                accounts[account.id] = account
-            case UnresolvedAccountIdentity():
-                unresolved += 1
-    return tuple(accounts[key] for key in sorted(accounts, key=str)), unresolved
-
-
-def _pool_is_unusable(identity_result: IdentityRouterResult) -> bool:
-    return bool(identity_result.health) and all(
-        item.status is not InstanceHealthStatus.HEALTHY
-        for item in identity_result.health
-    )
-
-
 def _post_outcomes(
     post_result: RouterResult,
-) -> tuple[set[AccountId], tuple[AccountId, ...]]:
+) -> tuple[set[AccountId], tuple[AccountId, ...], int]:
     succeeded: set[AccountId] = set()
     failed: list[AccountId] = []
+    pool_exhausted = 0
     for outcome in post_result.accounts:
         match outcome:
             case AccountRouteSucceeded(account_id=account_id):
                 succeeded.add(account_id)
+            case AccountRouteFailed(
+                account_id=account_id,
+                category=AccountRouteFailureCategory.POOL_EXHAUSTED,
+            ):
+                failed.append(account_id)
+                pool_exhausted += 1
             case AccountRouteFailed(account_id=account_id):
                 failed.append(account_id)
-    return succeeded, tuple(sorted(failed, key=str))
+    return succeeded, tuple(sorted(failed, key=str)), pool_exhausted
 
 
-def _total_pool_failure(post_result: RouterResult) -> bool:
-    return bool(post_result.accounts) and all(
-        isinstance(outcome, AccountRouteFailed)
-        and outcome.category is AccountRouteFailureCategory.POOL_EXHAUSTED
-        for outcome in post_result.accounts
-    )
+def _discovery_pool_exhausted(result: DiscoveryRouterResult) -> int:
+    count = 0
+    for outcome in result.outcomes:
+        match outcome:
+            case DiscoveryLocatorResolved() | DiscoveryLocatorUnresolved():
+                pass
+            case DiscoveryLocatorFailed(
+                category=DiscoveryFailureCategory.POOL_EXHAUSTED
+            ):
+                count += 1
+            case DiscoveryLocatorFailed():
+                pass
+    return count
 
 
 def _prepare(request: CollectionRequest) -> _PreparedRun | CollectionResult:
@@ -167,37 +170,41 @@ def _prepare(request: CollectionRequest) -> _PreparedRun | CollectionResult:
     return _PreparedRun(account_input, previous, run_started_at, override)
 
 
-async def _resolve_identities(
+def _partition_locators(
     prepared: _PreparedRun,
-    runtime: SubscriberRuntime,
-) -> _IdentityPhase | CollectionResult:
-    known_accounts = () if prepared.previous is None else prepared.previous.accounts
-    result = await runtime.router.resolve_identities(
-        prepared.account_input.locators,
-        known_accounts,
+) -> _CollectionPartition | CollectionResult:
+    previous_accounts = () if prepared.previous is None else prepared.previous.accounts
+    try:
+        identity_service = AccountIdentityService(previous_accounts)
+    except AccountIdentityConflictError:
+        return aborted_result(CollectionExitCode.INTEGRITY)
+    known_accounts: dict[AccountId, Account] = {}
+    unknown_locators: list[LinkedInLocator] = []
+    for locator in prepared.account_input.locators:
+        account = identity_service.find(locator)
+        if account is None:
+            unknown_locators.append(locator)
+        else:
+            known_accounts[account.id] = account
+    return _CollectionPartition(
+        tuple(known_accounts[key] for key in sorted(known_accounts, key=str)),
+        tuple(unknown_locators),
     )
-    match result.aggregate.status:
-        case RouterRunStatus.ABORTED:
-            return aborted_result(CollectionExitCode.INTEGRITY)
-        case RouterRunStatus.SUCCESS | RouterRunStatus.PARTIAL:
-            accounts, unresolved = _resolved_accounts(result)
-    if not accounts and _pool_is_unusable(result):
-        return aborted_result(CollectionExitCode.PROVIDER)
-    return _IdentityPhase(runtime, accounts, unresolved)
 
 
 async def _collect_posts(
-    phase: _IdentityPhase,
+    accounts: tuple[Account, ...],
     prepared: _PreparedRun,
+    runtime: SubscriberRuntime,
 ) -> _PostPhase | CollectionResult:
     requests = build_post_requests(
-        phase.accounts,
+        accounts,
         prepared.previous,
         WindowContext(prepared.run_started_at, prepared.override),
     )
     if not requests:
-        return _PostPhase(SnapshotState((), (), ()), 0, ())
-    result = await phase.runtime.router.route(
+        return _PostPhase(SnapshotState((), (), ()), 0, 0, (), 0)
+    result = await runtime.router.route(
         requests,
         AdapterOperation.COLLECT_ACCOUNT_POSTS,
     )
@@ -205,16 +212,45 @@ async def _collect_posts(
         case RouterRunStatus.ABORTED:
             return aborted_result(CollectionExitCode.INTEGRITY)
         case RouterRunStatus.SUCCESS | RouterRunStatus.PARTIAL:
-            succeeded, failed = _post_outcomes(result)
-    if _total_pool_failure(result):
-        return aborted_result(CollectionExitCode.PROVIDER)
+            succeeded, failed, pool_exhausted = _post_outcomes(result)
     successful_accounts = tuple(
-        account for account in phase.accounts if account.id in succeeded
+        account for account in accounts if account.id in succeeded
     )
     return _PostPhase(
         SnapshotState(successful_accounts, result.posts, result.source_records),
         len(succeeded),
+        len(failed),
         failed,
+        pool_exhausted,
+    )
+
+
+async def _discover_posts(
+    locators: tuple[LinkedInLocator, ...],
+    prepared: _PreparedRun,
+    runtime: SubscriberRuntime,
+) -> _PostPhase | CollectionResult:
+    requests = build_locator_post_requests(
+        locators,
+        WindowContext(prepared.run_started_at, prepared.override),
+    )
+    if not requests:
+        return _PostPhase(SnapshotState((), (), ()), 0, 0, (), 0)
+    result = await runtime.router.discover_posts(requests)
+    match result.aggregate.status:
+        case RouterRunStatus.ABORTED:
+            return aborted_result(CollectionExitCode.INTEGRITY)
+        case RouterRunStatus.SUCCESS | RouterRunStatus.PARTIAL:
+            pass
+    failed_count = (
+        result.aggregate.unresolved_locators + result.aggregate.failed_locators
+    )
+    return _PostPhase(
+        SnapshotState(result.accounts, result.posts, result.source_records),
+        result.aggregate.resolved_locators,
+        failed_count,
+        (),
+        _discovery_pool_exhausted(result),
     )
 
 
@@ -223,24 +259,49 @@ async def _collect_with_runtime(
     prepared: _PreparedRun,
     runtime: SubscriberRuntime,
 ) -> CollectionResult:
-    identity = await _resolve_identities(prepared, runtime)
-    match identity:
+    partition = _partition_locators(prepared)
+    match partition:
         case CollectionResult() as terminal:
             return terminal
-        case _IdentityPhase():
+        case _CollectionPartition():
             pass
-    post_phase = await _collect_posts(identity, prepared)
-    match post_phase:
+    known_phase = await _collect_posts(
+        partition.known_accounts,
+        prepared,
+        runtime,
+    )
+    match known_phase:
         case CollectionResult() as terminal:
             return terminal
         case _PostPhase():
             pass
+    discovery_phase = await _discover_posts(
+        partition.unknown_locators,
+        prepared,
+        runtime,
+    )
+    match discovery_phase:
+        case CollectionResult() as terminal:
+            return terminal
+        case _PostPhase():
+            pass
+    succeeded_count = known_phase.succeeded_count + discovery_phase.succeeded_count
+    failed_count = known_phase.failed_count + discovery_phase.failed_count
+    pool_exhausted_count = (
+        known_phase.pool_exhausted_count + discovery_phase.pool_exhausted_count
+    )
+    if not succeeded_count and failed_count == pool_exhausted_count:
+        return aborted_result(CollectionExitCode.PROVIDER)
+    current = SnapshotState(
+        known_phase.current.accounts + discovery_phase.current.accounts,
+        known_phase.current.posts + discovery_phase.current.posts,
+        known_phase.current.source_records + discovery_phase.current.source_records,
+    )
     try:
-        candidate = merge_snapshot(prepared.previous, post_phase.current)
+        candidate = merge_snapshot(prepared.previous, current)
         manifest = SnapshotRepository(request.candidate_snapshot_dir).write(candidate)
     except (SnapshotConflictError, SnapshotIntegrityError):
         return aborted_result(CollectionExitCode.INTEGRITY)
-    failed_count = identity.unresolved_count + len(post_phase.failed_ids)
     exit_code = (
         CollectionExitCode.PARTIAL if failed_count else CollectionExitCode.SUCCESS
     )
@@ -249,9 +310,9 @@ async def _collect_with_runtime(
         exit_code,
         CandidateChange.CHANGED if changed else CandidateChange.UNCHANGED,
         manifest.digest,
-        post_phase.succeeded_count,
+        succeeded_count,
         failed_count,
-        post_phase.failed_ids,
+        known_phase.failed_ids,
     )
 
 
