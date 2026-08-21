@@ -39,6 +39,20 @@ diff; and `verify` exits `0`. If `schemas-check` reports a diff, do not discard
 it blindly—inspect it and either regenerate/commit the intended contract change
 or restore the known-good worktree according to your normal review process.
 
+The URL identity v2 documentation and repository contracts can be checked
+without a provider, credential, Git remote, or publication target. From the
+repository root, these are copy-pastable offline Pixi commands:
+
+```sh
+pixi run test tests/unit/test_documentation_contract.py -k url_identity_docs -q
+pixi run schemas-check
+pixi run verify
+```
+
+All three commands must exit `0`; `schemas-check` must leave the tracked schema
+files unchanged. These checks do not authorize a live provider call, do not
+authorize publication, and do not perform a remote cutover.
+
 Safe local snapshot inspection is read-only:
 
 ```sh
@@ -122,6 +136,35 @@ does not cancel an in-progress job. Do not change the job permission or
 concurrency policy to make an ad-hoc test easier.
 
 ## Collection operation and exit response
+
+### URL identity v2 operator contract
+
+Each approved input canonicalizes to the Account key. The persisted invariant
+is `Account.id == Account.profile_url`; each `Post.account_id` and Bright Data
+source-record account_id must equal that exact canonical URL. A changed slug is
+a distinct Account, not a rename. No migration or compatibility reader is
+provided. Alias reconciliation and entity merging are not supported here.
+
+Every provider record must include at least one of
+`use_url, user_url, profile_url, and company_url`. The collector parses every
+supplied actor URL, rejects a wrong kind or disagreement between fields, and
+requires the one resulting canonical URL to equal the requested Account.
+`user_id` is optional provider payload data only; it is not consulted for
+ownership, routing, discovery, or merging.
+
+Account, Post, and Bright Data source records are `schema_version: 2`. Legacy v1
+records and snapshots are rejected before provider or publication work; the
+snapshot manifest remains at its existing version and shape. A successful
+response with zero records (or only non-original records) is success and creates
+the requested Account without Posts/source records. A typed `NOT_FOUND` does
+not create a new Account; on refresh, prior history is retained.
+
+For typed input/`NOT_FOUND` and terminal provider failures,
+`failed_account_ids` contains canonical requested LinkedIn URLs. An integrity,
+actor-ownership, provider-schema, batch-coverage, duplicate-payload, or
+referential conflict aborts the whole candidate before promotion. No candidate
+or candidate counters are exposed, and the prior snapshot remains
+byte-identical.
 
 `collect` requires a prior snapshot directory and a separate candidate output
 directory. It contacts the provider and may consume credits:

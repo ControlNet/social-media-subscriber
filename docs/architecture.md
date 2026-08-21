@@ -12,8 +12,8 @@ authorized public account locators + credential pool
                 ▼
 Settings → strict input parser → explicit registry → credential-bound instances
                 │                                      │
-                └──────── Identity Router ─────────────┘
-                              │ canonical Account identities
+                └──────── normal Account Posts Router ─┘
+                              │ strict actor-URL ownership
                               ▼
                      Post Router + per-account windows
                               │
@@ -35,21 +35,25 @@ arbitrary adapters or credential clients at runtime.
 The checked-in JSON Schemas are the public persistence contract:
 
 - [`schemas/account.schema.json`](../schemas/account.schema.json) defines a
-  canonical `Account`: `schema_version`, canonical `id`, `platform`, `kind`,
-  numeric `platform_account_id`, stable `profile_url`, sorted unique
-  `url_aliases`, and `first_seen_at`.
+  canonical `Account`: `schema_version: 2`, canonical URL `id`, `platform`,
+  `kind`, the identical canonical URL `profile_url`, and `first_seen_at`.
 - [`schemas/post.schema.json`](../schemas/post.schema.json) defines a canonical
-  original `Post`: `schema_version`, canonical `id`, provider post ID, owning
-  `account_id`, canonical URL, published/first-seen timestamps, text, fixed
-  `kind: "original"`, de-duplicated hashtags/links, and content hash.
+  original `Post`: `schema_version: 2`, canonical `id`, provider post ID,
+  canonical URL owning `account_id`, canonical Post URL,
+  published/first-seen timestamps, text, fixed `kind: "original"`,
+  de-duplicated hashtags/links, and content hash.
 - [`schemas/brightdata-linkedin-post.schema.json`](../schemas/brightdata-linkedin-post.schema.json)
-  defines the provenance record: fixed `provider: "brightdata"` and dataset,
-  provider post ID, canonical account ownership, payload SHA-256, and the
-  provider payload. It is evidence, not the downstream canonical Post.
+  defines the `schema_version: 2` provenance record: fixed
+  `provider: "brightdata"` and dataset, provider post ID, canonical URL
+  account ownership, payload SHA-256, and the provider payload. It is evidence,
+  not the downstream canonical Post.
 
-All three formats currently have `schema_version: 1` and forbid unknown fields.
-The schema generator is `pixi run schemas`; `pixi run schemas-check` proves the
-checked-in files match the generator.
+All three record formats forbid unknown boundary fields. Legacy Account, Post,
+and source-record v1 records and snapshots are rejected; there is no dual-read
+or conversion path. The snapshot manifest retains its existing shape and
+`schema_version: 1`, and its digest algorithm is unchanged. The schema generator
+is `pixi run schemas`; `pixi run schemas-check` proves the checked-in files match
+the generator.
 
 ## Account and post identity
 
@@ -59,12 +63,25 @@ first occurrence, and rejects malformed hosts, credentials-in-URLs, ports,
 query-like path variations, control characters, invalid percent escaping, and
 non-person/company paths. It does not retain arbitrary user text downstream.
 
-Identity routing starts with canonical local `Account` records from the prior
-snapshot. Known aliases resolve locally. Unknown locators are routed in
-kind-homogeneous batches (maximum 20) through the same instance pool that later
-collects posts. Account identity results become canonical account IDs; post
-routing validates that every source record and canonical Post belongs to that
-account before it is accepted.
+The strict locator parser is the only Account canonicalization authority. For
+every persisted Account, `Account.id == Account.profile_url` and both values are
+the parser's canonical person/company URL. `Post.account_id` and the Bright Data
+source-record account_id must equal that same URL. Requests are routed directly
+through the normal Posts route in kind-homogeneous batches (maximum 20); there
+is no Identity/Profile lookup route.
+
+A changed person or company slug canonicalizes to a new URL and is a distinct
+Account. The old and new URL histories can coexist. Numeric provider identity,
+alias reconciliation, migration, compatibility loading, and entity merging are
+not supported in this repository.
+
+Every successful Bright Data record must contain at least one of
+`use_url, user_url, profile_url, and company_url`. Ownership validation parses
+every supplied actor URL with the strict locator parser, requires every URL to
+have the requested Account kind, requires all of them to canonicalize to one
+URL, and then requires that URL to equal the exact requested Account URL.
+`user_id` is optional provider payload data only and cannot establish ownership
+when actor URL evidence is absent.
 
 Canonical post identity is `linkedin:post:<provider-post-id>`. The provider
 source record is keyed by the same canonical post identity and includes the raw
@@ -140,6 +157,19 @@ Interrupted serialization/copy recovery removes its partial sibling and keeps
 the previous canonical root byte-identical. Merge preserves historical records
 for failed or zero-result accounts; only successful routes contribute current
 candidate state. A byte-identical candidate is explicitly `unchanged`.
+
+A successful response with zero records, or with only non-original records,
+creates the requested URL Account while emitting zero canonical Posts and
+source records. A typed `NOT_FOUND` is an account-scoped failure instead: it
+does not create a newly requested Account, and a failed refresh preserves prior
+history. Ownership, schema, batch-coverage, duplicate-payload, and referential
+conflicts abort the whole candidate before promotion. The candidate and its
+counters are suppressed, and the prior snapshot remains byte-identical.
+
+For typed input/`NOT_FOUND` and terminal provider failures, the CLI field
+`failed_account_ids` contains canonical requested LinkedIn URLs. Account URLs
+are the intentionally observable identifiers in that field; credentials,
+provider bodies, snapshot IDs, and exception internals remain protected.
 
 ## Immutable `dist` publication lease
 

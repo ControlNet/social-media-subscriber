@@ -30,6 +30,39 @@ and performs provider I/O. `verify-snapshot` is local and read-only.
 `publish-dist` mutates the selected Git remote and must be used only under the
 immutable lease described in the runbook; do not run it as a casual local test.
 
+## URL identity v2 boundary
+
+Account identity is the exact canonical public LinkedIn person or company URL
+returned by the strict locator parser. The persisted invariant is
+`Account.id == Account.profile_url`; `Post.account_id` and the Bright Data
+source-record account_id use that same URL. A changed LinkedIn slug produces a
+different URL and therefore a distinct Account. Both URL-keyed histories may
+coexist.
+
+Account, Post, and Bright Data source records use `schema_version: 2`. Legacy
+v1 records and snapshots are rejected instead of being converted. No migration
+or compatibility reader is provided. Alias reconciliation and entity merging
+are not supported; those decisions belong in a separate consuming system.
+
+Every successful provider record must supply at least one actor field from
+`use_url, user_url, profile_url, and company_url`. The collector parses every
+supplied actor URL, requires one requested person/company kind and canonical
+URL, and requires that owner to equal the requested Account URL. Provider
+`user_id` is optional provider payload data only; it is never identity or an
+ownership fallback.
+
+A successful response with zero records still persists the requested Account
+with no Posts or source records. A typed `NOT_FOUND` is different: it does not
+create a new Account, and a failed refresh preserves existing history. For
+account-scoped and terminal provider failures, `failed_account_ids` contains
+canonical requested LinkedIn URLs. Integrity, ownership, schema, coverage, or
+conflict failures abort the whole candidate, suppress candidate counters, and
+the prior snapshot remains byte-identical.
+
+This repository revision was verified offline with synthetic data. It does not
+authorize a live provider call, does not authorize publication, and does not
+perform a remote cutover. Those operations require separate, fresh approval.
+
 ## What a successful run produces
 
 The output is a complete, verified snapshot directory, not a patch over a
