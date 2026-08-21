@@ -7,9 +7,13 @@ from datetime import date, datetime, timedelta
 from enum import StrEnum, unique
 from typing import TYPE_CHECKING, override
 
-from social_media_subscriber.adapters.instance import AdapterPostRequest
+from social_media_subscriber.adapters.instance import (
+    AdapterPostLocatorRequest,
+    AdapterPostRequest,
+)
 
 if TYPE_CHECKING:
+    from social_media_subscriber.accounts.locator import LinkedInLocator
     from social_media_subscriber.domain.account import Account
     from social_media_subscriber.storage.snapshot import SnapshotState
 
@@ -90,3 +94,21 @@ def build_post_requests(
             end_date = context.run_started_at.date()
         requests.append(AdapterPostRequest(account, start_date, end_date))
     return tuple(requests)
+
+
+def build_locator_post_requests(
+    locators: tuple[LinkedInLocator, ...],
+    context: WindowContext,
+) -> tuple[AdapterPostLocatorRequest, ...]:
+    """Calculate one initial or explicit Posts discovery request per locator."""
+    if context.override.start_date is not None:
+        start_date = context.override.start_date
+        end_date = context.override.end_date
+        if end_date is None:
+            raise WindowInputError(WindowInputErrorCategory.INCOMPLETE)
+    else:
+        end_date = context.run_started_at.date()
+        start_date = end_date - timedelta(days=_INITIAL_DAYS)
+    return tuple(
+        AdapterPostLocatorRequest(locator, start_date, end_date) for locator in locators
+    )

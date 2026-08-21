@@ -42,7 +42,11 @@ def test_adapter_operation_contains_only_current_capabilities() -> None:
     values = tuple(operation.value for operation in AdapterOperation)
 
     # Then
-    assert values == ("resolve_account_identity", "collect_account_posts")
+    assert values == (
+        "resolve_account_identity",
+        "collect_account_posts",
+        "discover_locator_posts",
+    )
 
 
 def test_adapter_package_import_does_not_read_environment_or_open_socket(

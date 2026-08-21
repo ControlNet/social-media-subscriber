@@ -15,6 +15,8 @@ from social_media_subscriber.adapters.instance import (
     AdapterIdentityAttempt,
     AdapterIdentityBatch,
     AdapterInstanceOrdinal,
+    AdapterPostLocatorAttempt,
+    AdapterPostLocatorBatch,
     BatchCompleted,
     CollectedAccount,
     SchemaBatchFailure,
@@ -43,7 +45,10 @@ class DeclaredFakeDriver:
 
 @adapter(
     platform=Platform.LINKEDIN,
-    operations=(AdapterOperation.COLLECT_ACCOUNT_POSTS,),
+    operations=(
+        AdapterOperation.COLLECT_ACCOUNT_POSTS,
+        AdapterOperation.DISCOVER_LOCATOR_POSTS,
+    ),
     account_kinds=(AccountKind.PERSON, AccountKind.COMPANY),
     supports_batch=True,
 )
@@ -102,6 +107,14 @@ class ScriptedInstance:
                 )
             case _:
                 return step
+
+    async def discover_posts(
+        self,
+        batch: AdapterPostLocatorBatch,
+    ) -> AdapterPostLocatorAttempt:
+        """Reject discovery use from the collection-only Router fake."""
+        _ = batch
+        return SchemaBatchFailure()
 
     async def resolve_identity(
         self,

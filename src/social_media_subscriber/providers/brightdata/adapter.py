@@ -15,6 +15,8 @@ from social_media_subscriber.adapters.instance import (
     AcceptedSnapshotBatchFailure,
     AccountRejectionCategory,
     AdapterInstanceOrdinal,
+    AdapterPostLocatorAttempt,
+    AdapterPostLocatorBatch,
     AdapterPostRequest,
     BatchCompleted,
     CollectedAccount,
@@ -141,6 +143,14 @@ class BrightDataLinkedInAdapter(_DeclaredAdapter):
                 for item in result.accounts
             )
         )
+
+    async def discover_posts(
+        self,
+        batch: AdapterPostLocatorBatch,
+    ) -> AdapterPostLocatorAttempt:
+        """Return a safe failure until locator Posts discovery is wired."""
+        _ = batch
+        return SchemaBatchFailure()
 
     async def resolve_identity(
         self,

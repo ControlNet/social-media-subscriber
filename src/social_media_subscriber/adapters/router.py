@@ -92,7 +92,10 @@ class Router:
         match operation:
             case AdapterOperation.COLLECT_ACCOUNT_POSTS:
                 pass
-            case AdapterOperation.RESOLVE_ACCOUNT_IDENTITY:
+            case (
+                AdapterOperation.RESOLVE_ACCOUNT_IDENTITY
+                | AdapterOperation.DISCOVER_LOCATOR_POSTS
+            ):
                 raise RouterOperationError(operation)
         unique_requests: dict[AccountId, AdapterPostRequest] = {}
         for request in requests:

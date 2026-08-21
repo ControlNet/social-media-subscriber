@@ -11,3 +11,4 @@ class AdapterOperation(StrEnum):
 
     RESOLVE_ACCOUNT_IDENTITY = "resolve_account_identity"
     COLLECT_ACCOUNT_POSTS = "collect_account_posts"
+    DISCOVER_LOCATOR_POSTS = "discover_locator_posts"
