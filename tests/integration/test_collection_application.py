@@ -258,11 +258,13 @@ async def test_known_zero_posts_preserves_history(tmp_path: Path) -> None:
     # Given
     _ = await _run(_request(tmp_path, _settings(PERSON_URL)), (ApplicationClient(),))
     _ = shutil.copytree(tmp_path / "candidate", tmp_path / "previous")
+    prior = _tree(tmp_path / "previous")
+    zero_client = ApplicationClient(person_posts=())
 
     # When
     result = await _run(
         _request(tmp_path, _settings(PERSON_URL), paths=("previous", "zero")),
-        (ApplicationClient(person_posts=()),),
+        (zero_client,),
     )
 
     # Then
@@ -270,6 +272,10 @@ async def test_known_zero_posts_preserves_history(tmp_path: Path) -> None:
     assert result.candidate_change is CandidateChange.UNCHANGED
     assert state is not None
     assert len(state.posts) == len(state.source_records) == 1
+    assert _tree(tmp_path / "zero") == prior
+    assert zero_client.calls == [
+        ("person_posts", ((date(2026, 8, 15), date(2026, 8, 20)),))
+    ]
 
 
 @pytest.mark.anyio

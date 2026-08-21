@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +18,7 @@ from social_media_subscriber.providers.brightdata.models import BrightDataPost
 from social_media_subscriber.providers.brightdata.source_record import (
     BrightDataLinkedInPostSourceRecord,
 )
+from social_media_subscriber.schemas.generate import generate_schemas
 from social_media_subscriber.storage.merge import SnapshotConflictError, merge_snapshot
 from social_media_subscriber.storage.snapshot import SnapshotState
 
@@ -179,3 +181,18 @@ def test_merge_is_independent_of_input_order() -> None:
 
     # Then
     assert forward == reverse
+
+
+def test_generated_public_schema_bytes_match_committed_contracts(
+    tmp_path: Path,
+) -> None:
+    # Given
+    committed = Path(__file__).parents[2] / "schemas"
+
+    # When
+    generated = generate_schemas(tmp_path)
+
+    # Then
+    assert tuple(path.read_bytes() for path in generated) == tuple(
+        (committed / path.name).read_bytes() for path in generated
+    )
