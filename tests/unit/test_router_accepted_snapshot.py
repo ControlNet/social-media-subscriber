@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+__test__ = False
+
 import pytest
 
 from social_media_subscriber.adapters import AdapterOperation

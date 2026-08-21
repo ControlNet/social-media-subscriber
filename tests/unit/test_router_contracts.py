@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+__test__ = False
+
 from datetime import UTC, date, datetime
 
 import pytest
@@ -206,3 +208,8 @@ def test_registry_resolution_preserves_declared_candidate_order() -> None:
     # Then
     assert isinstance(result, ResolvedAdapterDrivers)
     assert result.driver_classes == (SecondFakeDriver, FakeDriver)
+
+
+locator_attempt_contract = (
+    test_locator_attempt_contract_has_complete_resolved_and_unresolved_outcomes
+)

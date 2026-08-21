@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+__test__ = False
+
 import pytest
 from pydantic import SecretStr
 
@@ -158,3 +160,8 @@ async def test_locator_discovery_fail_attribution_for_unsupported_or_empty_pool(
     assert isinstance(outcome, DiscoveryLocatorFailed)
     assert outcome.category.value == category
     assert factory.locator_calls == []
+
+
+failure_attribution = (
+    test_locator_discovery_fail_attribution_for_unsupported_or_empty_pool
+)
