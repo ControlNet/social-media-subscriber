@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final, Self, final
+from typing import TYPE_CHECKING, Final, Self, TypedDict, final
 
 import anyio
 import httpx2
 import structlog
-from pydantic import ConfigDict, TypeAdapter, ValidationError
+from pydantic import BaseModel, ValidationError
 
 from social_media_subscriber.providers.brightdata.constants import (
     COMPANY_IDENTITY_DATASET,
@@ -30,21 +30,26 @@ from social_media_subscriber.providers.brightdata.models import (
     BrightDataSnapshotEnvelope,
     BrightDataSnapshotId,
     BrightDataSnapshotProgress,
-    JsonValue,
 )
-from social_media_subscriber.providers.brightdata.parsing import parse_items
+from social_media_subscriber.providers.brightdata.parsing import (
+    parse_items,
+    parse_response_content,
+)
 from social_media_subscriber.providers.http import (
     HttpClientConfig,
     create_async_http_client,
 )
 
-_JSON: Final[TypeAdapter[JsonValue]] = TypeAdapter(
-    JsonValue, config=ConfigDict(strict=True)
-)
 _LOGGER = structlog.stdlib.get_logger()
 _ACTIVE_SNAPSHOT_STATUSES: Final = frozenset({"building", "pending", "running"})
 _TERMINAL_SNAPSHOT_STATUSES: Final = frozenset({"canceled", "cancelled", "failed"})
 _DEFAULT_HTTP_CONFIG: Final = HttpClientConfig()
+
+
+class _ScrapeRequest(TypedDict):
+    input: list[dict[str, str]]
+    limit_per_input: None
+
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
@@ -143,27 +148,41 @@ class BrightDataClient:
             raise BrightDataError(BrightDataErrorCategory.INPUT)
         return result
 
-    async def _scrape[ModelT](
+    async def _scrape[ModelT: BaseModel](
         self,
         *,
         dataset: str,
         mode: str | None,
-        body: list[dict[str, str | bool]],
+        body: list[dict[str, str]],
         item_type: type[ModelT],
     ) -> tuple[ModelT, ...]:
-        params = {"dataset_id": dataset, "include_errors": "true"}
-        if mode is not None:
+        params = {"dataset_id": dataset}
+        if mode is None:
+            params.update({"notify": "false", "include_errors": "true"})
+            path, request = (
+                "/datasets/v3/scrape",
+                _ScrapeRequest(input=body, limit_per_input=None),
+            )
+        else:
+            params.update({"include_errors": "true"})
             params.update({"type": "discover_new", "discover_by": mode})
-        response = await self._request("POST", "/datasets/v3/scrape", params, body)
-        value = self._json(response)
+            path, request = "/datasets/v3/trigger", body
+        response = await self._request("POST", path, params, request)
+        value = parse_response_content(response.content)
         if isinstance(value, list):
             return parse_items(value, item_type, snapshot_accepted=False)
         try:
             envelope = BrightDataSnapshotEnvelope.model_validate(value)
         except ValidationError:
-            raise BrightDataError(BrightDataErrorCategory.SCHEMA) from None
+            if not isinstance(value, dict) or (
+                "error" not in value and item_type.model_fields.keys().isdisjoint(value)
+            ):
+                raise BrightDataError(BrightDataErrorCategory.SCHEMA) from None
+            return parse_items([value], item_type, snapshot_accepted=False)
         await _LOGGER.ainfo(
-            "provider.snapshot.accepted", endpoint="scrape", batch_count=len(body)
+            "provider.snapshot.accepted",
+            endpoint="scrape" if mode is None else "trigger",
+            batch_count=len(body),
         )
         return await self._await_snapshot(envelope.snapshot_id, item_type)
 
@@ -178,7 +197,7 @@ class BrightDataClient:
             )
             try:
                 progress = BrightDataSnapshotProgress.model_validate(
-                    self._json(response)
+                    parse_response_content(response.content)
                 )
             except ValidationError:
                 raise BrightDataError(
@@ -189,7 +208,7 @@ class BrightDataClient:
                 downloaded = await self._snapshot_request(
                     "GET", f"/datasets/v3/snapshot/{snapshot_id}", None, None
                 )
-                value = self._json(downloaded)
+                value = parse_response_content(downloaded.content)
                 if not isinstance(value, list):
                     raise BrightDataError(
                         BrightDataErrorCategory.SCHEMA, snapshot_accepted=True
@@ -213,7 +232,7 @@ class BrightDataClient:
         method: str,
         path: str,
         params: dict[str, str] | None,
-        body: list[dict[str, str | bool]] | None,
+        body: _ScrapeRequest | None,
     ) -> httpx2.Response:
         try:
             return await self._request(method, path, params, body)
@@ -227,7 +246,7 @@ class BrightDataClient:
         method: str,
         path: str,
         params: dict[str, str] | None,
-        body: list[dict[str, str | bool]] | None,
+        body: _ScrapeRequest | list[dict[str, str]] | None,
     ) -> httpx2.Response:
         for attempt in range(len(STATUS_RETRY_DELAYS) + 1):
             try:
@@ -255,10 +274,3 @@ class BrightDataClient:
                 continue
             raise BrightDataError(category, status=response.status_code)
         raise BrightDataError(BrightDataErrorCategory.RETRYABLE)
-
-    @staticmethod
-    def _json(response: httpx2.Response) -> JsonValue:
-        try:
-            return _JSON.validate_json(response.content)
-        except ValidationError:
-            raise BrightDataError(BrightDataErrorCategory.SCHEMA) from None

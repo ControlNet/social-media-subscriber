@@ -58,7 +58,7 @@ def test_collect_failover_preserves_source_and_redacts_canonical(
         (entry["start_date"], entry["end_date"])
         for request in post_requests
         for entry in request.body
-    } == {("2026-08-17", "2026-08-20")}
+    } == {("2026-08-17T00:00:00.000Z", "2026-08-20T23:59:59.999Z")}
     snapshot_tree = tree(candidate)
     source = {
         path: payload

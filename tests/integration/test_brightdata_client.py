@@ -1,3 +1,5 @@
+"""Wire-level Bright Data client contract matrix. # noqa: SIZE_OK"""
+
 from __future__ import annotations
 
 import json
@@ -9,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import anyio
 import pytest
-from anyio.abc import SocketAttribute, TaskStatus
+from anyio.abc import SocketAttribute
 from anyio.streams.buffered import BufferedByteReceiveStream
 from structlog.testing import capture_logs
 
@@ -33,6 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from anyio.abc import SocketStream
+    from anyio.streams.stapled import MultiListener
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,11 +46,10 @@ class RecordedRequest:
     body: JsonValue
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class FakeState:
     responses: list[tuple[int, ResponsePayload]]
     requests: list[RecordedRequest] = field(default_factory=list)
-    port: int | None = None
 
 
 async def _handle(stream: SocketStream, state: FakeState) -> None:
@@ -81,15 +83,9 @@ async def _handle(stream: SocketStream, state: FakeState) -> None:
 
 
 async def _serve(
+    listener: MultiListener[SocketStream],
     state: FakeState,
-    *,
-    task_status: TaskStatus[None] = anyio.TASK_STATUS_IGNORED,
 ) -> None:
-    listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    get_extra = listener.extra
-    port: int = get_extra(SocketAttribute.local_port)
-    state.port = port
-    task_status.started()
     async with listener:
         await listener.serve(partial(_handle, state=state))
 
@@ -99,12 +95,13 @@ async def fake_server(
     responses: list[tuple[int, ResponsePayload]],
 ) -> AsyncGenerator[tuple[FakeState, str]]:
     state = FakeState(responses.copy())
+    listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
+    get_extra = listener.extra
+    port: int = get_extra(SocketAttribute.local_port)
     async with anyio.create_task_group() as group:
-        await group.start(_serve, state)
-        if state.port is None:
-            raise AssertionError
+        _ = group.start_soon(_serve, listener, state)
         try:
-            yield state, f"http://127.0.0.1:{state.port}"
+            yield state, f"http://127.0.0.1:{port}"
         finally:
             group.cancel_scope.cancel()
 
@@ -122,10 +119,8 @@ def _post(identifier: str = "post-1") -> dict[str, JsonValue]:
 @pytest.mark.anyio
 async def test_person_identity_uses_exact_sync_scrape_contract() -> None:
     # Given
-    urls = tuple(f"https://www.linkedin.com/in/person-{index}/" for index in range(20))
-    response: JsonValue = [
-        {"linkedin_num_id": str(index), "url": url} for index, url in enumerate(urls)
-    ]
+    urls = ("https://www.linkedin.com/in/example/",)
+    response: JsonValue = {"linkedin_num_id": "123", "url": urls[0]}
     async with fake_server([(200, response)]) as (state, base_url):
         client = BrightDataClient("test-secret", HttpClientConfig(base_url=base_url))
 
@@ -134,16 +129,19 @@ async def test_person_identity_uses_exact_sync_scrape_contract() -> None:
             result = await client.resolve_person_identities(urls)
 
     # Then
-    assert len(result) == 20
+    assert len(result) == 1
     assert state.requests == [
         RecordedRequest(
             method="POST",
             target=(
                 "/datasets/v3/scrape?dataset_id="
-                f"{PERSON_IDENTITY_DATASET}&include_errors=true"
+                f"{PERSON_IDENTITY_DATASET}&notify=false&include_errors=true"
             ),
             authorization_present=True,
-            body=[{"url": url} for url in urls],
+            body={
+                "input": [{"url": url} for url in urls],
+                "limit_per_input": None,
+            },
         )
     ]
 
@@ -183,7 +181,7 @@ async def test_company_posts_follow_owned_snapshot_to_ready_download() -> None:
     assert sleeps == [5.0, 5.0]
     assert [entry.target for entry in state.requests] == [
         (
-            "/datasets/v3/scrape?dataset_id="
+            "/datasets/v3/trigger?dataset_id="
             f"{LINKEDIN_POSTS_DATASET}&include_errors=true&type=discover_new"
             "&discover_by=company_url"
         ),
@@ -194,9 +192,8 @@ async def test_company_posts_follow_owned_snapshot_to_ready_download() -> None:
     assert state.requests[0].body == [
         {
             "url": request.url,
-            "start_date": "2026-08-13",
-            "end_date": "2026-08-20",
-            "only_authored_posts": True,
+            "start_date": "2026-08-13T00:00:00.000Z",
+            "end_date": "2026-08-20T23:59:59.999Z",
         }
     ]
     assert all(entry.authorization_present for entry in state.requests)
@@ -264,14 +261,17 @@ async def test_snapshot_id_cannot_escape_fixed_provider_endpoints(
 
 
 @pytest.mark.anyio
-async def test_person_posts_accept_immediate_array_and_exact_mode() -> None:
+async def test_person_posts_accept_jsonl_and_exact_trigger_contract() -> None:
     # Given
     item = PostDiscoveryInput(
         url="https://www.linkedin.com/in/example/",
         start_date=date(2026, 8, 19),
         end_date=date(2026, 8, 20),
     )
-    async with fake_server([(200, [_post()])]) as (state, base_url):
+    response = b"\n".join(
+        json.dumps(_post(identifier)).encode() for identifier in ("post-1", "post-2")
+    )
+    async with fake_server([(200, response)]) as (state, base_url):
         client = BrightDataClient("test-secret", HttpClientConfig(base_url=base_url))
 
         # When
@@ -279,9 +279,12 @@ async def test_person_posts_accept_immediate_array_and_exact_mode() -> None:
             result = await client.collect_person_posts((item,))
 
     # Then
-    assert result[0].id == "post-1"
-    assert f"dataset_id={LINKEDIN_POSTS_DATASET}" in state.requests[0].target
-    assert "discover_by=profile_url" in state.requests[0].target
+    assert [post.id for post in result] == ["post-1", "post-2"]
+    assert state.requests[0].target == (
+        f"/datasets/v3/trigger?dataset_id={LINKEDIN_POSTS_DATASET}"
+        "&include_errors=true&type=discover_new&discover_by=profile_url"
+    )
+    assert state.requests[0].body == [item.as_json()]
 
 
 @pytest.mark.anyio
@@ -479,7 +482,7 @@ async def test_malformed_json_is_a_sanitized_schema_failure() -> None:
 async def test_include_error_record_is_input_failure_not_identity() -> None:
     # Given
     async with fake_server(
-        [(200, [{"error": "provider-canary", "input": {"url": "url-canary"}}])]
+        [(200, {"error": "provider-canary", "input": {"url": "url-canary"}})]
     ) as (_state, base_url):
         client = BrightDataClient(
             "credential-canary", HttpClientConfig(base_url=base_url)

@@ -33,6 +33,8 @@ _DEFAULT_CONFIG: Final = HttpClientConfig()
 def _endpoint_name(path: str) -> str:
     if path == "/datasets/v3/scrape":
         return "scrape"
+    if path == "/datasets/v3/trigger":
+        return "trigger"
     if path.startswith("/datasets/v3/progress/"):
         return "snapshot_progress"
     if path.startswith("/datasets/v3/snapshot/"):

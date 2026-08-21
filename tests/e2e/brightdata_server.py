@@ -5,7 +5,7 @@ import threading
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Final, Self, final, override
+from typing import Final, Self, TypedDict, final, override
 from urllib.parse import parse_qs, urlsplit
 
 from pydantic import TypeAdapter
@@ -23,8 +23,16 @@ ACTIVE_VALUE: Final = "task14-active-test-value"
 MEDIA_CANARY: Final = (
     "https://media.licdn.com/dms/image/task14?signature=source-only-canary"
 )
-_REQUEST_BODY: Final = TypeAdapter(tuple[dict[str, str | bool], ...])
 type FakeJson = dict[str, str] | list[dict[str, str | int | object]]
+
+
+class _RequestEnvelope(TypedDict):
+    input: tuple[dict[str, str | bool], ...]
+    limit_per_input: None
+
+
+_REQUEST_BODY: Final[TypeAdapter[_RequestEnvelope]] = TypeAdapter(_RequestEnvelope)
+_TRIGGER_BODY: Final = TypeAdapter(tuple[dict[str, str | bool], ...])
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,11 +109,16 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlsplit(self.path)
-        if parsed.path != "/datasets/v3/scrape":
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
         length = int(self.headers.get("Content-Length", "0"))
-        body = _REQUEST_BODY.validate_json(self.rfile.read(length))
+        payload = self.rfile.read(length)
+        match parsed.path:
+            case "/datasets/v3/scrape":
+                body = _REQUEST_BODY.validate_json(payload)["input"]
+            case "/datasets/v3/trigger":
+                body = _TRIGGER_BODY.validate_json(payload)
+            case _:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
         query = parse_qs(parsed.query)
         dataset = query.get("dataset_id", [""])[0]
         discovery = query.get("discover_by", [None])[0]
