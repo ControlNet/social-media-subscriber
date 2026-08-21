@@ -97,8 +97,9 @@ jobs:
           previous="$run_root/previous"
           candidate="$run_root/candidate"
           baseline_repository="$run_root/baseline-repository"
-          mkdir -p "$previous" "$candidate" "$baseline_repository"
+          mkdir -p "$candidate" "$baseline_repository"
           if [[ "$EXPECTED_SHA" != "absent" ]]; then
+            mkdir -p "$previous"
             git -C "$baseline_repository" init --quiet
             git -C "$baseline_repository" remote add origin "$(git remote get-url origin)"
             git -C "$baseline_repository" fetch --quiet --depth=1 origin "$EXPECTED_SHA"

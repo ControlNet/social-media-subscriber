@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -8,6 +9,9 @@ from typing import Final
 
 import pytest
 
+from social_media_subscriber.storage.repository import SnapshotRepository
+from tests.e2e.brightdata_server import FakeBrightDataServer
+from tests.e2e.pipeline_harness import invoke_collect
 from tests.workflow_helpers import YamlValue, load_workflow, mapping, sequence, text
 
 _ROOT: Final = Path(__file__).parents[2]
@@ -146,6 +150,73 @@ def test_preflight_event_outcomes(
     # Then
     assert result.returncode == exit_code
     assert actual_output == output
+
+
+def test_existing_empty_previous_directory_is_an_integrity_error(
+    tmp_path: Path,
+) -> None:
+    # Given
+    previous = tmp_path / "previous"
+    candidate = tmp_path / "candidate"
+    previous.mkdir()
+    server = FakeBrightDataServer()
+
+    # When
+    with server:
+        result = invoke_collect(server, previous, candidate)
+
+    # Then
+    assert result.exit_code == 5
+    assert not candidate.exists()
+    assert server.scenario.requests == []
+
+
+def test_absent_dist_setup_keeps_previous_missing_and_collects_initial_candidate(
+    tmp_path: Path,
+) -> None:
+    # Given
+    assert _BASH is not None
+    workflow = load_workflow(_COLLECT_PATH)
+    materialize = next(
+        step
+        for step in _steps(workflow, "publication")
+        if step.get("name") == "Materialize exact previous snapshot"
+    )
+    github_environment = tmp_path / "github-environment"
+    runner_temp = tmp_path / "runner"
+    environment = os.environ | {
+        "EXPECTED_SHA": "absent",
+        "GITHUB_ENV": str(github_environment),
+        "GITHUB_RUN_ATTEMPT": "1",
+        "GITHUB_RUN_ID": "17",
+        "RUNNER_TEMP": str(runner_temp),
+    }
+
+    # When
+    setup = subprocess.run(  # noqa: S603 - resolved Bash executes owned workflow text
+        (_BASH, "-c", text(materialize["run"])),
+        cwd=_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    exported = dict(
+        line.split("=", maxsplit=1)
+        for line in github_environment.read_text().splitlines()
+    )
+    previous = Path(exported["PREVIOUS_SNAPSHOT"])
+    candidate = Path(exported["CANDIDATE_SNAPSHOT"])
+    previous_existed_before_collect = previous.exists()
+    server = FakeBrightDataServer()
+    with server:
+        collected = invoke_collect(server, previous, candidate)
+
+    # Then
+    assert setup.returncode == 0
+    assert previous_existed_before_collect is False
+    assert collected.exit_code == 0
+    assert SnapshotRepository(candidate).load_optional() is not None
 
 
 def test_collection_preserves_observed_lease_and_terminal_status_contract() -> None:
