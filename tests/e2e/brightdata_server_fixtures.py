@@ -15,6 +15,12 @@ OWNERSHIP_CANARY: Final = "https://www.linkedin.com/in/private-owner-canary/"
 SCHEMA_CANARY: Final = "provider-schema-canary"
 PERSON_SNAPSHOT: Final = "person-snapshot"
 COMPANY_SNAPSHOT: Final = "company-snapshot"
+PERSON_POST_IDS: Final = (
+    "linkedin:post:urn:li:activity:1001",
+    "linkedin:post:urn:li:activity:1002",
+    "linkedin:post:urn:li:activity:1003",
+)
+PERSON_FEED_IDS: Final = tuple(reversed(PERSON_POST_IDS))
 type FakeJson = dict[str, str] | list[dict[str, str | int | object]]
 
 

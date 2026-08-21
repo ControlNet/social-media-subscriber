@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from social_media_subscriber.domain.ids import record_filename
 from social_media_subscriber.providers.brightdata.constants import (
     LINKEDIN_POSTS_DATASET,
 )
@@ -9,8 +11,19 @@ from social_media_subscriber.providers.brightdata.source_record import (
     BrightDataLinkedInPostSourceRecord,
 )
 from social_media_subscriber.serialization.json import read_json
+from social_media_subscriber.storage.layout import (
+    ACCOUNTS_INDEX,
+    FEED_INDEX,
+    MANIFEST,
+    snapshot_digest,
+)
 from social_media_subscriber.storage.repository import SnapshotRepository
-from social_media_subscriber.storage.snapshot import SnapshotManifest
+from social_media_subscriber.storage.snapshot import (
+    AccountsIndex,
+    FeedIndex,
+    SnapshotManifest,
+    SnapshotState,
+)
 from tests.e2e.brightdata_server import (
     ACTIVE_VALUE,
     CHANGED_PERSON_URL,
@@ -20,10 +33,38 @@ from tests.e2e.brightdata_server import (
     FakeBrightDataServer,
     PersonPostScenario,
 )
+from tests.e2e.brightdata_server_fixtures import PERSON_FEED_IDS
 from tests.e2e.pipeline_harness import invoke_collect, report, tree
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Sequence
+
+
+def assert_snapshot_metadata(
+    root: Path,
+    *,
+    account_urls: Sequence[str],
+    feed_ids: tuple[str, ...],
+) -> tuple[SnapshotState, SnapshotManifest]:
+    state = SnapshotRepository(root).load_optional()
+    assert state is not None
+    accounts_index = read_json(root / ACCOUNTS_INDEX, AccountsIndex)
+    feed_index = read_json(root / FEED_INDEX, FeedIndex)
+    manifest = read_json(root / MANIFEST, SnapshotManifest)
+    expected_accounts = {
+        str(account.id): f"accounts/{record_filename(account.id)}"
+        for account in state.accounts
+    }
+    assert tuple(account.id for account in state.accounts) == tuple(account_urls)
+    assert accounts_index.accounts == expected_accounts
+    assert feed_index.posts == feed_ids
+    non_manifest = {
+        Path(relative): payload
+        for relative, payload in tree(root).items()
+        if relative != MANIFEST.as_posix()
+    }
+    assert manifest.digest == snapshot_digest(non_manifest)
+    return state, manifest
 
 
 def assert_unknown_profile_failover(tmp_path: Path) -> None:
@@ -120,7 +161,9 @@ def assert_unknown_profile_failover(tmp_path: Path) -> None:
     assert ACTIVE_VALUE not in result.output
 
 
-def assert_changed_slug_creates_distinct_url_account(tmp_path: Path) -> None:
+def assert_changed_slug_creates_distinct_url_account(
+    tmp_path: Path,
+) -> tuple[str, ...]:
     first = tmp_path / "first"
     renamed = tmp_path / "renamed"
     with FakeBrightDataServer() as initial_server:
@@ -138,20 +181,23 @@ def assert_changed_slug_creates_distinct_url_account(tmp_path: Path) -> None:
             credentials=ACTIVE_VALUE,
         )
 
-    state = SnapshotRepository(renamed).load_optional()
     assert result.exit_code == 0
-    assert state is not None
-    assert tuple(account.id for account in state.accounts) == (
-        CHANGED_PERSON_URL,
-        PERSON_URL,
+    state, manifest = assert_snapshot_metadata(
+        renamed,
+        account_urls=(CHANGED_PERSON_URL, PERSON_URL),
+        feed_ids=PERSON_FEED_IDS,
     )
     assert all(account.id == account.profile_url for account in state.accounts)
+    assert initial_server.scenario.identity_calls == 0
+    assert initial_server.scenario.scrape_calls == 0
     assert server.scenario.identity_calls == server.scenario.scrape_calls == 0
     assert [request.endpoint for request in server.scenario.requests] == [
         "trigger",
         "progress",
         "download",
     ]
+    assert report(result)["digest"] == manifest.digest
+    return tuple(str(account.id) for account in state.accounts)
 
 
 def assert_empty_candidate(tmp_path: Path, person_result: PersonPostScenario) -> None:
