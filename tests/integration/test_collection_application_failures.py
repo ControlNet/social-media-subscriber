@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-__test__ = False
-
 import shutil
 from datetime import date
 from typing import TYPE_CHECKING
@@ -50,6 +48,8 @@ async def test_success_without_original_posts_persists_url_account(
 
     state = SnapshotRepository(tmp_path / "candidate").load_optional()
     assert result.exit_code is CollectionExitCode.SUCCESS
+    assert result.candidate_change is CandidateChange.CHANGED
+    assert result.succeeded_accounts == 1
     assert result.failed_accounts == 0
     assert result.failed_account_ids == ()
     assert state is not None
@@ -102,6 +102,47 @@ async def test_typed_failure_preserves_existing_url_history(
     assert result.exit_code is CollectionExitCode.PARTIAL
     assert result.candidate_change is CandidateChange.UNCHANGED
     assert result.failed_account_ids == (PERSON_URL,)
+    assert tree(tmp_path / "failed") == prior
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "category",
+    [BrightDataErrorCategory.INPUT, BrightDataErrorCategory.NOT_FOUND],
+    ids=("typed_input", "typed_not_found"),
+)
+async def test_n8_typed_not_found_preserves_history_and_attributes_url(
+    tmp_path: Path, category: BrightDataErrorCategory
+) -> None:
+    _ = await run(request(tmp_path, settings(PERSON_URL)), (ApplicationClient(),))
+    _ = shutil.copytree(tmp_path / "candidate", tmp_path / "previous")
+    prior = tree(tmp_path / "previous")
+    raw_not_found_url = (
+        "https://de.linkedin.com/in/synthetic-not-found?source=synthetic"
+    )
+    synthetic_not_found_url = "https://www.linkedin.com/in/synthetic-not-found/"
+    client = ApplicationClient(person_failure=BrightDataError(category))
+
+    result = await run(
+        request(
+            tmp_path,
+            settings(raw_not_found_url),
+            paths=("previous", "failed"),
+        ),
+        (client,),
+    )
+
+    state = SnapshotRepository(tmp_path / "failed").load_optional()
+    assert result.exit_code is CollectionExitCode.PARTIAL
+    assert result.candidate_change is CandidateChange.UNCHANGED
+    assert result.succeeded_accounts == 0
+    assert result.failed_accounts == 1
+    assert result.failed_account_ids == (synthetic_not_found_url,)  # RED-PROBE-T7
+    assert state is not None
+    assert tuple(account.profile_url for account in state.accounts) == (PERSON_URL,)
+    assert all(
+        account.profile_url != synthetic_not_found_url for account in state.accounts
+    )
     assert tree(tmp_path / "failed") == prior
 
 
