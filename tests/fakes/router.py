@@ -73,6 +73,10 @@ class ScriptedInstance:
     ordinal: AdapterInstanceOrdinal
     steps: list[FakeStep]
     calls: list[RouterCall]
+    close_calls: int = 0
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
 
     async def collect(self, batch: AdapterBatch) -> AdapterAttempt:
         self.calls.append(

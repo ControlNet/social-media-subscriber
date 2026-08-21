@@ -79,7 +79,12 @@ class BrightDataClient:
         traceback: TracebackType | None,
     ) -> None:
         """Close the owned connection pool."""
-        await self._http.__aexit__(exc_type, exc_value, traceback)
+        _ = exc_type, exc_value, traceback
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        """Close the owned connection pool."""
+        await self._http.aclose()
 
     async def resolve_person_identities(
         self, urls: Sequence[str]

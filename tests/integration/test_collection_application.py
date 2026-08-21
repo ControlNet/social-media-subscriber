@@ -93,6 +93,10 @@ class ApplicationClient:
     person_failure: BrightDataError | None = None
     company_failure: BrightDataError | None = None
     calls: list[tuple[str, tuple[tuple[date, date], ...]]] = field(default_factory=list)
+    close_calls: int = 0
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
 
     async def resolve_person_identities(
         self, urls: Sequence[str]

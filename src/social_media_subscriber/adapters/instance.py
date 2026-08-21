@@ -176,6 +176,10 @@ class AdapterInstance(Protocol):
     driver_class: type[AdapterDriver]
     ordinal: AdapterInstanceOrdinal
 
+    async def aclose(self) -> None:
+        """Close resources owned by this credential-bound instance."""
+        ...
+
     async def collect(self, batch: AdapterBatch) -> AdapterAttempt:
         """Collect one bounded homogeneous batch after client-level retries."""
         ...

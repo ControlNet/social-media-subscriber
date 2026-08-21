@@ -36,6 +36,10 @@ class SyntheticBrightDataClient:
     company_posts: tuple[BrightDataPost, ...] = ()
     failure: BaseException | None = None
     calls: list[AdapterClientCall] = field(default_factory=list)
+    close_calls: int = 0
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
 
     async def resolve_person_identities(
         self, urls: Sequence[str]

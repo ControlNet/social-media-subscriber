@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Final, final
 
 from social_media_subscriber.adapters import instance as instance_contract
@@ -47,6 +48,7 @@ class Router:
 
     _registry: AdapterRegistry
     _instances: tuple[AdapterInstance, ...]
+    _closed: bool
 
     def __init__(
         self,
@@ -70,6 +72,16 @@ class Router:
             )
             for index, credential in enumerate(unique_credentials)
         )
+        self._closed = False
+
+    async def aclose(self) -> None:
+        """Close every credential instance at most once."""
+        if self._closed:
+            return
+        self._closed = True
+        async with AsyncExitStack() as stack:
+            for instance in self._instances:
+                _ = stack.push_async_callback(instance.aclose)
 
     async def route(
         self,

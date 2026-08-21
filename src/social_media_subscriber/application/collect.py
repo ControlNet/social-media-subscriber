@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import anyio
 from pydantic_core import PydanticCustomError
 
 from social_media_subscriber.accounts.errors import AccountInputError
@@ -168,13 +169,8 @@ def _prepare(request: CollectionRequest) -> _PreparedRun | CollectionResult:
 
 async def _resolve_identities(
     prepared: _PreparedRun,
-    client_builder: ClientBuilder,
+    runtime: SubscriberRuntime,
 ) -> _IdentityPhase | CollectionResult:
-    runtime = bootstrap_runtime(
-        prepared.account_input,
-        BrightDataAdapterConfig(prepared.run_started_at),
-        client_builder=client_builder,
-    )
     known_accounts = () if prepared.previous is None else prepared.previous.accounts
     result = await runtime.router.resolve_identities(
         prepared.account_input.locators,
@@ -222,18 +218,12 @@ async def _collect_posts(
     )
 
 
-async def collect_snapshot(
+async def _collect_with_runtime(
     request: CollectionRequest,
-    client_builder: ClientBuilder = _build_client,
+    prepared: _PreparedRun,
+    runtime: SubscriberRuntime,
 ) -> CollectionResult:
-    """Build one validated complete candidate without publishing it."""
-    prepared = _prepare(request)
-    match prepared:
-        case CollectionResult() as terminal:
-            return terminal
-        case _PreparedRun():
-            pass
-    identity = await _resolve_identities(prepared, client_builder)
+    identity = await _resolve_identities(prepared, runtime)
     match identity:
         case CollectionResult() as terminal:
             return terminal
@@ -263,3 +253,26 @@ async def collect_snapshot(
         failed_count,
         post_phase.failed_ids,
     )
+
+
+async def collect_snapshot(
+    request: CollectionRequest,
+    client_builder: ClientBuilder = _build_client,
+) -> CollectionResult:
+    """Build one validated complete candidate without publishing it."""
+    prepared = _prepare(request)
+    match prepared:
+        case CollectionResult() as terminal:
+            return terminal
+        case _PreparedRun():
+            pass
+    runtime = bootstrap_runtime(
+        prepared.account_input,
+        BrightDataAdapterConfig(prepared.run_started_at),
+        client_builder=client_builder,
+    )
+    try:
+        return await _collect_with_runtime(request, prepared, runtime)
+    finally:
+        with anyio.CancelScope(shield=True):
+            await runtime.aclose()

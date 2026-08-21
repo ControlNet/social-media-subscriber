@@ -28,6 +28,10 @@ if TYPE_CHECKING:
 class BrightDataClientContract(Protocol):
     """Provider methods used by the LinkedIn Adapter."""
 
+    async def aclose(self) -> None:
+        """Close the credential-bound transport."""
+        ...
+
     async def resolve_person_identities(
         self, urls: Sequence[str]
     ) -> tuple[BrightDataPersonIdentity, ...]:

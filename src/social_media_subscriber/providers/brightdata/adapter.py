@@ -97,6 +97,10 @@ class BrightDataLinkedInAdapter(_DeclaredAdapter):
         self.driver_class: type[AdapterDriver] = BrightDataLinkedInAdapter
         self._config = config
 
+    async def aclose(self) -> None:
+        """Close the credential-bound provider client."""
+        await self._client.aclose()
+
     async def resolve_account_identity(
         self,
         locators: tuple[LinkedInLocator, ...],

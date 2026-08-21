@@ -33,6 +33,10 @@ class SubscriberRuntime:
     registry: AdapterRegistry
     router: Router
 
+    async def aclose(self) -> None:
+        """Close all resources created for this runtime."""
+        await self.router.aclose()
+
 
 def _build_client(credential: str) -> BrightDataClient:
     return BrightDataClient(credential)
