@@ -48,6 +48,10 @@ def _snapshot(root: Path, account_suffix: str | None = None) -> None:
     _ = SnapshotRepository(root).write(state)
 
 
+def _account_url(account_suffix: str) -> str:
+    return f"https://www.linkedin.com/in/synthetic-{account_suffix}/"
+
+
 def _setup_repositories(tmp_path: Path) -> tuple[Path, Path]:
     source = tmp_path / "source"
     remote = tmp_path / "remote.git"
@@ -173,6 +177,12 @@ def test_initial_changed_and_unchanged_publications_use_one_root_commit(
         "<social-media-subscriber[bot]@users.noreply.github.com>"
     )
     assert _tree(prior_b) == _tree(candidate_b)
+    published_state = SnapshotRepository(prior_b).load_optional()
+    assert published_state is not None
+    assert tuple(str(account.id) for account in published_state.accounts) == (
+        _account_url("1001"),
+    )
+    assert published_state.accounts[0].profile_url == _account_url("1001")
     pushes = [command for command in runner.commands if command[0] == "push"]
     assert len(pushes) == 2
     assert pushes[0][1] == "--force-with-lease=refs/heads/dist:"
@@ -188,3 +198,4 @@ remote_sha = _remote_sha
 request = _request
 setup_repositories = _setup_repositories
 snapshot = _snapshot
+account_url = _account_url

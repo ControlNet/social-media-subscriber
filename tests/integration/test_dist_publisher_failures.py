@@ -18,9 +18,14 @@ from social_media_subscriber.publishing.process import (
     GitRunner,
     run_git,
 )
-from social_media_subscriber.storage.repository import SnapshotIntegrityError
+from social_media_subscriber.storage.repository import (
+    SnapshotIntegrityError,
+    SnapshotRepository,
+)
 from tests.integration.test_dist_publisher import (
     RecordingRunner,
+    account_url,
+    extract_archive,
     remote_has_dist,
     remote_sha,
     request,
@@ -39,7 +44,7 @@ def test_absent_lease_fails_when_dist_appeared_before_publication(
     source, remote = setup_repositories(tmp_path)
     first_candidate = tmp_path / "first"
     stale_candidate = tmp_path / "stale"
-    snapshot(first_candidate)
+    snapshot(first_candidate, "3401")
     snapshot(stale_candidate, "3501")
     competing = publish_snapshot(request(source, first_candidate, "absent"))
     assert isinstance(competing, Published)
@@ -49,6 +54,13 @@ def test_absent_lease_fails_when_dist_appeared_before_publication(
     with pytest.raises(StalePublicationError):
         _ = publish_snapshot(request(source, stale_candidate, "absent"), runner=runner)
     assert remote_sha(remote) == competing.sha
+    competing_tree = tmp_path / "competing"
+    extract_archive(remote, competing.sha, competing_tree)
+    competing_state = SnapshotRepository(competing_tree).load_optional()
+    assert competing_state is not None
+    assert tuple(str(account.id) for account in competing_state.accounts) == (
+        account_url("3401"),
+    )
     pushes = [command for command in runner.commands if command[0] == "push"]
     assert pushes == []
 

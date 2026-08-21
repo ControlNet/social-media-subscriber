@@ -17,6 +17,22 @@ if TYPE_CHECKING:
     from social_media_subscriber.serialization.json import JsonBoundaryModel
 
 
+def test_successful_v2_promotion_is_deterministic_and_cleans_temporary_paths(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "dist"
+    repository = SnapshotRepository(root)
+    state = storage_state()
+    _ = repository.write(state)
+    before_bytes = tree_bytes(root)
+
+    _ = repository.write(state)
+
+    assert tree_bytes(root) == before_bytes
+    assert repository.load_optional() == state
+    assert list(tmp_path.glob(".dist.*")) == []
+
+
 def test_serialization_failure_never_promotes_candidate(tmp_path: Path) -> None:
     # Given
     root = tmp_path / "dist"
@@ -86,6 +102,40 @@ def test_partial_write_failure_never_promotes_candidate(
     with pytest.raises(SnapshotIntegrityError):
         _ = repository.write(storage_state())
     assert tree_bytes(root) == before
+
+
+def test_interrupted_v2_promotion_preserves_previous_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    root = tmp_path / "dist"
+    repository = SnapshotRepository(root)
+    prior = storage_state()
+    _ = repository.write(prior)
+    account_record = next((root / "accounts").glob("*.json"))
+    prior_record_bytes = account_record.read_bytes()
+    before_bytes = tree_bytes(root)
+    original_replace = Path.replace
+
+    def interrupt_candidate_promotion(path: Path, target: Path) -> Path:
+        if target == root and ".previous." not in path.name:
+            message = "injected v2 candidate promotion interruption"
+            raise OSError(message)
+        return original_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", interrupt_candidate_promotion)
+
+    # When
+    with pytest.raises(SnapshotIntegrityError):
+        _ = repository.write(SnapshotState((), (), ()))
+    after_bytes = tree_bytes(root)
+
+    # Then
+    assert before_bytes == after_bytes  # RED-PROBE-T11
+    assert account_record.read_bytes() == prior_record_bytes
+    assert repository.load_optional() == prior
+    assert str(prior.accounts[0].id) == prior.accounts[0].profile_url
+    assert list(tmp_path.glob(".dist.*")) == []
 
 
 def test_double_promotion_interruption_restores_the_prior_snapshot(

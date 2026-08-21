@@ -12,8 +12,10 @@ from social_media_subscriber.publishing.git import (
     publish_snapshot,
 )
 from social_media_subscriber.publishing.process import GitCommandResult, run_git
+from social_media_subscriber.storage.repository import SnapshotRepository
 from tests.integration.test_dist_publisher import (
     RecordingRunner,
+    account_url,
     extract_archive,
     git_fingerprint,
     git_for_test,
@@ -59,6 +61,13 @@ def test_stale_writer_preserves_competing_remote_and_source_repository(
             request(source, candidate_c, first.sha, prior_a), runner=runner
         )
     assert remote_sha(remote) == competing.sha
+    competing_tree = tmp_path / "competing"
+    extract_archive(remote, competing.sha, competing_tree)
+    competing_state = SnapshotRepository(competing_tree).load_optional()
+    assert competing_state is not None
+    assert tuple(str(account.id) for account in competing_state.accounts) == (
+        account_url("2001"),
+    )
     assert git_fingerprint(source) == before
     assert omo.read_bytes() == b"preserve me\x00"
     pushes = [command for command in runner.commands if command[0] == "push"]
