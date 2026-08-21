@@ -28,6 +28,7 @@ from social_media_subscriber.providers.brightdata.models import (
     BrightDataPersonIdentity,
     BrightDataPost,
     BrightDataSnapshotEnvelope,
+    BrightDataSnapshotId,
     BrightDataSnapshotProgress,
     JsonValue,
 )
@@ -167,7 +168,7 @@ class BrightDataClient:
         return await self._await_snapshot(envelope.snapshot_id, item_type)
 
     async def _await_snapshot[ModelT](
-        self, snapshot_id: str, item_type: type[ModelT]
+        self, snapshot_id: BrightDataSnapshotId, item_type: type[ModelT]
     ) -> tuple[ModelT, ...]:
         polls = int(SNAPSHOT_TIMEOUT_SECONDS / SNAPSHOT_POLL_SECONDS)
         for _poll in range(polls):

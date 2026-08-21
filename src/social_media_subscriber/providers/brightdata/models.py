@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import ClassVar, Final, Self, assert_never
+from typing import Annotated, ClassVar, Final, Self, assert_never
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from pydantic import (
@@ -26,6 +26,10 @@ from social_media_subscriber.providers.brightdata.normalization_errors import (
 type JsonValue = (
     bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
 )
+type BrightDataSnapshotId = Annotated[
+    str,
+    Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"),
+]
 
 _POST_TIMESTAMP_ERROR: Final = "provider_post_timestamp"
 _POST_TIMESTAMP_MESSAGE: Final = "provider post timestamp must be timezone-aware UTC"
@@ -169,13 +173,13 @@ class BrightDataPost(_BrightDataModel):
 class BrightDataSnapshotEnvelope(_BrightDataModel):
     """Accepted asynchronous scrape response."""
 
-    snapshot_id: str = Field(min_length=1)
+    snapshot_id: BrightDataSnapshotId
 
 
 class BrightDataSnapshotProgress(_BrightDataModel):
     """Asynchronous snapshot progress response parsed by the transport layer."""
 
-    snapshot_id: str | None = None
+    snapshot_id: BrightDataSnapshotId | None = None
     status: str = Field(min_length=1)
 
 

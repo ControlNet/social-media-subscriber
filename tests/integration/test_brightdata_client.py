@@ -203,6 +203,67 @@ async def test_company_posts_follow_owned_snapshot_to_ready_download() -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "malicious_snapshot_id",
+    [
+        "../../private",
+        "../x",
+        "/absolute",
+        "slash/value",
+        "backslash\\value",
+        "encoded%2fslash",
+        "encoded%5cbackslash",
+        "value?query",
+        "value#fragment",
+        ".",
+        "..",
+        " leading",
+        "trailing ",
+        "line\nbreak",
+        "unicode-雪",
+        "x" * 129,
+    ],
+)
+async def test_snapshot_id_cannot_escape_fixed_provider_endpoints(
+    malicious_snapshot_id: str,
+) -> None:
+    # Given
+    async def sleeper(_delay: float) -> None:
+        return
+
+    with capture_logs() as logs:
+        async with fake_server(
+            [
+                (200, {"snapshot_id": malicious_snapshot_id}),
+                (401, {"error": "provider-canary"}),
+            ]
+        ) as (state, base_url):
+            client = BrightDataClient(
+                "credential-canary",
+                HttpClientConfig(base_url=base_url),
+                sleeper=sleeper,
+            )
+
+            # When
+            async with client:
+                with pytest.raises(BrightDataError) as captured:
+                    _ = await client.resolve_person_identities(
+                        ("https://www.linkedin.com/in/example/",)
+                    )
+
+    # Then
+    assert captured.value.category is BrightDataErrorCategory.SCHEMA
+    assert len(state.requests) == 1
+    assert state.requests[0].method == "POST"
+    assert not hasattr(captured.value, "snapshot_id")
+    assert all("snapshot_id" not in event for event in logs)
+    if len(malicious_snapshot_id) > 2:
+        assert malicious_snapshot_id not in str(captured.value)
+        assert malicious_snapshot_id not in repr(captured.value)
+        assert malicious_snapshot_id not in json.dumps(logs, ensure_ascii=False)
+
+
+@pytest.mark.anyio
 async def test_person_posts_accept_immediate_array_and_exact_mode() -> None:
     # Given
     item = PostDiscoveryInput(
