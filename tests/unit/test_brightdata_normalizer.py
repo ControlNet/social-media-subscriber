@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from social_media_subscriber.accounts.identity import AccountIdentityService
+from social_media_subscriber.accounts.locator import parse_linkedin_locator
 from social_media_subscriber.domain import (
     Account,
     AccountId,
@@ -16,6 +18,13 @@ from social_media_subscriber.domain import (
 )
 from social_media_subscriber.domain.ids import account_id_for, post_id_for
 from social_media_subscriber.domain.post import Post, PostKind, StablePostContent
+from social_media_subscriber.providers.brightdata import discovery
+from social_media_subscriber.providers.brightdata.discovery import (
+    PostsAccountDiscoveryOutcome,
+    ResolvedPostsAccountDiscovery,
+    UnresolvedPostsAccountDiscovery,
+    derive_account_from_posts,
+)
 from social_media_subscriber.providers.brightdata.models import (
     BrightDataCompanyIdentity,
     BrightDataPersonIdentity,
@@ -28,6 +37,7 @@ from social_media_subscriber.providers.brightdata.normalization_errors import (
     BrightDataNormalizationErrorCategory,
 )
 from social_media_subscriber.providers.brightdata.normalization_outcomes import (
+    BrightDataNormalizationResult,
     ResolvedAccountIdentity,
     UnresolvedAccountIdentity,
 )
@@ -441,3 +451,266 @@ def test_legitimate_linkedin_public_links_remain_approved(
 
     # Then
     assert result.posts[0].links == (expected,)
+
+
+def _discovery_post(**updates: str | None) -> BrightDataPost:
+    """Return generic test-only original-record identity evidence."""
+    original = _post_fixture("synthetic-person-original.json")
+    return original.model_copy(update=updates)
+
+
+def _derive(
+    records: tuple[BrightDataPost, ...],
+    *,
+    known_accounts: tuple[Account, ...] = (),
+) -> PostsAccountDiscoveryOutcome:
+    return derive_account_from_posts(
+        requested_locator=parse_linkedin_locator(
+            "https://www.linkedin.com/in/synthetic-ada/"
+        ),
+        records=records,
+        identity_service=AccountIdentityService(known_accounts),
+        first_seen_at=FIRST_SEEN,
+    )
+
+
+def test_derive_numeric_identity_normalizes_complete_tuple() -> None:
+    # Given
+    ordinary = _discovery_post(user_id="00123")
+    reply = _post_fixture("synthetic-person-reply.json").model_copy(
+        update={"user_id": "00123", "use_url": ordinary.use_url}
+    )
+
+    # When
+    result = _derive((ordinary, reply))
+
+    # Then
+    assert isinstance(result, ResolvedPostsAccountDiscovery)
+    assert result.account.platform_account_id == "00123"
+    assert result.account.id == "linkedin:person:00123"
+    assert len(result.normalization.source_records) == 2
+    assert len(result.normalization.posts) == 1
+    assert result.normalization.skipped.replies == 1
+
+
+@pytest.mark.parametrize(
+    "user_id",
+    [
+        None,
+        "",
+        " 123",
+        "123 ",
+        "+123",
+        "123.0",
+        "\N{FULLWIDTH DIGIT ONE}\N{FULLWIDTH DIGIT TWO}\N{FULLWIDTH DIGIT THREE}",
+    ],
+)
+def test_derive_numeric_identity_rejects_missing_or_nonnumeric_ids(
+    user_id: str | None,
+) -> None:
+    # Given
+    ordinary = _discovery_post(user_id=user_id)
+
+    # When / Then
+    with pytest.raises(BrightDataNormalizationError) as captured:
+        _ = _derive((ordinary,))
+    assert captured.value.category is BrightDataNormalizationErrorCategory.IDENTITY
+    assert user_id is None or not user_id or user_id not in str(captured.value)
+
+
+def test_derive_numeric_identity_rejects_mixed_ids() -> None:
+    # Given
+    first = _discovery_post(user_id="00123")
+    second = _discovery_post(id="urn:li:activity:1002", user_id="00456")
+
+    # When / Then
+    with pytest.raises(BrightDataNormalizationError) as captured:
+        _ = _derive((first, second))
+    assert captured.value.category is BrightDataNormalizationErrorCategory.IDENTITY
+    assert "00123" not in str(captured.value)
+    assert "00456" not in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    "post_type",
+    ["repost", "reply", "quote", "unknown"],
+)
+def test_derive_numeric_identity_returns_unresolved_for_nonoriginal_only(
+    post_type: str,
+) -> None:
+    # Given
+    record = _discovery_post(post_type=post_type, user_id="00123")
+
+    # When
+    result = _derive((record,))
+
+    # Then
+    assert isinstance(result, UnresolvedPostsAccountDiscovery)
+
+
+def test_derive_numeric_identity_returns_unresolved_for_zero_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    def unexpected_normalize(
+        _account: Account,
+        _records: tuple[BrightDataPost, ...],
+        _first_seen_at: datetime,
+    ) -> BrightDataNormalizationResult:
+        raise AssertionError
+
+    monkeypatch.setattr(discovery, "normalize_posts", unexpected_normalize)
+
+    # When
+    result = _derive(())
+
+    # Then
+    assert isinstance(result, UnresolvedPostsAccountDiscovery)
+
+
+@pytest.mark.parametrize(
+    "actor_field", ["use_url", "user_url", "profile_url", "company_url"]
+)
+def test_derive_numeric_identity_rejects_malformed_actor_on_nonoriginal_records(
+    actor_field: str,
+) -> None:
+    # Given
+    record = _discovery_post(
+        post_type="reply",
+        **{actor_field: "not-a-linkedin-locator"},
+    )
+
+    # When / Then
+    with pytest.raises(BrightDataNormalizationError) as captured:
+        _ = _derive((record,))
+    assert captured.value.category is BrightDataNormalizationErrorCategory.OWNERSHIP
+
+
+def test_derive_numeric_identity_reconciles_changed_slug_by_stable_id() -> None:
+    # Given
+    known = _account().model_copy(
+        update={
+            "profile_url": "https://www.linkedin.com/in/synthetic-prior/",
+            "url_aliases": (),
+        }
+    )
+
+    # When
+    result = _derive((_discovery_post(user_id="12345"),), known_accounts=(known,))
+
+    # Then
+    assert isinstance(result, ResolvedPostsAccountDiscovery)
+    assert result.account.profile_url == known.profile_url
+    assert result.account.first_seen_at == known.first_seen_at
+    assert "https://www.linkedin.com/in/synthetic-ada/" in result.account.url_aliases
+    assert "https://www.linkedin.com/in/synthetic-prior/" in result.account.url_aliases
+
+
+@pytest.mark.parametrize(
+    "actor_field", ["use_url", "user_url", "profile_url", "company_url"]
+)
+@pytest.mark.parametrize(
+    "actor_url",
+    [
+        "not-a-linkedin-locator",
+        "https://www.linkedin.com/company/synthetic-labs/",
+        "https://www.linkedin.com/in/synthetic-other/",
+    ],
+)
+def test_derive_numeric_identity_rejects_each_malformed_actor_conflict(
+    actor_field: str,
+    actor_url: str,
+) -> None:
+    # Given
+    ordinary = _discovery_post(**{actor_field: actor_url})
+
+    # When / Then
+    with pytest.raises(BrightDataNormalizationError) as captured:
+        _ = _derive((ordinary,))
+    assert captured.value.category is BrightDataNormalizationErrorCategory.OWNERSHIP
+    assert "synthetic-other" not in str(captured.value)
+    assert "synthetic-labs" not in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    "actor_field", ["use_url", "user_url", "profile_url", "company_url"]
+)
+def test_derive_numeric_identity_rejects_known_alias_actor_conflict(
+    actor_field: str,
+) -> None:
+    # Given
+    owner = _account().model_copy(
+        update={"url_aliases": ("https://www.linkedin.com/in/synthetic-known/",)}
+    )
+    conflicting = _account().model_copy(
+        update={
+            "platform_account_id": PlatformAccountId("99999"),
+            "id": AccountId("linkedin:person:99999"),
+            "profile_url": "https://www.linkedin.com/in/synthetic-other/",
+        }
+    )
+    ordinary = _discovery_post(
+        user_id="12345",
+        **{actor_field: "https://www.linkedin.com/in/synthetic-other/"},
+    )
+
+    # When / Then
+    with pytest.raises(BrightDataNormalizationError) as captured:
+        _ = _derive((ordinary,), known_accounts=(owner, conflicting))
+    assert captured.value.category is BrightDataNormalizationErrorCategory.OWNERSHIP
+    assert "synthetic-other" not in str(captured.value)
+
+
+def test_derive_numeric_identity_rejects_candidate_conflicting_with_known_locator() -> (
+    None
+):
+    # Given
+    ordinary = _discovery_post(user_id="99999")
+
+    # When / Then
+    with pytest.raises(BrightDataNormalizationError) as captured:
+        _ = _derive((ordinary,), known_accounts=(_account(),))
+    assert captured.value.category is BrightDataNormalizationErrorCategory.IDENTITY
+    assert "99999" not in str(captured.value)
+
+
+def test_derive_numeric_identity_redacts_actor_canary() -> None:
+    # Given
+    actor_canary = "EXPLICIT_TEST_ONLY_ACTOR_CANARY"
+    ordinary = _discovery_post(use_url=f"https://invalid.example/{actor_canary}")
+
+    # When / Then
+    with pytest.raises(BrightDataNormalizationError) as captured:
+        _ = _derive((ordinary,))
+    assert captured.value.category is BrightDataNormalizationErrorCategory.OWNERSHIP
+    assert actor_canary not in str(captured.value)
+
+
+def test_derive_numeric_identity_calls_normalize_once_after_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    known = _account().model_copy(
+        update={"first_seen_at": datetime(2025, 1, 1, tzinfo=UTC)}
+    )
+    calls: list[tuple[Account, tuple[BrightDataPost, ...]]] = []
+    actual_normalize = normalize_posts
+
+    def capture_normalize(
+        account: Account,
+        records: tuple[BrightDataPost, ...],
+        first_seen_at: datetime,
+    ) -> BrightDataNormalizationResult:
+        calls.append((account, records))
+        return actual_normalize(account, records, first_seen_at)
+
+    monkeypatch.setattr(discovery, "normalize_posts", capture_normalize)
+    records = (_discovery_post(user_id="12345"),)
+
+    # When
+    result = _derive(records, known_accounts=(known,))
+
+    # Then
+    assert isinstance(result, ResolvedPostsAccountDiscovery)
+    assert calls == [(result.account, records)]
+    assert calls[0][0].first_seen_at == known.first_seen_at
