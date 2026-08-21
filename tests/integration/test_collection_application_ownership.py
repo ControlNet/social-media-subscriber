@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+__test__ = False
+
 import shutil
 from typing import TYPE_CHECKING
 
