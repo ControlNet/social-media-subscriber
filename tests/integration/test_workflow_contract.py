@@ -8,10 +8,16 @@ from pathlib import Path
 from typing import Final
 
 import pytest
+from pydantic import TypeAdapter
 
+from social_media_subscriber.providers.brightdata.models import JsonValue
+from social_media_subscriber.serialization.json import canonical_json_bytes
+from social_media_subscriber.storage.layout import MANIFEST, snapshot_digest
 from social_media_subscriber.storage.repository import SnapshotRepository
+from social_media_subscriber.storage.snapshot import SnapshotManifest
 from tests.e2e.brightdata_server import FakeBrightDataServer
 from tests.e2e.pipeline_harness import invoke_collect
+from tests.unit.test_storage_repository import storage_state
 from tests.workflow_helpers import YamlValue, load_workflow, mapping, sequence, text
 
 _ROOT: Final = Path(__file__).parents[2]
@@ -20,6 +26,7 @@ _COLLECT_PATH: Final = _ROOT / ".github" / "workflows" / "collect.yml"
 _CHECKOUT: Final = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 _SETUP_PIXI: Final = "prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347"
 _BASH: Final = shutil.which("bash")
+_JSON_OBJECT: Final = TypeAdapter(dict[str, JsonValue])
 
 
 def _steps(workflow: dict[str, YamlValue], job_name: str) -> list[dict[str, YamlValue]]:
@@ -235,6 +242,47 @@ def test_collection_preserves_observed_lease_and_terminal_status_contract() -> N
     assert re.search(r"COLLECT_STATUS.*(?:0|4)", commands, re.DOTALL)
     assert 'if [[ "$COLLECT_STATUS" -eq 4 ]]' in commands
     assert "exit 4" in commands
+
+
+def test_legacy_v1_incompatible_baseline_fails_before_provider_io(
+    tmp_path: Path,
+) -> None:
+    # Given
+    previous = tmp_path / "previous"
+    candidate = tmp_path / "candidate"
+    _ = SnapshotRepository(previous).write(storage_state())
+    record = next(previous.glob("accounts/*.json"))
+    payload = _JSON_OBJECT.validate_json(record.read_bytes())
+    payload.update(
+        {
+            "schema_version": 1,
+            "id": "linkedin:person:synthetic-ada",
+            "platform_account_id": "synthetic-ada",
+            "url_aliases": ["https://www.linkedin.com/in/synthetic-ada/"],
+        }
+    )
+    _ = record.write_bytes(_JSON_OBJECT.dump_json(payload))
+    non_manifest = {
+        path.relative_to(previous): path.read_bytes()
+        for path in previous.rglob("*")
+        if path.is_file() and path.relative_to(previous) != MANIFEST
+    }
+    manifest = SnapshotManifest.model_validate_json((previous / MANIFEST).read_bytes())
+    _ = (previous / MANIFEST).write_bytes(
+        canonical_json_bytes(
+            manifest.model_copy(update={"digest": snapshot_digest(non_manifest)})
+        )
+    )
+    server = FakeBrightDataServer()
+
+    # When
+    with server:
+        result = invoke_collect(server, previous, candidate)
+
+    # Then
+    assert result.exit_code == 5
+    assert not candidate.exists()
+    assert server.scenario.requests == []
 
 
 @pytest.mark.parametrize("path", [_CI_PATH, _COLLECT_PATH])
