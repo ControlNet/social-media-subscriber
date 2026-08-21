@@ -19,7 +19,7 @@
       "type": "string"
     },
     "id": {
-      "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%(?:[01][0-9A-Fa-f]|7[fF]|2[fF]|5[cC]|2[eE])))[^/\\x00-\\x1f\\x7f]+/$",
+      "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%(?:[01][0-9A-Fa-f]|7[fF]|2[fF]|5[cC]|2[eE])))[^/?#\\x00-\\x1f\\x7f]+/$",
       "title": "Id",
       "type": "string"
     },
@@ -32,18 +32,18 @@
       "type": "string"
     },
     "profile_url": {
-      "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%(?:[01][0-9A-Fa-f]|7[fF]|2[fF]|5[cC]|2[eE])))[^/\\x00-\\x1f\\x7f]+/$",
+      "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%(?:[01][0-9A-Fa-f]|7[fF]|2[fF]|5[cC]|2[eE])))[^/?#\\x00-\\x1f\\x7f]+/$",
       "title": "Profile Url",
       "type": "string"
     },
     "schema_version": {
       "const": 2,
-      "default": 2,
       "title": "Schema Version",
       "type": "integer"
     }
   },
   "required": [
+    "schema_version",
     "id",
     "platform",
     "kind",

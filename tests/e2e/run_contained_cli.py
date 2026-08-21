@@ -8,6 +8,10 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+if __package__ in {None, ""}:
+    repository_root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(repository_root))
+
 from tests.e2e.pipeline_harness import (
     ContainedScenario,
     invoke_contained_scenario,

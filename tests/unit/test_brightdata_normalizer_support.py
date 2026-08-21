@@ -24,6 +24,7 @@ def account(*, kind: AccountKind = AccountKind.PERSON) -> Account:
     path_kind = "in" if kind is AccountKind.PERSON else "company"
     canonical_url = f"https://www.linkedin.com/{path_kind}/{slug}/"
     return Account(
+        schema_version=2,
         id=AccountId(canonical_url),
         platform=Platform.LINKEDIN,
         kind=kind,

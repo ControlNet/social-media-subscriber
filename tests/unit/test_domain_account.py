@@ -20,6 +20,7 @@ _COMPANY_URL: Final = "https://www.linkedin.com/company/synthetic-labs/"
 def _account(*, kind: AccountKind = AccountKind.PERSON) -> Account:
     profile_url = _PERSON_URL if kind is AccountKind.PERSON else _COMPANY_URL
     return Account(
+        schema_version=2,
         id=AccountId(profile_url),
         platform=Platform.LINKEDIN,
         kind=kind,
@@ -65,6 +66,9 @@ def test_account_round_trip_preserves_schema_v2_url_identity(kind: AccountKind) 
         "https://linkedin.com/in/synthetic-ada/",
         "https://www.linkedin.com/in/synthetic-ada",
         "https://www.linkedin.com/in/synthetic-ada/?tracking=synthetic",
+        "https://www.linkedin.com/in/synthetic-ada/#about",
+        "https://www.linkedin.com/in/synthetic-ada?tracking=synthetic/",
+        "https://www.linkedin.com/in/synthetic-ada#about/",
         "https://www.linkedin.com/in/synthetic%2eada/",
     ],
 )
@@ -168,6 +172,17 @@ def test_account_rejects_legacy_numeric_or_alias_identity(
 
     # Then
     assert captured.value.error_count() >= 1
+
+
+def test_account_requires_explicit_schema_version() -> None:
+    # Given
+    values = _account().model_dump()
+    del values["schema_version"]
+
+    # When / Then
+    with pytest.raises(ValidationError) as captured:
+        _ = Account.model_validate(values)
+    assert captured.value.errors(include_input=False)[0]["loc"] == ("schema_version",)
 
 
 def test_account_boundary_error_representations_redact_invalid_account_id() -> None:

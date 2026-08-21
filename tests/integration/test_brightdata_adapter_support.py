@@ -100,6 +100,7 @@ def _account(kind: AccountKind, slug: str) -> Account:
     path = "in" if kind is AccountKind.PERSON else "company"
     profile_url = f"https://www.linkedin.com/{path}/{slug}/"
     return Account(
+        schema_version=2,
         id=AccountId(profile_url),
         platform=Platform.LINKEDIN,
         kind=kind,

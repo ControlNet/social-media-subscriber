@@ -104,13 +104,13 @@ creates exactly one opaque `AdapterInstance` for each parsed credential and
 assigns a run-local ordinal. Credentials never become record fields, output
 values, diagnostic strings, or persistent fingerprints.
 
-The Router owns that one immutable instance tuple. Both identity and post routes
-reuse it, so identity resolution cannot build a second pool. For an eligible
-batch, instances are deterministically rotated. A retryable failure may move to
-the next healthy instance; quota exhaustion or invalid credentials disable only
-that instance for this run. Invalid/not-found accounts are account-scoped and do
-not rotate credentials. A schema/identity corruption aborts the run and
-suppresses candidate posts/source records.
+The Router owns exactly one immutable instance tuple shared by every Posts
+batch. There is no identity resolution path and no second credential pool. For
+an eligible batch, instances are deterministically rotated. A retryable failure
+may move to the next healthy instance; quota exhaustion or invalid credentials
+disable only that instance for this run. Invalid/not-found accounts are
+account-scoped and do not rotate credentials. A schema or ownership corruption
+aborts the run and suppresses candidate posts/source records.
 
 ## Per-account collection windows
 
@@ -152,11 +152,23 @@ the exact bytes. Verification reloads the complete tree and rejects inventory,
 index, schema, ownership, ordering, or digest inconsistencies.
 
 A candidate is never assembled in the destination root. The repository writes,
-reloads, and validates a sibling temporary tree, then promotes it atomically.
-Interrupted serialization/copy recovery removes its partial sibling and keeps
-the previous canonical root byte-identical. Merge preserves historical records
-for failed or zero-result accounts; only successful routes contribute current
-candidate state. A byte-identical candidate is explicitly `unchanged`.
+reloads, and validates a private sibling temporary tree, then promotes it
+atomically. Parent, root, candidate, directory, and file access is anchored to
+no-follow file descriptors and verified by device/inode identity. The final
+parent must be owned by the running user and must not be group- or
+world-writable; concurrent non-cooperating processes with the same effective
+user ID are outside the filesystem threat model. A replaced path, symlink,
+special file, or identity mismatch fails closed without reading, overwriting,
+or deleting the replacement. Interrupted serialization or promotion removes a
+verified partial sibling and keeps the previous canonical root byte-identical.
+Merge preserves historical records for failed or zero-result accounts; only
+successful routes contribute current candidate state. A byte-identical
+candidate is explicitly `unchanged`.
+
+The write boundary may replace an existing, descriptor-verified empty output
+directory created by the workflow as a candidate-path placeholder. That
+exception does not apply to snapshot reads: an empty snapshot root remains an
+inventory integrity failure.
 
 A successful response with zero records, or with only non-original records,
 creates the requested URL Account while emitting zero canonical Posts and

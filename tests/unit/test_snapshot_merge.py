@@ -21,6 +21,7 @@ LATER = datetime(2026, 8, 21, 12, tzinfo=UTC)
 def _account(slug: str = "synthetic-ada", *, first_seen: datetime = FIRST) -> Account:
     url = f"https://www.linkedin.com/in/{slug}/"
     return Account(
+        schema_version=2,
         id=AccountId(url),
         platform=Platform.LINKEDIN,
         kind=AccountKind.PERSON,

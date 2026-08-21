@@ -8,7 +8,6 @@ from typing import override
 class BrightDataNormalizationErrorCategory(StrEnum):
     """Machine-readable provider normalization failure categories."""
 
-    IDENTITY = "identity"
     OWNERSHIP = "ownership"
     DUPLICATE = "duplicate"
     POST_URL = "post_url"

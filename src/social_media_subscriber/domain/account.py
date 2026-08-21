@@ -54,7 +54,7 @@ class Account(BaseModel):
         validate_default=True,
     )
 
-    schema_version: Literal[2] = 2
+    schema_version: Literal[2]
     id: _CanonicalAccountId
     platform: Literal[Platform.LINKEDIN]
     kind: AccountKind

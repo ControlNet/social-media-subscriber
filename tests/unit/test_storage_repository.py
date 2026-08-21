@@ -41,6 +41,7 @@ _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 
 def _state() -> SnapshotState:
     account = Account(
+        schema_version=2,
         id=AccountId(ACCOUNT_URL),
         platform=Platform.LINKEDIN,
         kind=AccountKind.PERSON,
@@ -122,6 +123,16 @@ def test_repository_repeated_write_is_byte_identical(tmp_path: Path) -> None:
     _ = SnapshotRepository(root).write(state)
 
     assert _tree(root) == before
+
+
+def test_repository_replaces_an_empty_output_placeholder(tmp_path: Path) -> None:
+    root = tmp_path / "dist"
+    root.mkdir()
+    state = _state()
+
+    _ = SnapshotRepository(root).write(state)
+
+    assert SnapshotRepository(root).load_optional() == state
 
 
 @pytest.mark.parametrize("target", ["snapshot.json", "accounts.json", "feed.json"])

@@ -6,10 +6,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from social_media_subscriber.storage import safe_tree
 from social_media_subscriber.storage.repository import (
     SnapshotIntegrityError,
     SnapshotRepository,
 )
+from social_media_subscriber.storage.safe_directory import DirectoryAnchor
 from social_media_subscriber.storage.snapshot import SnapshotState
 from tests.unit.test_storage_repository import storage_state, tree_bytes
 
@@ -85,18 +87,18 @@ def test_partial_write_failure_never_promotes_candidate(
     repository = SnapshotRepository(root)
     _ = repository.write(storage_state())
     before = tree_bytes(root)
-    original_write = Path.write_bytes
+    original_write = safe_tree.write_file_at
     writes = 0
 
-    def interrupted_write(path: Path, payload: bytes) -> int:
+    def interrupted_write(descriptor: int, name: str, payload: bytes) -> None:
         nonlocal writes
         writes += 1
         if writes == 3:
             message = "injected partial write interruption"
             raise OSError(message)
-        return original_write(path, payload)
+        original_write(descriptor, name, payload)
 
-    monkeypatch.setattr(Path, "write_bytes", interrupted_write)
+    monkeypatch.setattr(safe_tree, "write_file_at", interrupted_write)
 
     # When / Then
     with pytest.raises(SnapshotIntegrityError):
@@ -115,15 +117,17 @@ def test_interrupted_v2_promotion_preserves_previous_bytes(
     account_record = next((root / "accounts").glob("*.json"))
     prior_record_bytes = account_record.read_bytes()
     before_bytes = tree_bytes(root)
-    original_replace = Path.replace
+    original_rename = DirectoryAnchor.rename
 
-    def interrupt_candidate_promotion(path: Path, target: Path) -> Path:
-        if target == root and ".previous." not in path.name:
+    def interrupt_candidate_promotion(
+        anchor: DirectoryAnchor, source: str, target: str
+    ) -> None:
+        if target == anchor.entry_name and ".previous." not in source:
             message = "injected v2 candidate promotion interruption"
             raise OSError(message)
-        return original_replace(path, target)
+        original_rename(anchor, source, target)
 
-    monkeypatch.setattr(Path, "replace", interrupt_candidate_promotion)
+    monkeypatch.setattr(DirectoryAnchor, "rename", interrupt_candidate_promotion)
 
     # When
     with pytest.raises(SnapshotIntegrityError):
@@ -131,82 +135,34 @@ def test_interrupted_v2_promotion_preserves_previous_bytes(
     after_bytes = tree_bytes(root)
 
     # Then
-    assert before_bytes == after_bytes  # RED-PROBE-T11
+    assert before_bytes == after_bytes
     assert account_record.read_bytes() == prior_record_bytes
     assert repository.load_optional() == prior
     assert str(prior.accounts[0].id) == prior.accounts[0].profile_url
-    assert list(tmp_path.glob(".dist.*")) == []
+    assert [path.name for path in tmp_path.iterdir()] == ["dist"]
 
 
-def test_double_promotion_interruption_restores_the_prior_snapshot(
+def test_backup_cleanup_failure_rolls_back_candidate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Given
     root = tmp_path / "dist"
     repository = SnapshotRepository(root)
-    state = storage_state()
-    _ = repository.write(state)
+    prior = storage_state()
+    _ = repository.write(prior)
     before = tree_bytes(root)
-    original_replace = Path.replace
+    original_rmtree = shutil.rmtree
 
-    def interrupted_replace(path: Path, target: Path) -> Path:
-        if target == root and ".previous." not in path.name:
-            message = "injected candidate promotion interruption"
+    def fail_backup_cleanup(path: str | Path, *, dir_fd: int | None = None) -> None:
+        if ".previous." in Path(path).name:
+            message = "injected backup cleanup failure"
             raise OSError(message)
-        if target == root and ".previous." in path.name:
-            message = "injected rollback promotion interruption"
-            raise OSError(message)
-        return original_replace(path, target)
+        original_rmtree(path, dir_fd=dir_fd)
 
-    monkeypatch.setattr(Path, "replace", interrupted_replace)
+    monkeypatch.setattr(shutil, "rmtree", fail_backup_cleanup)
 
-    # When / Then
     with pytest.raises(SnapshotIntegrityError):
         _ = repository.write(SnapshotState((), (), ()))
-    assert root.is_dir()
+
     assert tree_bytes(root) == before
-    assert repository.load_optional() == state
-    assert list(tmp_path.glob(".dist.*")) == []
-
-
-def test_interrupted_recovery_copy_never_exposes_a_partial_live_snapshot(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Given
-    root = tmp_path / "dist"
-    repository = SnapshotRepository(root)
-    state = storage_state()
-    _ = repository.write(state)
-    before = tree_bytes(root)
-    original_replace = Path.replace
-    rollback_interrupted = False
-
-    def interrupted_replace(path: Path, target: Path) -> Path:
-        nonlocal rollback_interrupted
-        if target == root and ".previous." not in path.name:
-            message = "injected candidate promotion interruption"
-            raise OSError(message)
-        if target == root and ".previous." in path.name and not rollback_interrupted:
-            rollback_interrupted = True
-            message = "injected rollback promotion interruption"
-            raise OSError(message)
-        return original_replace(path, target)
-
-    def interrupted_copy(source: Path, destination: Path) -> Path:
-        first_file = next(path for path in source.rglob("*") if path.is_file())
-        copied = destination / first_file.relative_to(source)
-        copied.parent.mkdir(parents=True, exist_ok=True)
-        _ = shutil.copy2(first_file, copied)
-        message = "injected recovery copy interruption"
-        raise shutil.Error([(str(first_file), str(copied), message)])
-
-    monkeypatch.setattr(Path, "replace", interrupted_replace)
-    monkeypatch.setattr(shutil, "copytree", interrupted_copy)
-
-    # When / Then
-    with pytest.raises(SnapshotIntegrityError):
-        _ = repository.write(SnapshotState((), (), ()))
-    assert root.is_dir()
-    assert tree_bytes(root) == before
-    assert repository.load_optional() == state
-    assert list(tmp_path.glob(".dist.*")) == []
+    assert repository.load_optional() == prior
+    assert [path.name for path in tmp_path.iterdir()] == ["dist"]

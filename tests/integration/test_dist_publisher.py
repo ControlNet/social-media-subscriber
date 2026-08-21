@@ -38,6 +38,7 @@ def _snapshot(root: Path, account_suffix: str | None = None) -> None:
     else:
         profile_url = f"https://www.linkedin.com/in/synthetic-{account_suffix}/"
         account = Account(
+            schema_version=2,
             id=AccountId(profile_url),
             platform=Platform.LINKEDIN,
             kind=AccountKind.PERSON,

@@ -71,3 +71,15 @@ def test_source_record_rejects_v1_or_noncanonical_owner(
     # When / Then
     with pytest.raises(ValidationError):
         _ = BrightDataLinkedInPostSourceRecord.model_validate(values)
+
+
+@pytest.mark.parametrize("field", ["schema_version", "provider", "dataset_id"])
+def test_source_record_requires_explicit_version_and_provenance(field: str) -> None:
+    # Given
+    values = _source_record().model_dump()
+    del values[field]
+
+    # When / Then
+    with pytest.raises(ValidationError) as captured:
+        _ = BrightDataLinkedInPostSourceRecord.model_validate(values)
+    assert captured.value.errors(include_input=False)[0]["loc"] == (field,)

@@ -65,8 +65,8 @@ def assert_accepted_snapshot_and_ownership_failures_do_not_leak(tmp_path: Path) 
     assert ownership.scenario.progress_calls == 1
     assert ownership.scenario.download_calls == 1
     assert {item.credential for item in ownership.scenario.requests} == {"active"}
-    assert accepted.scenario.identity_calls == accepted.scenario.scrape_calls == 0
-    assert ownership.scenario.identity_calls == ownership.scenario.scrape_calls == 0
+    assert accepted.scenario.scrape_calls == 0
+    assert ownership.scenario.scrape_calls == 0
     assert not accepted.thread_alive
     assert not ownership.thread_alive
     assert unused.scenario.requests == []
@@ -118,7 +118,6 @@ def assert_invalid_schema_aborts_without_candidate_or_leak(tmp_path: Path) -> No
     assert server.scenario.progress_calls == 0
     assert server.scenario.download_calls == 0
     assert server.scenario.scrape_calls == 0
-    assert server.scenario.identity_calls == 0
     assert ACTIVE_VALUE not in result.output
     assert PERSON_URL not in result.output
     assert CHANGED_PERSON_URL not in result.output

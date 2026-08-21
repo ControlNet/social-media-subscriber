@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import shutil
-import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
-from typing import Protocol, override
+from typing import TYPE_CHECKING, Protocol, override
 
 from pydantic import ValidationError
 
@@ -21,8 +19,8 @@ from social_media_subscriber.providers.brightdata.source_record import (
 from social_media_subscriber.serialization.json import (
     JsonBoundaryModel,
     canonical_json_bytes,
-    read_json,
 )
+from social_media_subscriber.storage import safe_promotion
 from social_media_subscriber.storage.layout import (
     ACCOUNTS_DIRECTORY,
     ACCOUNTS_INDEX,
@@ -32,12 +30,26 @@ from social_media_subscriber.storage.layout import (
     SOURCE_DIRECTORY,
     snapshot_digest,
 )
+from social_media_subscriber.storage.safe_directory import (
+    DirectoryAnchor,
+    FileIdentity,
+    UnsafePathError,
+)
+from social_media_subscriber.storage.safe_tree import (
+    DirectoryTree,
+    expected_directories,
+    read_directory_tree,
+    write_directory_tree,
+)
 from social_media_subscriber.storage.snapshot import (
     AccountsIndex,
     FeedIndex,
     SnapshotManifest,
     SnapshotState,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class SnapshotEncoder(Protocol):
@@ -54,6 +66,7 @@ class SnapshotIntegrityCategory(StrEnum):
     MANIFEST_DIGEST = "manifest digest"
     INVENTORY = "record or index inventory"
     MANIFEST_COUNTS = "manifest counts"
+    UNSAFE_PATH = "unsafe filesystem path"
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,45 +95,96 @@ class SnapshotRepository:
 
     def load_optional(self) -> SnapshotState | None:
         """Load a fully validated snapshot or return None when absent."""
-        if not self._root.exists():
-            return None
         try:
-            return self._load()
+            with DirectoryAnchor.open(self._root, create_parent=False) as anchor:
+                identity = anchor.entry_identity()
+                if identity is None:
+                    return None
+                anchor.verify_parent_path()
+                with anchor.open_entry(expected=identity) as root:
+                    return self._load_tree(read_directory_tree(root.descriptor))
+        except FileNotFoundError:
+            return None
+        except UnsafePathError as error:
+            raise SnapshotIntegrityError(
+                SnapshotIntegrityCategory.UNSAFE_PATH
+            ) from error
         except (OSError, RuntimeError, ValidationError, shutil.Error) as error:
             raise SnapshotIntegrityError(type(error).__name__) from error
 
-    def _load(self) -> SnapshotState:
-        manifest = read_json(self._root / MANIFEST, SnapshotManifest)
+    def write(self, state: SnapshotState) -> SnapshotManifest:
+        """Build, validate, and atomically promote a complete snapshot tree."""
+        try:
+            with DirectoryAnchor.open(self._root, create_parent=True) as anchor:
+                prior_identity = anchor.entry_identity()
+                if prior_identity is not None:
+                    self._validate_existing_snapshot(anchor, prior_identity)
+                anchor.verify_parent_path()
+                temporary_name = anchor.make_directory(f".{anchor.entry_name}.")
+                temporary_identity = _required_identity(
+                    anchor.entry_identity(temporary_name)
+                )
+                try:
+                    files, manifest = self._candidate_files(state)
+                    with anchor.open_entry(
+                        temporary_name, expected=temporary_identity
+                    ) as candidate:
+                        write_directory_tree(candidate.descriptor, files)
+                        _ = self._load_tree(read_directory_tree(candidate.descriptor))
+                    safe_promotion.promote_directory(
+                        anchor,
+                        temporary_name,
+                        temporary_identity,
+                        prior_identity,
+                    )
+                finally:
+                    anchor.remove_tree(
+                        temporary_name,
+                        expected=temporary_identity,
+                        missing_ok=True,
+                    )
+        except UnsafePathError as error:
+            raise SnapshotIntegrityError(
+                SnapshotIntegrityCategory.UNSAFE_PATH
+            ) from error
+        except (OSError, RuntimeError, ValidationError, shutil.Error) as error:
+            raise SnapshotIntegrityError(type(error).__name__) from error
+        return manifest
+
+    def _load_tree(self, tree: DirectoryTree) -> SnapshotState:
+        manifest_payload = tree.files.get(MANIFEST)
+        if manifest_payload is None:
+            raise SnapshotIntegrityError(SnapshotIntegrityCategory.INVENTORY)
+        manifest = SnapshotManifest.model_validate_json(manifest_payload)
         files = {
-            path.relative_to(self._root): path.read_bytes()
-            for path in self._root.rglob("*")
-            if path.is_file() and path.relative_to(self._root) != MANIFEST
+            path: payload for path, payload in tree.files.items() if path != MANIFEST
         }
         if manifest.digest != snapshot_digest(files):
             raise SnapshotIntegrityError(SnapshotIntegrityCategory.MANIFEST_DIGEST)
         accounts = tuple(
-            read_json(path, Account)
-            for path in sorted((self._root / ACCOUNTS_DIRECTORY).glob("*.json"))
+            Account.model_validate_json(files[path])
+            for path in _record_paths(files, ACCOUNTS_DIRECTORY)
         )
         posts = tuple(
-            read_json(path, Post)
-            for path in sorted((self._root / POSTS_DIRECTORY).glob("*.json"))
+            Post.model_validate_json(files[path])
+            for path in _record_paths(files, POSTS_DIRECTORY)
         )
         sources = tuple(
-            read_json(path, BrightDataLinkedInPostSourceRecord)
-            for path in sorted((self._root / SOURCE_DIRECTORY).glob("*.json"))
+            BrightDataLinkedInPostSourceRecord.model_validate_json(files[path])
+            for path in _record_paths(files, SOURCE_DIRECTORY)
         )
         state = SnapshotState(
             tuple(sorted(accounts, key=lambda account: account.id)),
             tuple(sorted(posts, key=lambda post: post.id)),
-            tuple(
-                sorted(sources, key=lambda record: post_id_for(record.platform_post_id))
-            ),
+            tuple(sorted(sources, key=lambda item: post_id_for(item.platform_post_id))),
         )
         expected = self._files(state)
         expected[ACCOUNTS_INDEX] = self._encoder(self._accounts_index(state))
         expected[FEED_INDEX] = self._encoder(self._feed_index(state))
-        if files != expected:
+        complete_expected = {**expected, MANIFEST: manifest_payload}
+        if files != expected or tree.directories != expected_directories(
+            complete_expected
+        ):
             raise SnapshotIntegrityError(SnapshotIntegrityCategory.INVENTORY)
         if (
             manifest.account_count,
@@ -130,75 +194,28 @@ class SnapshotRepository:
             raise SnapshotIntegrityError(SnapshotIntegrityCategory.MANIFEST_COUNTS)
         return state
 
-    def write(self, state: SnapshotState) -> SnapshotManifest:
-        """Build, validate, and atomically promote a complete snapshot tree."""
-        self._root.parent.mkdir(parents=True, exist_ok=True)
-        temporary = Path(
-            tempfile.mkdtemp(prefix=f".{self._root.name}.", dir=self._root.parent)
-        )
-        try:
-            files = self._files(state)
-            files[ACCOUNTS_INDEX] = self._encoder(self._accounts_index(state))
-            files[FEED_INDEX] = self._encoder(self._feed_index(state))
-            manifest = SnapshotManifest(
-                account_count=len(state.accounts),
-                post_count=len(state.posts),
-                source_record_count=len(state.source_records),
-                digest=snapshot_digest(files),
-            )
-            files[MANIFEST] = self._encoder(manifest)
-            for relative_path, payload in files.items():
-                destination = temporary / relative_path
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                _ = destination.write_bytes(payload)
-            _ = SnapshotRepository(temporary, self._encoder).load_optional()
-            self._promote(temporary)
-        except (OSError, RuntimeError, ValidationError, shutil.Error) as error:
-            raise SnapshotIntegrityError(type(error).__name__) from error
-        else:
-            return manifest
-        finally:
-            if temporary.exists():
-                shutil.rmtree(temporary)
+    def _validate_existing_snapshot(
+        self, anchor: DirectoryAnchor, identity: FileIdentity
+    ) -> None:
+        with anchor.open_entry(expected=identity) as root:
+            tree = read_directory_tree(root.descriptor)
+            if tree.files or tree.directories:
+                _ = self._load_tree(tree)
 
-    def _promote(self, temporary: Path) -> None:
-        if not self._root.exists():
-            _ = temporary.replace(self._root)
-            return
-        backup = Path(
-            tempfile.mkdtemp(
-                prefix=f".{self._root.name}.previous.", dir=self._root.parent
-            )
+    def _candidate_files(
+        self, state: SnapshotState
+    ) -> tuple[dict[Path, bytes], SnapshotManifest]:
+        files = self._files(state)
+        files[ACCOUNTS_INDEX] = self._encoder(self._accounts_index(state))
+        files[FEED_INDEX] = self._encoder(self._feed_index(state))
+        manifest = SnapshotManifest(
+            account_count=len(state.accounts),
+            post_count=len(state.posts),
+            source_record_count=len(state.source_records),
+            digest=snapshot_digest(files),
         )
-        backup.rmdir()
-        _ = self._root.replace(backup)
-        try:
-            _ = temporary.replace(self._root)
-        except OSError:
-            self._restore_prior_snapshot(backup)
-            raise
-        shutil.rmtree(backup)
-
-    def _restore_prior_snapshot(self, backup: Path) -> None:
-        try:
-            _ = backup.replace(self._root)
-        except OSError:
-            recovery = Path(
-                tempfile.mkdtemp(
-                    prefix=f".{self._root.name}.previous-recovery.",
-                    dir=self._root.parent,
-                )
-            )
-            recovery.rmdir()
-            try:
-                _ = shutil.copytree(backup, recovery)
-                _ = recovery.rename(self._root)
-            except (OSError, shutil.Error):
-                if recovery.exists():
-                    shutil.rmtree(recovery)
-                _ = backup.replace(self._root)
-                raise
-            shutil.rmtree(backup)
+        files[MANIFEST] = self._encoder(manifest)
+        return files, manifest
 
     def _files(self, state: SnapshotState) -> dict[Path, bytes]:
         files = {
@@ -206,16 +223,15 @@ class SnapshotRepository:
             for account in state.accounts
         }
         files.update(
-            {
-                POSTS_DIRECTORY / record_filename(post.id): self._encoder(post)
-                for post in state.posts
-            }
+            (
+                POSTS_DIRECTORY / record_filename(post.id),
+                self._encoder(post),
+            )
+            for post in state.posts
         )
         files.update(
-            {
-                source_record_path(source): self._encoder(source)
-                for source in state.source_records
-            }
+            (source_record_path(source), self._encoder(source))
+            for source in state.source_records
         )
         return files
 
@@ -236,3 +252,19 @@ class SnapshotRepository:
             state.posts, key=lambda post: (-post.published_at.timestamp(), post.id)
         )
         return FeedIndex(posts=tuple(post.id for post in ordered))
+
+
+def _record_paths(files: dict[Path, bytes], directory: Path) -> tuple[Path, ...]:
+    return tuple(
+        sorted(
+            path
+            for path in files
+            if path.parent == directory and path.suffix == ".json"
+        )
+    )
+
+
+def _required_identity(identity: FileIdentity | None) -> FileIdentity:
+    if identity is None:
+        raise UnsafePathError
+    return identity

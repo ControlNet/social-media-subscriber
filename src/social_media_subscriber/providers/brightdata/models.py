@@ -41,18 +41,10 @@ _JSON_OBJECT_ADAPTER: Final[TypeAdapter[dict[str, JsonValue]]] = TypeAdapter(
 )
 _HASHTAGS_ADAPTER: Final[TypeAdapter[tuple[str, ...]]] = TypeAdapter(tuple[str, ...])
 _FORBIDDEN_POST_FIELDS: Final = frozenset(
-    {
-        "authorization",
-        "error",
-        "errors",
-        "headers",
-        "http_headers",
-        "raw_body",
-        "raw_response",
-        "request",
-        "request_id",
-        "requests",
-    }
+    """accessToken apiKey auth authorization clientSecret cookie cookies
+    credential credentials error errors headers httpHeaders password
+    rawBody rawResponse request requestId requests
+    secret secrets setCookie snapshotId token""".casefold().split()
 )
 _FORBIDDEN_FIELD_ERROR: Final = "provider_post_forbidden_field"
 _FORBIDDEN_FIELD_MESSAGE: Final = "provider post contains non-persistable metadata"
@@ -69,6 +61,25 @@ _SENSITIVE_QUERY_KEYS: Final = frozenset(
 _TRACKING_QUERY_KEYS: Final = frozenset(
     {"lipi", "midtoken", "ref", "trk", "trackingid"}
 )
+
+
+def _normalized_field_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.casefold())
+
+
+def _contains_forbidden_field(value: JsonValue) -> bool:
+    match value:
+        case dict() as mapping:
+            return any(
+                _normalized_field_name(key) in _FORBIDDEN_POST_FIELDS
+                or _contains_forbidden_field(item)
+                for key, item in mapping.items()
+            )
+        case list() as values:
+            return any(_contains_forbidden_field(item) for item in values)
+        case bool() | int() | float() | str() | None:
+            return False
+    assert_never(value)
 
 
 class _BrightDataModel(BaseModel):
@@ -108,8 +119,7 @@ class BrightDataPost(_BrightDataModel):
     def reject_non_persistable_metadata(cls, value: JsonValue) -> dict[str, JsonValue]:
         """Exclude transport, request, and error material from successful posts."""
         payload = _JSON_OBJECT_ADAPTER.validate_python(value)
-        normalized_keys = {key.casefold().replace("-", "_") for key in payload}
-        if normalized_keys & _FORBIDDEN_POST_FIELDS:
+        if _contains_forbidden_field(payload):
             raise PydanticCustomError(
                 _FORBIDDEN_FIELD_ERROR,
                 _FORBIDDEN_FIELD_MESSAGE,

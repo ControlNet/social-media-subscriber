@@ -4,14 +4,11 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 
 from social_media_subscriber.providers.brightdata.constants import (
-    COMPANY_IDENTITY_DATASET,
     LINKEDIN_POSTS_DATASET,
-    PERSON_IDENTITY_DATASET,
 )
 from tests.e2e.brightdata_server_fixtures import (
     ACTIVE_VALUE,
     COMPANY_SNAPSHOT,
-    COMPANY_URL,
     OWNERSHIP_CANARY,
     PERSON_SNAPSHOT,
     PERSON_URL,
@@ -47,7 +44,6 @@ class ProviderScenario:
     progress_calls: int = 0
     download_calls: int = 0
     scrape_calls: int = 0
-    identity_calls: int = 0
 
     def post_response(
         self,
@@ -63,26 +59,14 @@ class ProviderScenario:
         )
         if endpoint == "scrape":
             self.scrape_calls += 1
-            if dataset in {PERSON_IDENTITY_DATASET, COMPANY_IDENTITY_DATASET}:
-                self.identity_calls += 1
         else:
             self.trigger_calls += 1
         if credential == "revoked":
             return HTTPStatus.TOO_MANY_REQUESTS, {"status": "quota"}
-        identity = self._identity_response(dataset)
-        if identity is not None:
-            return identity
         posts = self._post_response(dataset, discovery)
         if posts is not None:
             return posts
         return HTTPStatus.BAD_REQUEST, {"status": "unsupported"}
-
-    def _identity_response(self, dataset: str) -> tuple[HTTPStatus, FakeJson] | None:
-        if dataset == PERSON_IDENTITY_DATASET:
-            return HTTPStatus.OK, [{"linkedin_num_id": "101", "url": PERSON_URL}]
-        if dataset == COMPANY_IDENTITY_DATASET:
-            return HTTPStatus.OK, [{"company_id": "202", "url": COMPANY_URL}]
-        return None
 
     def _post_response(
         self, dataset: str, discovery: str | None

@@ -67,6 +67,13 @@ def assert_snapshot_metadata(
     return state, manifest
 
 
+def assert_posts_only_requests(server: FakeBrightDataServer) -> None:
+    assert server.scenario.scrape_calls == 0
+    assert {request.dataset for request in server.scenario.requests} == {
+        LINKEDIN_POSTS_DATASET
+    }
+
+
 def assert_unknown_profile_failover(tmp_path: Path) -> None:
     previous = tmp_path / "absent"
     candidate = tmp_path / "candidate"
@@ -115,7 +122,6 @@ def assert_unknown_profile_failover(tmp_path: Path) -> None:
     assert server.scenario.progress_calls == 1
     assert server.scenario.download_calls == 1
     assert server.scenario.scrape_calls == 0
-    assert server.scenario.identity_calls == 0
     post_requests = [item for item in requests if item.discovery is not None]
     assert {
         (entry["start_date"], entry["end_date"])
@@ -188,9 +194,8 @@ def assert_changed_slug_creates_distinct_url_account(
         feed_ids=PERSON_FEED_IDS,
     )
     assert all(account.id == account.profile_url for account in state.accounts)
-    assert initial_server.scenario.identity_calls == 0
-    assert initial_server.scenario.scrape_calls == 0
-    assert server.scenario.identity_calls == server.scenario.scrape_calls == 0
+    assert_posts_only_requests(initial_server)
+    assert_posts_only_requests(server)
     assert [request.endpoint for request in server.scenario.requests] == [
         "trigger",
         "progress",
@@ -227,7 +232,8 @@ def assert_empty_candidate(tmp_path: Path, person_result: PersonPostScenario) ->
     assert tuple(account.id for account in state.accounts) == (PERSON_URL,)
     assert not list((candidate / "posts/linkedin").glob("*.json"))
     assert not list((candidate / "source").rglob("*.json"))
-    assert server.scenario.identity_calls == server.scenario.scrape_calls == 0
+    assert_posts_only_requests(server)
+    assert server.scenario.trigger_calls == 1
 
 
 def assert_empty_result_adds_distinct_url_account(
@@ -261,7 +267,7 @@ def assert_empty_result_adds_distinct_url_account(
         CHANGED_PERSON_URL,
         PERSON_URL,
     )
-    assert server.scenario.identity_calls == server.scenario.scrape_calls == 0
+    assert_posts_only_requests(server)
     assert server.scenario.trigger_calls == 1
     assert server.scenario.progress_calls == 1
     assert server.scenario.download_calls == 1

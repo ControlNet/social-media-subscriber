@@ -38,9 +38,9 @@ class BrightDataLinkedInPostSourceRecord(BaseModel):
         validate_default=True,
     )
 
-    schema_version: Literal[2] = 2
-    provider: Literal["brightdata"] = "brightdata"
-    dataset_id: Literal["gd_lyy3tktm25m4avu764"] = BRIGHT_DATA_LINKEDIN_POST_DATASET_ID
+    schema_version: Literal[2]
+    provider: Literal["brightdata"]
+    dataset_id: Literal["gd_lyy3tktm25m4avu764"]
     platform_post_id: PlatformPostId = Field(min_length=1)
     account_id: CanonicalAccountId
     payload_sha256: ContentHash = Field(pattern=r"^[0-9a-f]{64}$")
@@ -52,6 +52,9 @@ class BrightDataLinkedInPostSourceRecord(BaseModel):
         payload = post.payload
         digest = hashlib.sha256(canonical_json_value_bytes(payload)).hexdigest()
         return cls(
+            schema_version=2,
+            provider="brightdata",
+            dataset_id=BRIGHT_DATA_LINKEDIN_POST_DATASET_ID,
             platform_post_id=PlatformPostId(post.id),
             account_id=account_id,
             payload_sha256=ContentHash(digest),

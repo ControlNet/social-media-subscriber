@@ -101,8 +101,8 @@ def test_exact_rediscovery_preserves_first_seen_and_is_byte_identical(
     assert repeated_manifest.digest == refreshed_manifest.digest
     assert tree(repeated) == tree(refreshed)
     for server in (initial_server, refresh_server, repeated_server):
-        assert server.scenario.identity_calls == 0
         assert server.scenario.scrape_calls == 0
+        assert server.scenario.trigger_calls == 1
         assert not server.thread_alive
 
 
@@ -172,8 +172,8 @@ def test_failed_refresh_preserves_history_and_previous_bytes(tmp_path: Path) -> 
     ]
     assert failed_server.scenario.download_calls == 0
     for server in (initial_server, failed_server):
-        assert server.scenario.identity_calls == 0
         assert server.scenario.scrape_calls == 0
+        assert server.scenario.trigger_calls == 1
         assert not server.thread_alive
 
 

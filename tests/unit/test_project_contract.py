@@ -24,62 +24,49 @@ from tests.unit.test_cli import FakeApplication, json_report
 from tests.workflow_helpers import load_workflow, mapping, sequence, text
 
 PROJECT_ROOT: Final = Path(__file__).parents[2]
-REQUIRED_TASKS: Final = frozenset(
-    {
-        "actionlint",
-        "format",
-        "format-check",
-        "lint",
-        "schemas",
-        "schemas-check",
-        "subscriber",
-        "test",
-        "typecheck",
-        "verify",
-    }
+PRODUCTION_PACKAGE: Final = PROJECT_ROOT / "src" / "social_media_subscriber"
+
+
+def _joined(*values: str) -> str:
+    return "".join(values)
+
+
+def _words(*values: str) -> frozenset[str]:
+    return frozenset(" ".join(values).split())
+
+
+REQUIRED_TASKS: Final = _words(
+    "actionlint format format-check lint schemas schemas-check subscriber test",
+    "typecheck verify",
 )
 BOUNDARY_SCHEMAS: Final = {
-    "account.schema.json": {
-        "schema_version",
-        "id",
-        "platform",
-        "kind",
-        "profile_url",
-        "first_seen_at",
-    },
-    "post.schema.json": {
-        "schema_version",
-        "id",
-        "platform_post_id",
-        "account_id",
-        "canonical_url",
-        "published_at",
-        "text",
-        "kind",
-        "hashtags",
-        "links",
-        "first_seen_at",
-        "content_hash",
-    },
-    "brightdata-linkedin-post.schema.json": {
-        "schema_version",
-        "provider",
-        "dataset_id",
-        "platform_post_id",
-        "account_id",
-        "payload_sha256",
-        "payload",
-    },
+    "account.schema.json": _words(
+        "schema_version id platform kind profile_url first_seen_at"
+    ),
+    "post.schema.json": _words(
+        "schema_version id platform_post_id account_id canonical_url published_at",
+        "text kind hashtags links first_seen_at content_hash",
+    ),
+    "brightdata-linkedin-post.schema.json": _words(
+        "schema_version provider dataset_id platform_post_id account_id",
+        "payload_sha256 payload",
+    ),
 }
-FORBIDDEN_BOUNDARY_FIELDS: Final = frozenset(
-    {
-        "api_key",
-        "credential",
-        "platform_account_id",
-        "profile_id",
-        "url_aliases",
-        "user_id",
-    }
+FORBIDDEN_BOUNDARY_FIELDS: Final = _words(
+    "api_key credential platform_account_id profile_id url_aliases user_id"
+)
+FORBIDDEN_PRODUCTION_PATTERN: Final = re.compile(
+    _joined(
+        r"\b(PlatformAccountId|platform_account_id|url_aliases|account_id_for|",
+        "RESOLVE_ACCOUNT_IDENTITY|DISCOVER_LOCATOR_POSTS|PERSON_IDENTITY_DATASET|",
+        "COMPANY_IDENTITY_DATASET|collect_identity|",
+        r"collect_discovery|identity_requests|discovery_requests)\b|",
+        r"AdapterOperation\.(RESOLVE_ACCOUNT_IDENTITY|DISCOVER_LOCATOR_POSTS)|",
+        r"BrightDataNormalizationErrorCategory\.IDENTITY|collect-(identities|profiles)",
+    )
+)
+DELETED_PRODUCTION_MODULE_PATTERN: Final = re.compile(
+    r"/(adapter_identity|adapter_discovery|router_identity|router_discovery|discovery)\.py$"
 )
 _JSON_OBJECT: Final = TypeAdapter(dict[str, JsonValue])
 _COLLECT_WORKFLOW: Final = PROJECT_ROOT / ".github" / "workflows" / "collect.yml"
@@ -165,6 +152,36 @@ def test_only_posts_collection_is_a_public_routing_operation() -> None:
     # Then
     assert operations == (AdapterOperation.COLLECT_ACCOUNT_POSTS,)
     assert AdapterOperation.COLLECT_ACCOUNT_POSTS.value == "collect_account_posts"
+
+
+def test_url_identity_v2_production_scan_rejects_legacy_surfaces() -> None:
+    # Given / When
+    source_files = tuple(sorted(PRODUCTION_PACKAGE.rglob("*.py")))
+    workflow_files = tuple(sorted((_COLLECT_WORKFLOW.parent).glob("*.yml")))
+    files = (*source_files, *workflow_files)
+    forbidden_hits = [
+        f"{path.relative_to(PROJECT_ROOT)}:{line_no}:{line}"
+        for path in files
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if FORBIDDEN_PRODUCTION_PATTERN.search(line)
+    ]
+    deleted_modules = [
+        path.relative_to(PROJECT_ROOT).as_posix()
+        for path in source_files
+        if DELETED_PRODUCTION_MODULE_PATTERN.search(path.as_posix())
+    ]
+    user_id_hits = [
+        f"{path.relative_to(PROJECT_ROOT)}:{line_no}:{line}"
+        for path in source_files
+        if path != PRODUCTION_PACKAGE / "providers" / "brightdata" / "models.py"
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if re.search(r"\.user_id\b", line)
+    ]
+
+    # Then
+    assert forbidden_hits == []
+    assert deleted_modules == []
+    assert user_id_hits == []
 
 
 def test_workflow_invokes_the_single_posts_route_before_publication() -> None:

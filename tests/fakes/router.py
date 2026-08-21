@@ -126,6 +126,7 @@ def make_account(kind: AccountKind, number: int) -> Account:
     path = "in" if kind is AccountKind.PERSON else "company"
     profile_url = f"https://www.linkedin.com/{path}/synthetic-{number}/"
     return Account(
+        schema_version=2,
         id=AccountId(profile_url),
         platform=Platform.LINKEDIN,
         kind=kind,

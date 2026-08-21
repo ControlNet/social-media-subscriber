@@ -75,6 +75,7 @@ class _SyntheticCliApplication:
 
 def _synthetic_account() -> Account:
     return Account(
+        schema_version=2,
         id=AccountId(_SYNTHETIC_PERSON_URL),
         platform=Platform.LINKEDIN,
         kind=AccountKind.PERSON,

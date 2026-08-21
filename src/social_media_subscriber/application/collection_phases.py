@@ -86,6 +86,7 @@ def _requested_accounts(prepared: PreparedCollection) -> tuple[Account, ...]:
     for locator in prepared.account_input.locators:
         account_id = AccountId(locator.canonical_url)
         requested[account_id] = previous_by_id.get(account_id) or Account(
+            schema_version=2,
             id=account_id,
             platform=Platform.LINKEDIN,
             kind=locator.kind,

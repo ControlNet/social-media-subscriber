@@ -177,7 +177,7 @@ class Post(BaseModel):
         validate_default=True,
     )
 
-    schema_version: Literal[2] = 2
+    schema_version: Literal[2]
     id: PostId = Field(pattern=r"^linkedin:post:.+$")
     platform_post_id: PlatformPostId = Field(min_length=1)
     account_id: CanonicalAccountId

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
@@ -31,6 +32,19 @@ from tests.e2e.posts_first_scenarios import assert_snapshot_metadata
 
 _DEAD_PROXY: Final = "http://127.0.0.1:9"
 _DRIVER_REPORT: Final = TypeAdapter(dict[str, str | int | list[str] | None])
+
+
+@dataclass(frozen=True)
+class DriverCase:
+    invocation: str
+    scenario: str
+    expected_exit: int
+    succeeded: int
+    failed_ids: tuple[str, ...]
+
+
+def _driver_case_id(case: DriverCase) -> str:
+    return f"{case.invocation}-{case.scenario}"
 
 
 def test_cli_success_collects_person_and_company_over_loopback(tmp_path: Path) -> None:
@@ -188,18 +202,18 @@ def test_cli_rollback_keeps_previous_snapshot_on_accepted_failure(
 
 
 @pytest.mark.parametrize(
-    ("scenario", "expected_exit", "succeeded", "failed_ids"),
+    "case",
     [
-        ("success", 0, 2, []),
-        ("not-found", 4, 0, [NOT_FOUND_PERSON_URL]),
+        DriverCase("module", "success", 0, 2, ()),
+        DriverCase("module", "not-found", 4, 0, (NOT_FOUND_PERSON_URL,)),
+        DriverCase("path", "success", 0, 2, ()),
+        DriverCase("path", "not-found", 4, 0, (NOT_FOUND_PERSON_URL,)),
     ],
+    ids=_driver_case_id,
 )
 def test_contained_driver_emits_exactly_one_json_line(
     tmp_path: Path,
-    scenario: str,
-    expected_exit: int,
-    succeeded: int,
-    failed_ids: list[str],
+    case: DriverCase,
 ) -> None:
     environment = os.environ.copy()
     environment.update(
@@ -210,16 +224,27 @@ def test_contained_driver_emits_exactly_one_json_line(
         ACCOUNTS="",
         BRIGHT_DATA_API_KEYS="",
     )
-    completed = subprocess.run(  # noqa: S603 - exact Pixi interpreter, fixed module
-        [
+    command = [
+        sys.executable,
+        "-m",
+        "tests.e2e.run_contained_cli",
+        "--scenario",
+        case.scenario,
+        "--root",
+        str(tmp_path / case.scenario / case.invocation),
+    ]
+    if case.invocation == "path":
+        command = [
             sys.executable,
-            "-m",
-            "tests.e2e.run_contained_cli",
+            "tests/e2e/run_contained_cli.py",
             "--scenario",
-            scenario,
+            case.scenario,
             "--root",
-            str(tmp_path / scenario),
-        ],
+            str(tmp_path / case.scenario / case.invocation),
+        ]
+
+    completed = subprocess.run(  # noqa: S603 - exact Pixi interpreter, fixed command
+        command,
         cwd=Path(__file__).parents[2],
         env=environment,
         check=False,
@@ -229,10 +254,13 @@ def test_contained_driver_emits_exactly_one_json_line(
     )
 
     lines = completed.stdout.splitlines()
-    assert completed.returncode == expected_exit
+    assert completed.returncode == case.expected_exit
     assert len(lines) == 1
     driver_report = _DRIVER_REPORT.validate_json(lines[0])
-    assert driver_report["exit_code"] == expected_exit
-    assert driver_report["succeeded_accounts"] == succeeded
-    assert driver_report["failed_account_ids"] == failed_ids
+    assert driver_report["exit_code"] == case.expected_exit
+    assert driver_report["succeeded_accounts"] == case.succeeded
+    assert driver_report["failed_account_ids"] == list(case.failed_ids)
     assert completed.stderr == ""
+    assert ACTIVE_VALUE not in completed.stdout
+    assert REVOKED_VALUE not in completed.stdout
+    assert MEDIA_CANARY not in completed.stdout

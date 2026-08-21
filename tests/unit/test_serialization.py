@@ -23,11 +23,18 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _JSON_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
+_REQUIRED_FIELDS_ADAPTER: Final[TypeAdapter[list[str]]] = TypeAdapter(list[str])
+
+
+def _required_fields(schema: JsonValue) -> set[str]:
+    assert isinstance(schema, dict)
+    return set(_REQUIRED_FIELDS_ADAPTER.validate_python(schema.get("required")))
 
 
 def _account() -> Account:
     profile_url = "https://www.linkedin.com/in/synthetic-ada/"
     return Account(
+        schema_version=2,
         id=AccountId(profile_url),
         platform=Platform.LINKEDIN,
         kind=AccountKind.PERSON,
@@ -100,7 +107,8 @@ def test_schema_generation_is_deterministic_and_structural(tmp_path: Path) -> No
     )
     assert tuple(path.read_bytes() for path in second_paths) == first_bytes
     for path in second_paths:
-        match _JSON_ADAPTER.validate_json(path.read_bytes()):
+        schema = _JSON_ADAPTER.validate_json(path.read_bytes())
+        match schema:
             case {
                 "additionalProperties": False,
                 "properties": {"schema_version": {"const": 2}},
@@ -108,6 +116,7 @@ def test_schema_generation_is_deterministic_and_structural(tmp_path: Path) -> No
                 pass
             case unexpected:
                 pytest.fail(f"unexpected schema structure: {unexpected!r}")
+        assert "schema_version" in _required_fields(schema)
 
     account_schema = _JSON_ADAPTER.validate_json(first_paths[0].read_bytes())
     match account_schema:
@@ -125,6 +134,8 @@ def test_schema_generation_is_deterministic_and_structural(tmp_path: Path) -> No
                 )
                 for unsafe_url in (
                     "https://www.linkedin.com/in/syn\nthetic/",
+                    "https://www.linkedin.com/in/synthetic?tracking=unsafe/",
+                    "https://www.linkedin.com/in/synthetic#about/",
                     "https://www.linkedin.com/in/syn%2Fthetic/",
                     "https://www.linkedin.com/in/syn%5cthetic/",
                     "https://www.linkedin.com/in/%2e%2E/",
@@ -154,6 +165,13 @@ def test_schema_generation_is_deterministic_and_structural(tmp_path: Path) -> No
             "linkedin:person:123",
             "https://linkedin.com/in/synthetic-ada/",
             "https://www.linkedin.com/in/synthetic-ada",
+            "https://www.linkedin.com/in/synthetic-ada?tracking=unsafe/",
+            "https://www.linkedin.com/in/synthetic-ada#about/",
             "https://www.linkedin.com/in/synthetic%2eada/",
         ):
             assert re.fullmatch(post_account_id_pattern, invalid_id) is None
+
+    source_schema = _JSON_ADAPTER.validate_json(first_paths[1].read_bytes())
+    assert {"schema_version", "provider", "dataset_id"} <= _required_fields(
+        source_schema
+    )
