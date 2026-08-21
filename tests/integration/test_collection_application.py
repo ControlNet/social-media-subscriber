@@ -449,6 +449,7 @@ async def test_mixed_known_unknown_validates_discovery_before_any_write(
 
     # Then
     assert result.exit_code is CollectionExitCode.INTEGRITY
+    assert result.exit_code.value == 5
     assert result.candidate_change is CandidateChange.ABSENT
     assert not (tmp_path / "integrity").exists()
     assert client.calls == [
@@ -612,6 +613,72 @@ async def test_schema_abort_writes_no_candidate(tmp_path: Path) -> None:
     # Then
     assert result.exit_code is CollectionExitCode.INTEGRITY
     assert not (tmp_path / "candidate").exists()
+
+
+@pytest.mark.anyio
+async def test_same_numeric_changed_slug_preserves_alias_and_record_ownership(
+    tmp_path: Path,
+) -> None:
+    # Given
+    _ = await _run(_request(tmp_path, _settings(PERSON_URL)), (ApplicationClient(),))
+    _ = shutil.copytree(tmp_path / "candidate", tmp_path / "previous")
+    previous = SnapshotRepository(tmp_path / "previous").load_optional()
+    assert previous is not None
+    original = previous.accounts[0]
+    renamed_url = "https://www.linkedin.com/in/synthetic-renamed/"
+
+    # When
+    result = await _run(
+        _request(tmp_path, _settings(renamed_url), paths=("previous", "renamed")),
+        (ApplicationClient(person_posts=(_post("activity-2", actor_id="101"),)),),
+    )
+
+    # Then
+    state = SnapshotRepository(tmp_path / "renamed").load_optional()
+    assert result.exit_code is CollectionExitCode.SUCCESS
+    assert state is not None
+    assert len(state.accounts) == 1
+    assert state.accounts[0].profile_url == original.profile_url
+    assert state.accounts[0].first_seen_at == original.first_seen_at
+    assert state.accounts[0].url_aliases == tuple(sorted((PERSON_URL, renamed_url)))
+    assert all(post.account_id == original.id for post in state.posts)
+    assert all(source.account_id == original.id for source in state.source_records)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "records",
+    [
+        (_post(actor_id="101"), _post("activity-2", actor_id="999")),
+        (_post().model_copy(update={"user_id": None}),),
+        (_post().model_copy(update={"use_url": "not-a-linkedin-locator"}),),
+        (_post().model_copy(update={"use_url": COMPANY_URL}),),
+        (_post(actor_id="not-numeric"),),
+    ],
+    ids=("mixed-id", "missing-id", "malformed-actor", "wrong-kind", "nonnumeric"),
+)
+async def test_adversarial_discovery_abort_preserves_prior_snapshot_bytes(
+    tmp_path: Path,
+    records: tuple[BrightDataPost, ...],
+) -> None:
+    # Given
+    _ = await _run(_request(tmp_path, _settings(PERSON_URL)), (ApplicationClient(),))
+    _ = shutil.copytree(tmp_path / "candidate", tmp_path / "previous")
+    prior_bytes = _tree(tmp_path / "previous")
+    renamed_url = "https://www.linkedin.com/in/synthetic-renamed/"
+
+    # When
+    result = await _run(
+        _request(tmp_path, _settings(renamed_url), paths=("previous", "rejected")),
+        (ApplicationClient(person_posts=records),),
+    )
+
+    # Then
+    assert result.exit_code is CollectionExitCode.INTEGRITY
+    assert result.candidate_change is CandidateChange.ABSENT
+    assert _tree(tmp_path / "previous") == prior_bytes
+    assert not (tmp_path / "rejected").exists()
+    assert renamed_url not in repr(result)
 
 
 @pytest.mark.anyio

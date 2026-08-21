@@ -1074,6 +1074,28 @@ async def test_locator_discovery_cross_locator_account_owner_aborts() -> None:
 
 
 @pytest.mark.anyio
+async def test_locator_discovery_cross_locator_failure_is_order_independent() -> None:
+    # Given
+    first = _locator_request(AccountKind.PERSON, 1)
+    second = _locator_request(AccountKind.PERSON, 2)
+    account = make_account(AccountKind.PERSON, 1)
+
+    # When
+    results: list[DiscoveryRouterResult] = []
+    for requests in ((first, second), (second, first)):
+        outcomes = tuple(_resolved_locator(request, account) for request in requests)
+        router, _factory = _router(
+            ((),), locator_scripts=((LocatorPostsBatchCompleted(outcomes),),)
+        )
+        results.append(await router.discover_posts(requests))
+
+    # Then
+    for result in results:
+        _assert_locator_schema_abort(result)
+    assert results[0].diagnostics == results[1].diagnostics
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("ownership", ["collected", "post", "source"])
 async def test_locator_discovery_ownership_mismatch_aborts(ownership: str) -> None:
     # Given

@@ -20,6 +20,7 @@ from social_media_subscriber.providers.brightdata.source_record import (
 )
 from social_media_subscriber.schemas.generate import generate_schemas
 from social_media_subscriber.storage.merge import SnapshotConflictError, merge_snapshot
+from social_media_subscriber.storage.repository import SnapshotRepository
 from social_media_subscriber.storage.snapshot import SnapshotState
 
 FIRST = datetime(2026, 8, 20, 12, tzinfo=UTC)
@@ -181,6 +182,50 @@ def test_merge_is_independent_of_input_order() -> None:
 
     # Then
     assert forward == reverse
+
+
+def test_same_numeric_alias_merge_writes_byte_identical_owned_records(
+    tmp_path: Path,
+) -> None:
+    # Given
+    original = _account(first_seen=FIRST)
+    renamed = _account(slug="ada-renamed", first_seen=LATER)
+    post = _post(renamed)
+    source = _source(renamed)
+    previous = SnapshotState((original,), (), ())
+    current = SnapshotState((renamed,), (post,), (source,))
+
+    # When
+    forward = merge_snapshot(previous, current)
+    reverse = merge_snapshot(
+        SnapshotState(previous.accounts[::-1], (), ()),
+        SnapshotState(
+            current.accounts[::-1],
+            current.posts[::-1],
+            current.source_records[::-1],
+        ),
+    )
+    _ = SnapshotRepository(tmp_path / "forward").write(forward)
+    _ = SnapshotRepository(tmp_path / "reverse").write(reverse)
+
+    # Then
+    assert forward.accounts[0].profile_url == original.profile_url
+    assert forward.accounts[0].first_seen_at == FIRST
+    assert forward.accounts[0].url_aliases == (
+        "https://www.linkedin.com/in/ada-renamed/",
+        "https://www.linkedin.com/in/synthetic-ada/",
+    )
+    assert forward.posts[0].account_id == original.id
+    assert forward.source_records[0].account_id == original.id
+    assert {
+        path.relative_to(tmp_path / "forward"): path.read_bytes()
+        for path in (tmp_path / "forward").rglob("*")
+        if path.is_file()
+    } == {
+        path.relative_to(tmp_path / "reverse"): path.read_bytes()
+        for path in (tmp_path / "reverse").rglob("*")
+        if path.is_file()
+    }
 
 
 def test_generated_public_schema_bytes_match_committed_contracts(

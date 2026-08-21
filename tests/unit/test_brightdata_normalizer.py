@@ -606,6 +606,74 @@ def test_derive_numeric_identity_reconciles_changed_slug_by_stable_id() -> None:
     assert "https://www.linkedin.com/in/synthetic-prior/" in result.account.url_aliases
 
 
+def test_derive_same_numeric_identity_is_order_independent_for_known_aliases() -> None:
+    # Given
+    known = _account().model_copy(
+        update={
+            "profile_url": "https://www.linkedin.com/in/synthetic-prior/",
+            "url_aliases": ("https://www.linkedin.com/in/synthetic-earliest/",),
+            "first_seen_at": datetime(2025, 1, 1, tzinfo=UTC),
+        }
+    )
+    records = (
+        _discovery_post(user_id="12345"),
+        _discovery_post(
+            id="urn:li:activity:1002",
+            user_id="12345",
+            use_url=known.url_aliases[0],
+        ),
+    )
+
+    # When
+    forward = _derive(records, known_accounts=(known,))
+    reverse = _derive(records[::-1], known_accounts=(known,))
+
+    # Then
+    assert forward == reverse
+    assert isinstance(forward, ResolvedPostsAccountDiscovery)
+    assert forward.account.profile_url == known.profile_url
+    assert forward.account.first_seen_at == known.first_seen_at
+    assert forward.account.url_aliases == (
+        "https://www.linkedin.com/in/synthetic-ada/",
+        "https://www.linkedin.com/in/synthetic-earliest/",
+        "https://www.linkedin.com/in/synthetic-prior/",
+    )
+
+
+@pytest.mark.parametrize(
+    "records",
+    [
+        (
+            _discovery_post(user_id="12345"),
+            _discovery_post(id="urn:li:activity:1002", user_id="99999"),
+        ),
+        (
+            _discovery_post(user_id="12345"),
+            _discovery_post(
+                id="urn:li:activity:1002",
+                user_id="12345",
+                use_url="https://www.linkedin.com/in/synthetic-conflict/",
+            ),
+        ),
+    ],
+    ids=("mixed-id", "actor-conflict"),
+)
+def test_derive_adversarial_failure_category_is_record_order_independent(
+    records: tuple[BrightDataPost, ...],
+) -> None:
+    # Given / When
+    captured: list[BrightDataNormalizationError] = []
+    for ordered in (records, records[::-1]):
+        with pytest.raises(BrightDataNormalizationError) as error:
+            _ = _derive(ordered)
+        captured.append(error.value)
+
+    # Then
+    assert captured[0].category is captured[1].category
+    assert str(captured[0]) == str(captured[1])
+    assert "synthetic-conflict" not in repr(captured)
+
+
 @pytest.mark.parametrize(
     "actor_field", ["use_url", "user_url", "profile_url", "company_url"]
 )
