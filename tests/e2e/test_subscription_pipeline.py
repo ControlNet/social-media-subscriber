@@ -22,6 +22,7 @@ from tests.e2e.brightdata_server import (
     OWNERSHIP_CANARY,
     PERSON_URL,
     REVOKED_VALUE,
+    SCHEMA_CANARY,
     FakeBrightDataServer,
     PersonPostScenario,
 )
@@ -421,3 +422,48 @@ def test_accepted_snapshot_and_ownership_failure_do_not_reroute_or_leak(
     assert MEDIA_CANARY not in combined
     assert OWNERSHIP_CANARY not in combined
     assert PERSON_URL not in combined
+
+
+def test_posts_first_invalid_schema_aborts_without_candidate_or_leak(
+    tmp_path: Path,
+) -> None:
+    # Given
+    previous = tmp_path / "previous"
+    candidate = tmp_path / "candidate"
+    with FakeBrightDataServer() as initial_server:
+        assert (
+            invoke_collect(initial_server, tmp_path / "absent", previous).exit_code == 0
+        )
+    before = tree(previous)
+    server = FakeBrightDataServer()
+    server.scenario.person_result = PersonPostScenario.INVALID_SCHEMA
+
+    # When
+    with server:
+        result = invoke_collect(
+            server,
+            previous,
+            candidate,
+            accounts=CHANGED_PERSON_URL,
+            credentials=ACTIVE_VALUE,
+        )
+
+    # Then
+    assert result.exit_code == 5
+    assert not candidate.exists()
+    assert tree(previous) == before
+    assert not server.thread_alive
+    assert [request.endpoint for request in server.scenario.requests] == ["trigger"]
+    assert {request.dataset for request in server.scenario.requests} == {
+        LINKEDIN_POSTS_DATASET
+    }
+    assert server.scenario.trigger_calls == 1
+    assert server.scenario.progress_calls == 0
+    assert server.scenario.download_calls == 0
+    assert server.scenario.scrape_calls == 0
+    assert server.scenario.identity_calls == 0
+    assert ACTIVE_VALUE not in result.output
+    assert PERSON_URL not in result.output
+    assert CHANGED_PERSON_URL not in result.output
+    assert SCHEMA_CANARY not in result.output
+    assert MEDIA_CANARY not in result.output

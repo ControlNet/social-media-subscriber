@@ -26,6 +26,7 @@ MEDIA_CANARY: Final = (
     "https://media.licdn.com/dms/image/task14?signature=source-only-canary"
 )
 OWNERSHIP_CANARY: Final = "https://www.linkedin.com/in/private-owner-canary/"
+SCHEMA_CANARY: Final = "provider-schema-canary"
 _PERSON_SNAPSHOT: Final = "person-snapshot"
 _COMPANY_SNAPSHOT: Final = "company-snapshot"
 type FakeJson = dict[str, str] | list[dict[str, str | int | object]]
@@ -36,6 +37,7 @@ class PersonPostScenario(StrEnum):
     ZERO = "zero"
     NONORIGINAL_ONLY = "nonoriginal_only"
     OWNERSHIP_CONFLICT = "ownership_conflict"
+    INVALID_SCHEMA = "invalid_schema"
 
 
 class _RequestEnvelope(TypedDict):
@@ -114,6 +116,8 @@ class ProviderScenario:
         if discovery == "profile_url":
             if self.fail_person_posts:
                 return HTTPStatus.NOT_FOUND, {"status": "not_found"}
+            if self.person_result is PersonPostScenario.INVALID_SCHEMA:
+                return HTTPStatus.OK, [{"id": SCHEMA_CANARY}]
             return HTTPStatus.OK, {"snapshot_id": _PERSON_SNAPSHOT}
         if discovery == "company_url":
             return HTTPStatus.OK, {"snapshot_id": _COMPANY_SNAPSHOT}
@@ -157,6 +161,8 @@ class ProviderScenario:
                 return [_person_repost(self.person_actor_url)]
             case PersonPostScenario.OWNERSHIP_CONFLICT:
                 return _person_posts(self.metric, OWNERSHIP_CANARY)
+            case PersonPostScenario.INVALID_SCHEMA:
+                raise AssertionError
 
 
 class _ScenarioHttpServer(HTTPServer):
