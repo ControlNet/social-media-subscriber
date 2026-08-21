@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from dataclasses import dataclass, field
+from enum import StrEnum
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Final, Self, TypedDict, final, override
@@ -17,13 +18,24 @@ from social_media_subscriber.providers.brightdata.constants import (
 )
 
 PERSON_URL: Final = "https://www.linkedin.com/in/synthetic-ada/"
+CHANGED_PERSON_URL: Final = "https://www.linkedin.com/in/synthetic-ada-renamed/"
 COMPANY_URL: Final = "https://www.linkedin.com/company/synthetic-labs/"
 REVOKED_VALUE: Final = "task14-revoked-test-value"
 ACTIVE_VALUE: Final = "task14-active-test-value"
 MEDIA_CANARY: Final = (
     "https://media.licdn.com/dms/image/task14?signature=source-only-canary"
 )
+OWNERSHIP_CANARY: Final = "https://www.linkedin.com/in/private-owner-canary/"
+_PERSON_SNAPSHOT: Final = "person-snapshot"
+_COMPANY_SNAPSHOT: Final = "company-snapshot"
 type FakeJson = dict[str, str] | list[dict[str, str | int | object]]
+
+
+class PersonPostScenario(StrEnum):
+    SUCCESS = "success"
+    ZERO = "zero"
+    NONORIGINAL_ONLY = "nonoriginal_only"
+    OWNERSHIP_CONFLICT = "ownership_conflict"
 
 
 class _RequestEnvelope(TypedDict):
@@ -37,6 +49,8 @@ _TRIGGER_BODY: Final = TypeAdapter(tuple[dict[str, str | bool], ...])
 
 @dataclass(frozen=True, slots=True)
 class ProviderRequest:
+    method: str
+    endpoint: str
     credential: str
     dataset: str
     discovery: str | None
@@ -47,19 +61,34 @@ class ProviderRequest:
 class ProviderScenario:
     metric: int = 42
     fail_person_posts: bool = False
-    invalid_identity_schema: bool = False
     accepted_snapshot_failure: bool = False
+    person_result: PersonPostScenario = PersonPostScenario.SUCCESS
+    person_actor_url: str = PERSON_URL
     requests: list[ProviderRequest] = field(default_factory=list)
+    trigger_calls: int = 0
+    progress_calls: int = 0
+    download_calls: int = 0
+    scrape_calls: int = 0
+    identity_calls: int = 0
 
-    def response(
+    def post_response(
         self,
         authorization: str,
+        endpoint: str,
         dataset: str,
         discovery: str | None,
         body: tuple[dict[str, str | bool], ...],
     ) -> tuple[HTTPStatus, FakeJson]:
         credential = _credential_label(authorization)
-        self.requests.append(ProviderRequest(credential, dataset, discovery, body))
+        self.requests.append(
+            ProviderRequest("POST", endpoint, credential, dataset, discovery, body)
+        )
+        if endpoint == "scrape":
+            self.scrape_calls += 1
+            if dataset in {PERSON_IDENTITY_DATASET, COMPANY_IDENTITY_DATASET}:
+                self.identity_calls += 1
+        else:
+            self.trigger_calls += 1
         if credential == "revoked":
             return HTTPStatus.TOO_MANY_REQUESTS, {"status": "quota"}
         identity = self._identity_response(dataset)
@@ -72,8 +101,6 @@ class ProviderScenario:
 
     def _identity_response(self, dataset: str) -> tuple[HTTPStatus, FakeJson] | None:
         if dataset == PERSON_IDENTITY_DATASET:
-            if self.invalid_identity_schema:
-                return HTTPStatus.OK, [{"linkedin_num_id": 101}]
             return HTTPStatus.OK, [{"linkedin_num_id": "101", "url": PERSON_URL}]
         if dataset == COMPANY_IDENTITY_DATASET:
             return HTTPStatus.OK, [{"company_id": "202", "url": COMPANY_URL}]
@@ -87,12 +114,49 @@ class ProviderScenario:
         if discovery == "profile_url":
             if self.fail_person_posts:
                 return HTTPStatus.NOT_FOUND, {"status": "not_found"}
-            if self.accepted_snapshot_failure:
-                return HTTPStatus.OK, {"snapshot_id": "accepted-person"}
-            return HTTPStatus.OK, _person_posts(self.metric)
+            return HTTPStatus.OK, {"snapshot_id": _PERSON_SNAPSHOT}
         if discovery == "company_url":
-            return HTTPStatus.OK, _company_posts()
+            return HTTPStatus.OK, {"snapshot_id": _COMPANY_SNAPSHOT}
         return None
+
+    def get_response(
+        self,
+        authorization: str,
+        endpoint: str,
+        snapshot_id: str,
+    ) -> tuple[HTTPStatus, FakeJson]:
+        credential = _credential_label(authorization)
+        self.requests.append(
+            ProviderRequest(
+                "GET",
+                endpoint,
+                credential,
+                LINKEDIN_POSTS_DATASET,
+                None,
+                (),
+            )
+        )
+        if endpoint == "progress":
+            self.progress_calls += 1
+            status = "failed" if self.accepted_snapshot_failure else "ready"
+            return HTTPStatus.OK, {"status": status}
+        self.download_calls += 1
+        if snapshot_id == _PERSON_SNAPSHOT:
+            return HTTPStatus.OK, self._person_download()
+        if snapshot_id == _COMPANY_SNAPSHOT:
+            return HTTPStatus.OK, _company_posts()
+        return HTTPStatus.NOT_FOUND, {"status": "not_found"}
+
+    def _person_download(self) -> FakeJson:
+        match self.person_result:
+            case PersonPostScenario.SUCCESS:
+                return _person_posts(self.metric, self.person_actor_url)
+            case PersonPostScenario.ZERO:
+                return []
+            case PersonPostScenario.NONORIGINAL_ONLY:
+                return [_person_repost(self.person_actor_url)]
+            case PersonPostScenario.OWNERSHIP_CONFLICT:
+                return _person_posts(self.metric, OWNERSHIP_CANARY)
 
 
 class _ScenarioHttpServer(HTTPServer):
@@ -114,8 +178,10 @@ class _Handler(BaseHTTPRequestHandler):
         match parsed.path:
             case "/datasets/v3/scrape":
                 body = _REQUEST_BODY.validate_json(payload)["input"]
+                endpoint = "scrape"
             case "/datasets/v3/trigger":
                 body = _TRIGGER_BODY.validate_json(payload)
+                endpoint = "trigger"
             case _:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
@@ -124,8 +190,9 @@ class _Handler(BaseHTTPRequestHandler):
         discovery = query.get("discover_by", [None])[0]
         match self.server:
             case _ScenarioHttpServer() as server:
-                status, payload = server.scenario.response(
+                status, payload = server.scenario.post_response(
                     self.headers.get("Authorization", ""),
+                    endpoint,
                     dataset,
                     discovery,
                     body,
@@ -140,8 +207,28 @@ class _Handler(BaseHTTPRequestHandler):
         _ = self.wfile.write(encoded)
 
     def do_GET(self) -> None:
-        payload = b'{"snapshot_id":"accepted-person","unexpected":true}'
-        self.send_response(HTTPStatus.OK)
+        parsed = urlsplit(self.path)
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) != 4 or parts[:2] != ["datasets", "v3"]:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        match parts[2]:
+            case "progress":
+                endpoint = "progress"
+            case "snapshot":
+                endpoint = "download"
+            case _:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+        match self.server:
+            case _ScenarioHttpServer() as server:
+                status, response = server.scenario.get_response(
+                    self.headers.get("Authorization", ""), endpoint, parts[3]
+                )
+            case unreachable:
+                raise AssertionError(type(unreachable).__name__)
+        payload = json.dumps(response, separators=(",", ":")).encode()
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
@@ -168,6 +255,10 @@ class FakeBrightDataServer:
                 raise AssertionError(type(unreachable).__name__)
         return f"http://{host}:{port}"
 
+    @property
+    def thread_alive(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
     def __enter__(self) -> Self:
         server = _ScenarioHttpServer(self.scenario)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -193,7 +284,7 @@ def _credential_label(authorization: str) -> str:
     return "unknown"
 
 
-def _person_posts(metric: int) -> list[dict[str, str | int | object]]:
+def _person_posts(metric: int, actor_url: str) -> list[dict[str, str | int | object]]:
     return [
         {
             "id": "urn:li:activity:1001",
@@ -203,6 +294,7 @@ def _person_posts(metric: int) -> list[dict[str, str | int | object]]:
             "user_id": "101",
             "post_text": "Synthetic original post",
             "num_likes": metric,
+            "profile_url": actor_url,
             "images": [MEDIA_CANARY],
             "embedded_links": [
                 MEDIA_CANARY,
@@ -213,13 +305,36 @@ def _person_posts(metric: int) -> list[dict[str, str | int | object]]:
         {
             "id": "urn:li:activity:1002",
             "date_posted": "2026-08-19T10:30:00Z",
-            "post_type": "future_provider_variant",
+            "post_type": "post",
             "url": "https://www.linkedin.com/posts/synthetic-ada_example-1002/",
             "user_id": "101",
-            "post_text": "Source preserved, canonical skipped",
+            "profile_url": actor_url,
+            "post_text": "Synthetic second original post",
             "future_field": {"preserved": True},
         },
+        {
+            "id": "urn:li:activity:1003",
+            "date_posted": "2026-08-19T11:30:00Z",
+            "post_type": "post",
+            "url": "https://www.linkedin.com/posts/synthetic-ada_example-1003/",
+            "user_id": "101",
+            "profile_url": actor_url,
+            "post_text": "Synthetic third original post",
+        },
+        _person_repost(actor_url),
     ]
+
+
+def _person_repost(actor_url: str) -> dict[str, str | int | object]:
+    return {
+        "id": "urn:li:activity:1004",
+        "date_posted": "2026-08-19T12:30:00Z",
+        "post_type": "repost",
+        "url": "https://www.linkedin.com/posts/synthetic-ada_example-1004/",
+        "user_id": "101",
+        "profile_url": actor_url,
+        "post_text": "Synthetic repost retained only as source",
+    }
 
 
 def _company_posts() -> list[dict[str, str | int | object]]:

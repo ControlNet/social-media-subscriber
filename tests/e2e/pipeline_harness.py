@@ -21,7 +21,6 @@ from social_media_subscriber.providers.brightdata.client import BrightDataClient
 from social_media_subscriber.providers.http import HttpClientConfig
 from tests.e2e.brightdata_server import (
     ACTIVE_VALUE,
-    COMPANY_URL,
     PERSON_URL,
     REVOKED_VALUE,
     FakeBrightDataServer,
@@ -76,7 +75,8 @@ def invoke_collect(
     previous: Path,
     candidate: Path,
     *,
-    accounts: str = f"{PERSON_URL}\n{COMPANY_URL}",
+    accounts: str = PERSON_URL,
+    credentials: str = f"{REVOKED_VALUE}\n{ACTIVE_VALUE}",
 ) -> CliResult:
     return _RUNNER.invoke(
         create_app(E2eApplication(server.base_url)),
@@ -93,7 +93,7 @@ def invoke_collect(
         ],
         env={
             "ACCOUNTS": accounts,
-            "BRIGHT_DATA_API_KEYS": f"{REVOKED_VALUE}\n{ACTIVE_VALUE}",
+            "BRIGHT_DATA_API_KEYS": credentials,
         },
         catch_exceptions=False,
     )

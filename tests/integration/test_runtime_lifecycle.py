@@ -74,7 +74,9 @@ class _TrackingHttpFactory:
         return client
 
 
-def _request(root: Path, keys: str = "lifecycle-test-key") -> CollectionRequest:
+def _request(
+    root: Path, keys: str = "lifecycle-first\nlifecycle-second"
+) -> CollectionRequest:
     return CollectionRequest(
         settings=Settings(
             accounts=SecretStr(_PERSON_URL),
@@ -224,9 +226,9 @@ async def test_production_collection_closes_transport_once_on_terminal_abort(
 
     # Then
     assert result.exit_code is expected_exit
-    assert len(transport_factory.clients) == 1
-    assert transport_factory.clients[0].is_closed
-    assert transport_factory.clients[0].close_calls == 1
+    assert len(transport_factory.clients) == 2
+    assert all(client.is_closed for client in transport_factory.clients)
+    assert [client.close_calls for client in transport_factory.clients] == [1, 1]
 
 
 @pytest.mark.anyio
@@ -265,6 +267,6 @@ async def test_production_collection_shields_transport_close_on_cancellation(
 
     # Then
     assert cancellation_observed.is_set()
-    assert len(transport_factory.clients) == 1
-    assert transport_factory.clients[0].is_closed
-    assert transport_factory.clients[0].close_calls == 1
+    assert len(transport_factory.clients) == 2
+    assert all(client.is_closed for client in transport_factory.clients)
+    assert [client.close_calls for client in transport_factory.clients] == [1, 1]
