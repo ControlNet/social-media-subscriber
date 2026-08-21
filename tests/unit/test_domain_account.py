@@ -1,92 +1,85 @@
 from __future__ import annotations
 
-__test__ = False
-
 from datetime import UTC, datetime, timedelta, timezone
-from typing import assert_type
+from typing import Final, assert_type
 
 import pytest
 from pydantic import ValidationError
 
 from social_media_subscriber.domain.account import Account
-from social_media_subscriber.domain.ids import (
-    AccountId,
-    InvalidPlatformAccountIdError,
-    PlatformAccountId,
-    account_id_for,
-)
+from social_media_subscriber.domain.ids import AccountId
 from social_media_subscriber.domain.platform import AccountKind, Platform
 
 __all__ = ("FIRST_SEEN", "_account")
 
 FIRST_SEEN = datetime(2026, 8, 20, 12, 30, tzinfo=UTC)
-MALFORMED_PLATFORM_ACCOUNT_IDS = (
-    "",
-    "abc",
-    "../../x",
-    "urn:li:person:123",
-    "12/34",
-    "12.34",
-    "+123",
-    " 123",
-    "123 ",
-    "123\n",
-    "\uff11\uff12\uff13",
-)
-UNSAFE_ACCOUNT_URLS = [
-    "https://www.linkedin.com/in/syn\rthetic/",
-    "https://www.linkedin.com/in/syn\nthetic/",
-    "https://www.linkedin.com/in/syn\tthetic/",
-    "https://www.linkedin.com/in/syn\x7fthetic/",
-    "https://www.linkedin.com/in/syn\\thetic/",
-    "https://www.linkedin.com/in/syn%2fthetic/",
-    "https://www.linkedin.com/in/syn%2Fthetic/",
-    "https://www.linkedin.com/in/syn%5cthetic/",
-    "https://www.linkedin.com/in/syn%5Cthetic/",
-    "https://www.linkedin.com/in/syn%2ethetic/",
-    "https://www.linkedin.com/in/syn%2Ethetic/",
-    "https://www.linkedin.com/in/%2e%2E/",
-    "https://www.linkedin.com/in/syn%09thetic/",
-    "https://www.linkedin.com/in/syn%0athetiC/",
-    "https://www.linkedin.com/in/syn%0Athetic/",
-    "https://www.linkedin.com/in/syn%0dthetic/",
-    "https://www.linkedin.com/in/syn%0Dthetic/",
-    "https://www.linkedin.com/in/syn%7fthetic/",
-    "https://www.linkedin.com/in/syn%7Fthetic/",
-    "https://www.linkedin.com/in/./",
-    "https://www.linkedin.com/in/../",
-]
+_PERSON_URL: Final = "https://www.linkedin.com/in/synthetic-ada/"
+_COMPANY_URL: Final = "https://www.linkedin.com/company/synthetic-labs/"
 
 
 def _account(*, kind: AccountKind = AccountKind.PERSON) -> Account:
-    platform_account_id = PlatformAccountId("12345")
+    profile_url = _PERSON_URL if kind is AccountKind.PERSON else _COMPANY_URL
     return Account(
-        id=account_id_for(kind, platform_account_id),
+        id=AccountId(profile_url),
         platform=Platform.LINKEDIN,
         kind=kind,
-        platform_account_id=platform_account_id,
-        profile_url="https://www.linkedin.com/in/ada/",
-        url_aliases=(
-            "https://www.linkedin.com/in/ada-lovelace/",
-            "https://www.linkedin.com/in/ada/",
-            "https://www.linkedin.com/in/ada-lovelace/",
-        ),
+        profile_url=profile_url,
         first_seen_at=FIRST_SEEN,
     )
 
 
-def test_account_normalizes_order_and_preserves_type_brands() -> None:
+@pytest.mark.parametrize("kind", tuple(AccountKind))
+def test_account_canonical_url_identity_is_the_profile_url(kind: AccountKind) -> None:
     # Given / When
-    account = _account()
+    account = _account(kind=kind)
 
     # Then
-    assert account.url_aliases == (
-        "https://www.linkedin.com/in/ada-lovelace/",
-        "https://www.linkedin.com/in/ada/",
-    )
-    assert account.first_seen_at is FIRST_SEEN
+    assert account.id == account.profile_url
     _ = assert_type(account.id, AccountId)
-    _ = assert_type(account.platform_account_id, PlatformAccountId)
+
+
+@pytest.mark.parametrize("kind", tuple(AccountKind))
+def test_account_round_trip_preserves_schema_v2_url_identity(kind: AccountKind) -> None:
+    # Given
+    account = _account(kind=kind)
+
+    # When
+    restored = Account.model_validate_json(account.model_dump_json())
+
+    # Then
+    assert restored == account
+    assert restored.schema_version == 2
+    assert set(restored.model_dump()) == {
+        "schema_version",
+        "id",
+        "platform",
+        "kind",
+        "profile_url",
+        "first_seen_at",
+    }
+
+
+@pytest.mark.parametrize(
+    "noncanonical_url",
+    [
+        "https://linkedin.com/in/synthetic-ada/",
+        "https://www.linkedin.com/in/synthetic-ada",
+        "https://www.linkedin.com/in/synthetic-ada/?tracking=synthetic",
+        "https://www.linkedin.com/in/synthetic%2eada/",
+    ],
+)
+def test_account_rejects_noncanonical_url_identity(noncanonical_url: str) -> None:
+    # Given
+    values = _account().model_dump()
+    values["id"] = noncanonical_url
+    values["profile_url"] = noncanonical_url
+
+    # When
+    with pytest.raises(ValidationError) as captured:
+        _ = Account.model_validate(values)
+
+    # Then
+    assert captured.value.error_count() >= 1
 
 
 @pytest.mark.parametrize(
@@ -97,10 +90,6 @@ def test_account_normalizes_order_and_preserves_type_brands() -> None:
             "first_seen_at",
             datetime(2026, 8, 20, 14, 30, tzinfo=timezone(timedelta(hours=2))),
         ),
-        ("id", "linkedin:company:12345"),
-        ("profile_url", "https://user@www.linkedin.com/in/ada/"),
-        ("profile_url", "http://www.linkedin.com/in/ada/"),
-        ("profile_url", "https://www.linkedin.com/company/ada/"),
         ("kind", "group"),
     ],
 )
@@ -116,92 +105,69 @@ def test_account_rejects_invalid_boundary_values(
         _ = Account.model_validate(values)
 
 
-@pytest.mark.parametrize("kind", tuple(AccountKind))
-@pytest.mark.parametrize("malformed_id", MALFORMED_PLATFORM_ACCOUNT_IDS)
-def test_account_id_constructor_rejects_non_ascii_numeric_platform_id(
-    kind: AccountKind,
-    malformed_id: str,
-) -> None:
-    # Given
-    platform_account_id = PlatformAccountId(malformed_id)
-
-    # When / Then
-    with pytest.raises(InvalidPlatformAccountIdError):
-        _ = account_id_for(kind, platform_account_id)
-
-
-@pytest.mark.parametrize("kind", tuple(AccountKind))
-@pytest.mark.parametrize("malformed_id", MALFORMED_PLATFORM_ACCOUNT_IDS)
-def test_account_boundary_rejects_non_ascii_numeric_platform_id(
-    kind: AccountKind,
-    malformed_id: str,
-) -> None:
-    # Given
-    kind_path = {
-        AccountKind.PERSON: "in",
-        AccountKind.COMPANY: "company",
-    }[kind]
-    values = {
-        "id": f"linkedin:{kind.value}:{malformed_id}",
-        "platform": Platform.LINKEDIN,
-        "kind": kind,
-        "platform_account_id": malformed_id,
-        "profile_url": f"https://www.linkedin.com/{kind_path}/synthetic/",
-        "url_aliases": (f"https://www.linkedin.com/{kind_path}/synthetic/",),
-        "first_seen_at": FIRST_SEEN,
-    }
-
-    # When / Then
-    with pytest.raises(ValidationError):
-        _ = Account.model_validate(values)
-
-
-@pytest.mark.parametrize("field", ["profile_url", "url_aliases"])
-@pytest.mark.parametrize("unsafe_url", UNSAFE_ACCOUNT_URLS)
-def test_account_boundary_rejects_unsafe_encoded_or_control_profile_url(
-    field: str,
-    unsafe_url: str,
+@pytest.mark.parametrize(
+    ("kind", "profile_url"),
+    [
+        (AccountKind.PERSON, _COMPANY_URL),
+        (AccountKind.COMPANY, _PERSON_URL),
+    ],
+)
+def test_account_rejects_wrong_kind_url_identity(
+    kind: AccountKind, profile_url: str
 ) -> None:
     # Given
     values = _account().model_dump()
-    values[field] = (unsafe_url,) if field == "url_aliases" else unsafe_url
-
-    # When / Then
-    with pytest.raises(ValidationError):
-        _ = Account.model_validate(values)
-
-
-def test_account_boundary_error_representations_redact_invalid_id_input() -> None:
-    # Given
-    canary = "invalid-account-id-canary-9f2c6d"
-    values = _account().model_dump()
-    values["id"] = f"linkedin:person:{canary}"
-    values["platform_account_id"] = canary
+    values["id"] = profile_url
+    values["kind"] = kind
+    values["profile_url"] = profile_url
 
     # When
     with pytest.raises(ValidationError) as captured:
         _ = Account.model_validate(values)
 
     # Then
-    error = captured.value
-    public_representations = (
-        str(error),
-        repr(error),
-        error.json(),
-        repr(error.errors()),
-        repr(error.args),
+    assert captured.value.errors(include_input=False)[0]["type"] == (
+        "account_kind_url_mismatch"
     )
-    assert all(
-        canary not in representation for representation in public_representations
+
+
+def test_account_rejects_mismatched_canonical_profile_url() -> None:
+    # Given
+    values = _account().model_dump()
+    values["profile_url"] = "https://www.linkedin.com/in/synthetic-grace/"
+
+    # When
+    with pytest.raises(ValidationError) as captured:
+        _ = Account.model_validate(values)
+
+    # Then
+    assert captured.value.errors(include_input=False)[0]["type"] == (
+        "account_id_mismatch"
     )
-    assert error.error_count() >= 1
-    assert error.title == "Account"
-    details = error.errors(include_input=False)
-    assert {detail["loc"] for detail in details} == {
-        ("id",),
-        ("platform_account_id",),
-    }
-    assert {detail["type"] for detail in details} == {"string_pattern_mismatch"}
+
+
+@pytest.mark.parametrize(
+    "legacy_updates",
+    [
+        {"id": "linkedin:person:12345"},
+        {"platform_account_id": "12345"},
+        {"url_aliases": (_PERSON_URL,)},
+        {"schema_version": 1},
+    ],
+)
+def test_account_rejects_legacy_numeric_or_alias_identity(
+    legacy_updates: dict[str, str | int | tuple[str, ...]],
+) -> None:
+    # Given
+    values = _account().model_dump()
+    values.update(legacy_updates)
+
+    # When
+    with pytest.raises(ValidationError) as captured:
+        _ = Account.model_validate(values)
+
+    # Then
+    assert captured.value.error_count() >= 1
 
 
 def test_account_boundary_error_representations_redact_invalid_account_id() -> None:

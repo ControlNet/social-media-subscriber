@@ -1,106 +1,11 @@
 from __future__ import annotations
 
 from tests.integration import test_brightdata_adapter_collection as collection
-from tests.integration import (
-    test_brightdata_adapter_discovery_basics as discovery_basics,
-)
-from tests.integration import (
-    test_brightdata_adapter_discovery_failures as discovery_failures,
-)
-from tests.integration import test_brightdata_adapter_identity as identity
 from tests.integration import test_brightdata_adapter_router_basics as router_basics
-from tests.integration import test_brightdata_adapter_router_failures as router_failures
 from tests.integration import test_brightdata_adapter_router_windows as router_windows
-from tests.integration.test_brightdata_adapter_discovery_basics import (
-    test_locator_discovery_no_identity_returns_unresolved_without_records as _a,
-)
-from tests.integration.test_brightdata_adapter_discovery_failures import (
-    test_locator_discovery_malformed_actor_aborts_without_provider_text as _b,
-)
 
-__all__ = (
-    "test_accepted_snapshot_failure_propagates_without_retrigger",
-    "test_adapter_collect_returns_complete_router_outcome",
-    "test_adapter_migrates_slug_alias_without_changing_stable_identity",
-    "test_adapter_rejects_known_alias_returned_with_another_stable_id",
-    "test_collection_preserves_sources_and_counts_nonoriginals",
-    "test_conflicting_duplicate_collection_windows_fail_before_provider_io",
-    "test_decorated_capabilities_and_bootstrap_are_exact",
-    "test_empty_bootstrap_pool_reports_exhaustion_without_client_creation",
-    "test_equivalent_duplicate_collection_windows_deduplicate",
-    "test_identity_conflict_aborts_without_candidates_or_provider_text",
-    "test_identity_router_accepted_snapshot_failure_never_reroutes",
-    "test_identity_router_account_failure_never_rotates_credentials",
-    "test_identity_router_classified_failover_uses_each_instance_once",
-    "test_identity_router_known_alias_requires_zero_provider_io",
-    "test_inverted_collection_window_fails_typed_before_provider_io",
-    "test_known_alias_skips_identity_call_and_can_collect_zero_posts",
-    "test_locator_discovery_accepted_snapshot_is_terminal_one_shot",
-    "test_locator_discovery_alias_canonicalization_remains_stable",
-    "test_locator_discovery_conflict_cross_owner_aborts_atomically",
-    "test_locator_discovery_conflict_new_account_id_aborts_whole_batch",
-    "test_locator_discovery_malformed_actor_aborts_without_provider_text",
-    "test_locator_discovery_mixed_ids_abort_atomically",
-    "test_locator_discovery_no_identity_provider_result_is_unresolved",
-    "test_locator_discovery_no_identity_returns_unresolved_without_records",
-    "test_locator_discovery_numeric_collects_posts_without_identity_io",
-    "test_locator_discovery_numeric_company_uses_company_posts_only",
-    "test_locator_discovery_provider_failure_category_mapping",
-    "test_mixed_returned_account_aborts_without_partial_batch",
-    "test_person_and_company_identity_use_only_stable_numeric_ids",
-    "test_public_runtime_preserves_source_records_and_skips_through_router",
-    "test_public_runtime_routes_identity_through_existing_instance_pool",
-    "test_router_preserves_each_account_collection_window",
-    "test_schema_failure_maps_to_abort_without_diagnostics_canaries",
-    "test_unknown_non_numeric_identity_is_unresolved_and_unpersisted",
-)
-
-test_decorated_capabilities_and_bootstrap_are_exact = (
-    identity.test_decorated_capabilities_and_bootstrap_are_exact
-)
-test_person_and_company_identity_use_only_stable_numeric_ids = (
-    identity.test_person_and_company_identity_use_only_stable_numeric_ids
-)
-test_unknown_non_numeric_identity_is_unresolved_and_unpersisted = (
-    identity.test_unknown_non_numeric_identity_is_unresolved_and_unpersisted
-)
-test_adapter_migrates_slug_alias_without_changing_stable_identity = (
-    identity.test_adapter_migrates_slug_alias_without_changing_stable_identity
-)
-test_adapter_rejects_known_alias_returned_with_another_stable_id = (
-    identity.test_adapter_rejects_known_alias_returned_with_another_stable_id
-)
-test_known_alias_skips_identity_call_and_can_collect_zero_posts = (
-    identity.test_known_alias_skips_identity_call_and_can_collect_zero_posts
-)
-test_locator_discovery_numeric_collects_posts_without_identity_io = (
-    discovery_basics.test_locator_discovery_numeric_collects_posts_without_identity_io
-)
-test_locator_discovery_numeric_company_uses_company_posts_only = (
-    discovery_basics.test_locator_discovery_numeric_company_uses_company_posts_only
-)
-test_locator_discovery_alias_canonicalization_remains_stable = (
-    discovery_basics.test_locator_discovery_alias_canonicalization_remains_stable
-)
-test_locator_discovery_no_identity_returns_unresolved_without_records = _a
-test_locator_discovery_accepted_snapshot_is_terminal_one_shot = (
-    discovery_basics.test_locator_discovery_accepted_snapshot_is_terminal_one_shot
-)
-test_locator_discovery_mixed_ids_abort_atomically = (
-    discovery_failures.test_locator_discovery_mixed_ids_abort_atomically
-)
-test_locator_discovery_malformed_actor_aborts_without_provider_text = _b
-test_locator_discovery_conflict_cross_owner_aborts_atomically = (
-    discovery_failures.test_locator_discovery_conflict_cross_owner_aborts_atomically
-)
-test_locator_discovery_conflict_new_account_id_aborts_whole_batch = (
-    discovery_failures.test_locator_discovery_conflict_new_account_id_aborts_whole_batch
-)
-test_locator_discovery_provider_failure_category_mapping = (
-    discovery_failures.test_locator_discovery_provider_failure_category_mapping
-)
-test_locator_discovery_no_identity_provider_result_is_unresolved = (
-    discovery_failures.test_locator_discovery_no_identity_provider_result_is_unresolved
+test_adapter_declares_only_normal_posts_operation = (
+    collection.test_adapter_declares_only_normal_posts_operation
 )
 test_collection_preserves_sources_and_counts_nonoriginals = (
     collection.test_collection_preserves_sources_and_counts_nonoriginals
@@ -120,26 +25,8 @@ test_schema_failure_maps_to_abort_without_diagnostics_canaries = (
 test_empty_bootstrap_pool_reports_exhaustion_without_client_creation = (
     router_basics.test_empty_bootstrap_pool_reports_exhaustion_without_client_creation
 )
-test_public_runtime_routes_identity_through_existing_instance_pool = (
-    router_basics.test_public_runtime_routes_identity_through_existing_instance_pool
-)
 test_public_runtime_preserves_source_records_and_skips_through_router = (
     router_basics.test_public_runtime_preserves_source_records_and_skips_through_router
-)
-test_identity_router_known_alias_requires_zero_provider_io = (
-    router_basics.test_identity_router_known_alias_requires_zero_provider_io
-)
-test_identity_router_classified_failover_uses_each_instance_once = (
-    router_failures.test_identity_router_classified_failover_uses_each_instance_once
-)
-test_identity_router_account_failure_never_rotates_credentials = (
-    router_failures.test_identity_router_account_failure_never_rotates_credentials
-)
-test_identity_router_accepted_snapshot_failure_never_reroutes = (
-    router_failures.test_identity_router_accepted_snapshot_failure_never_reroutes
-)
-test_identity_conflict_aborts_without_candidates_or_provider_text = (
-    router_failures.test_identity_conflict_aborts_without_candidates_or_provider_text
 )
 test_router_preserves_each_account_collection_window = (
     router_windows.test_router_preserves_each_account_collection_window

@@ -29,13 +29,8 @@ from social_media_subscriber.application.results import (
     CollectionResult,
 )
 from social_media_subscriber.cli import create_app
-from social_media_subscriber.domain import (
-    Account,
-    AccountKind,
-    Platform,
-    PlatformAccountId,
-)
-from social_media_subscriber.domain.ids import account_id_for
+from social_media_subscriber.domain import Account, AccountKind, Platform
+from social_media_subscriber.domain.ids import AccountId
 from social_media_subscriber.providers.brightdata.adapter_error_mapping import (
     map_provider_error,
 )
@@ -79,16 +74,29 @@ class _SyntheticCliApplication:
 
 
 def _synthetic_account() -> Account:
-    platform_account_id = PlatformAccountId("12345")
     return Account(
-        id=account_id_for(AccountKind.PERSON, platform_account_id),
+        id=AccountId(_SYNTHETIC_PERSON_URL),
         platform=Platform.LINKEDIN,
         kind=AccountKind.PERSON,
-        platform_account_id=platform_account_id,
         profile_url=_SYNTHETIC_PERSON_URL,
-        url_aliases=(),
         first_seen_at=datetime(2026, 8, 21, tzinfo=UTC),
     )
+
+
+def test_account_contract_uses_only_schema_v2_canonical_url_identity() -> None:
+    # Given / When
+    account = _synthetic_account()
+    public_record = account.model_dump(mode="json")
+
+    # Then
+    assert public_record == {
+        "schema_version": 2,
+        "id": _SYNTHETIC_PERSON_URL,
+        "platform": "linkedin",
+        "kind": "person",
+        "profile_url": _SYNTHETIC_PERSON_URL,
+        "first_seen_at": "2026-08-21T00:00:00Z",
+    }
 
 
 def _synthetic_batch() -> AdapterBatch:

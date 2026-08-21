@@ -7,31 +7,22 @@ from typing import TYPE_CHECKING
 from social_media_subscriber.adapters.instance import (
     AcceptedSnapshotBatchFailure,
     AccountRejectionCategory,
-    AdapterPostLocatorAttempt,
     BatchCompleted,
-    IdentityBatchCompleted,
     InvalidCredentialBatchFailure,
-    LocatorPostsBatchCompleted,
     QuotaBatchFailure,
     RejectedAccount,
     RetryableBatchFailure,
     SchemaBatchFailure,
-    UnresolvedLocatorPosts,
 )
 from social_media_subscriber.providers.brightdata.errors import (
     BrightDataError,
     BrightDataErrorCategory,
-)
-from social_media_subscriber.providers.brightdata.normalization_outcomes import (
-    UnresolvedAccountIdentity,
 )
 
 if TYPE_CHECKING:
     from social_media_subscriber.adapters.instance import (
         AdapterAttempt,
         AdapterBatch,
-        AdapterIdentityAttempt,
-        AdapterPostLocatorBatch,
     )
 
 
@@ -56,63 +47,6 @@ def map_provider_error(batch: AdapterBatch, error: BrightDataError) -> AdapterAt
                 tuple(
                     RejectedAccount(account.id, AccountRejectionCategory.INVALID)
                     for account in batch.accounts
-                )
-            )
-        case BrightDataErrorCategory.RETRYABLE | BrightDataErrorCategory.TIMEOUT:
-            result = RetryableBatchFailure()
-        case (
-            BrightDataErrorCategory.SNAPSHOT_TIMEOUT
-            | BrightDataErrorCategory.SNAPSHOT_TERMINAL
-            | BrightDataErrorCategory.SCHEMA
-        ):
-            result = SchemaBatchFailure()
-    return result
-
-
-def map_identity_error(
-    locator_count: int,
-    error: BrightDataError,
-) -> AdapterIdentityAttempt:
-    """Classify a provider failure from identity resolution."""
-    if error.snapshot_accepted:
-        return AcceptedSnapshotBatchFailure()
-    match error.category:
-        case BrightDataErrorCategory.AUTH:
-            result: AdapterIdentityAttempt = InvalidCredentialBatchFailure()
-        case BrightDataErrorCategory.QUOTA:
-            result = QuotaBatchFailure()
-        case BrightDataErrorCategory.NOT_FOUND | BrightDataErrorCategory.INPUT:
-            result = IdentityBatchCompleted(
-                tuple(UnresolvedAccountIdentity() for _index in range(locator_count))
-            )
-        case BrightDataErrorCategory.RETRYABLE | BrightDataErrorCategory.TIMEOUT:
-            result = RetryableBatchFailure()
-        case (
-            BrightDataErrorCategory.SNAPSHOT_TIMEOUT
-            | BrightDataErrorCategory.SNAPSHOT_TERMINAL
-            | BrightDataErrorCategory.SCHEMA
-        ):
-            result = SchemaBatchFailure()
-    return result
-
-
-def map_locator_error(
-    batch: AdapterPostLocatorBatch,
-    error: BrightDataError,
-) -> AdapterPostLocatorAttempt:
-    """Classify a provider failure from locator Post discovery."""
-    if error.snapshot_accepted:
-        return AcceptedSnapshotBatchFailure()
-    match error.category:
-        case BrightDataErrorCategory.AUTH:
-            result: AdapterPostLocatorAttempt = InvalidCredentialBatchFailure()
-        case BrightDataErrorCategory.QUOTA:
-            result = QuotaBatchFailure()
-        case BrightDataErrorCategory.NOT_FOUND | BrightDataErrorCategory.INPUT:
-            result = LocatorPostsBatchCompleted(
-                tuple(
-                    UnresolvedLocatorPosts(request.locator)
-                    for request in batch.requests
                 )
             )
         case BrightDataErrorCategory.RETRYABLE | BrightDataErrorCategory.TIMEOUT:

@@ -4,6 +4,9 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import Final
 
+from social_media_subscriber import adapters
+from social_media_subscriber.providers import brightdata
+
 PROJECT_ROOT: Final = Path(__file__).parents[2]
 REQUIRED_TASKS: Final = frozenset(
     {
@@ -64,3 +67,31 @@ def test_basedpyright_resolves_the_pixi_default_environment() -> None:
     # Then
     assert '"venvPath": ".pixi/envs"' in pyright_config
     assert '"venv": "default"' in pyright_config
+
+
+def test_public_adapter_packages_expose_only_posts_contracts() -> None:
+    # Given / When
+    adapter_exports = frozenset(adapters.__all__)
+    brightdata_exports = frozenset(brightdata.__all__)
+
+    # Then
+    assert adapter_exports == {
+        "AdapterDriver",
+        "AdapterMetadata",
+        "AdapterOperation",
+        "AdapterRegistry",
+        "AdapterResolution",
+        "DuplicateAdapterDescriptorError",
+        "DuplicateAdapterDriverError",
+        "InvalidAdapterMetadataError",
+        "MetadataViolation",
+        "MissingAdapterMetadataError",
+        "ResolvedAdapterDrivers",
+        "UnsupportedAdapterCapability",
+        "adapter",
+    }
+    assert brightdata_exports == {
+        "BrightDataLinkedInPostSourceRecord",
+        "BrightDataPost",
+        "normalize_posts",
+    }

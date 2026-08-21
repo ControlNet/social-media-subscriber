@@ -23,7 +23,7 @@
   "title": "Explicitly synthetic title",
   "unknown_nested": {"future": [true, null, {"n": 3}]},
   "use_url": "https://www.linkedin.com/in/synthetic-ada/",
-  "user_id": "12345",
+  "user_id": "synthetic-provider-person",
   "url": "https://www.linkedin.com/posts/synthetic-ada_example-1001/?trk=synthetic#fragment",
   "videos": [{"url": "https://media.licdn.com/video/synthetic"}]
 }

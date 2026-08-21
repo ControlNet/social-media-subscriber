@@ -8,11 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from social_media_subscriber.domain.account import Account
-from social_media_subscriber.domain.ids import (
-    PlatformAccountId,
-    PostId,
-    record_filename,
-)
+from social_media_subscriber.domain.ids import PostId, record_filename
 from social_media_subscriber.domain.post import Post, StablePostContent
 from social_media_subscriber.domain.post_merge import (
     PostMergeConflictError,
@@ -48,9 +44,7 @@ def test_models_and_internal_stable_content_are_frozen() -> None:
 
     # When / Then
     with pytest.raises(ValidationError):
-        Account.__setattr__(
-            account_model, "platform_account_id", PlatformAccountId("9")
-        )
+        Account.__setattr__(account_model, "profile_url", "https://example.test/")
     with pytest.raises(FrozenInstanceError):
         StablePostContent.__setattr__(stable, "text", "changed")
 
@@ -133,23 +127,26 @@ def test_record_filename_is_safe_for_malicious_external_ids() -> None:
     assert filename[:-5] == filename[:-5].lower()
 
 
-test_account_normalizes_order_and_preserves_type_brands = (
-    account.test_account_normalizes_order_and_preserves_type_brands
+test_account_canonical_url_identity_is_the_profile_url = (
+    account.test_account_canonical_url_identity_is_the_profile_url
+)
+test_account_round_trip_preserves_schema_v2_url_identity = (
+    account.test_account_round_trip_preserves_schema_v2_url_identity
+)
+test_account_rejects_noncanonical_url_identity = (
+    account.test_account_rejects_noncanonical_url_identity
 )
 test_account_rejects_invalid_boundary_values = (
     account.test_account_rejects_invalid_boundary_values
 )
-test_account_id_constructor_rejects_non_ascii_numeric_platform_id = (
-    account.test_account_id_constructor_rejects_non_ascii_numeric_platform_id
+test_account_rejects_wrong_kind_url_identity = (
+    account.test_account_rejects_wrong_kind_url_identity
 )
-test_account_boundary_rejects_non_ascii_numeric_platform_id = (
-    account.test_account_boundary_rejects_non_ascii_numeric_platform_id
+test_account_rejects_mismatched_canonical_profile_url = (
+    account.test_account_rejects_mismatched_canonical_profile_url
 )
-test_account_boundary_rejects_unsafe_encoded_or_control_profile_url = (
-    account.test_account_boundary_rejects_unsafe_encoded_or_control_profile_url
-)
-test_account_boundary_error_representations_redact_invalid_id_input = (
-    account.test_account_boundary_error_representations_redact_invalid_id_input
+test_account_rejects_legacy_numeric_or_alias_identity = (
+    account.test_account_rejects_legacy_numeric_or_alias_identity
 )
 test_account_boundary_error_representations_redact_invalid_account_id = (
     account.test_account_boundary_error_representations_redact_invalid_account_id
@@ -175,8 +172,8 @@ test_stable_post_content_rejects_encoded_structural_canonical_url = (
 test_stable_post_content_rejects_encoded_structural_approved_link = (
     post.test_stable_post_content_rejects_encoded_structural_approved_link
 )
-test_post_accepts_canonical_ascii_numeric_account_id = (
-    post.test_post_accepts_canonical_ascii_numeric_account_id
+test_post_accepts_canonical_url_account_id = (
+    post.test_post_accepts_canonical_url_account_id
 )
 test_post_from_stable_rejects_malformed_account_id_before_hash = (
     post.test_post_from_stable_rejects_malformed_account_id_before_hash

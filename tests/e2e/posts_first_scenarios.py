@@ -3,9 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from social_media_subscriber.providers.brightdata.constants import (
-    COMPANY_IDENTITY_DATASET,
     LINKEDIN_POSTS_DATASET,
-    PERSON_IDENTITY_DATASET,
 )
 from social_media_subscriber.providers.brightdata.source_record import (
     BrightDataLinkedInPostSourceRecord,
@@ -52,7 +50,7 @@ def assert_unknown_profile_failover(tmp_path: Path) -> None:
         manifest.account_count,
         manifest.post_count,
         manifest.source_record_count,
-    ) == (1, 3, 4)
+    ) == (1, 3, 3)
     requests = server.scenario.requests
     assert [item.endpoint for item in requests] == [
         "trigger",
@@ -72,10 +70,6 @@ def assert_unknown_profile_failover(tmp_path: Path) -> None:
     ]
     assert {item.credential for item in requests} == {"revoked", "active"}
     assert {item.dataset for item in requests} == {LINKEDIN_POSTS_DATASET}
-    assert {
-        PERSON_IDENTITY_DATASET,
-        COMPANY_IDENTITY_DATASET,
-    }.isdisjoint(item.dataset for item in requests)
     assert server.scenario.trigger_calls == 4
     assert server.scenario.progress_calls == 1
     assert server.scenario.download_calls == 1
@@ -98,13 +92,14 @@ def assert_unknown_profile_failover(tmp_path: Path) -> None:
         for path, payload in snapshot_tree.items()
         if not path.startswith("source/")
     }
-    assert len(source) == 4
+    assert len(source) == 3
     assert len(list((candidate / "accounts").glob("*.json"))) == 1
     assert len(list((candidate / "posts/linkedin").glob("*.json"))) == 3
     source_records = [
         read_json(path, BrightDataLinkedInPostSourceRecord)
         for path in (candidate / "source").rglob("*.json")
     ]
+    assert all(record.account_id == PERSON_URL for record in source_records)
     assert all(
         record.payload.get("profile_url") == PERSON_URL for record in source_records
     )
@@ -125,13 +120,14 @@ def assert_unknown_profile_failover(tmp_path: Path) -> None:
     assert ACTIVE_VALUE not in result.output
 
 
-def assert_changed_slug_reconciles_same_numeric_account(tmp_path: Path) -> None:
+def assert_changed_slug_creates_distinct_url_account(tmp_path: Path) -> None:
     first = tmp_path / "first"
     renamed = tmp_path / "renamed"
     with FakeBrightDataServer() as initial_server:
         assert invoke_collect(initial_server, tmp_path / "absent", first).exit_code == 0
     server = FakeBrightDataServer()
     server.scenario.person_actor_url = CHANGED_PERSON_URL
+    server.scenario.person_result = PersonPostScenario.ZERO
 
     with server:
         result = invoke_collect(
@@ -145,11 +141,11 @@ def assert_changed_slug_reconciles_same_numeric_account(tmp_path: Path) -> None:
     state = SnapshotRepository(renamed).load_optional()
     assert result.exit_code == 0
     assert state is not None
-    assert len(state.accounts) == 1
-    assert state.accounts[0].platform_account_id == "101"
-    assert {PERSON_URL, CHANGED_PERSON_URL}.issubset(
-        {state.accounts[0].profile_url, *state.accounts[0].url_aliases}
+    assert tuple(account.id for account in state.accounts) == (
+        CHANGED_PERSON_URL,
+        PERSON_URL,
     )
+    assert all(account.id == account.profile_url for account in state.accounts)
     assert server.scenario.identity_calls == server.scenario.scrape_calls == 0
     assert [request.endpoint for request in server.scenario.requests] == [
         "trigger",
@@ -172,21 +168,23 @@ def assert_empty_candidate(tmp_path: Path, person_result: PersonPostScenario) ->
         )
 
     manifest = read_json(candidate / "snapshot.json", SnapshotManifest)
-    assert result.exit_code == 4
-    assert report(result)["failed_accounts"] == 1
-    assert report(result)["succeeded_accounts"] == 0
+    assert result.exit_code == 0
+    assert report(result)["failed_accounts"] == 0
+    assert report(result)["succeeded_accounts"] == 1
     assert (
         manifest.account_count,
         manifest.post_count,
         manifest.source_record_count,
-    ) == (0, 0, 0)
-    assert not list((candidate / "accounts").glob("*.json"))
+    ) == (1, 0, 0)
+    state = SnapshotRepository(candidate).load_optional()
+    assert state is not None
+    assert tuple(account.id for account in state.accounts) == (PERSON_URL,)
     assert not list((candidate / "posts/linkedin").glob("*.json"))
     assert not list((candidate / "source").rglob("*.json"))
     assert server.scenario.identity_calls == server.scenario.scrape_calls == 0
 
 
-def assert_empty_result_preserves_prior_tree(
+def assert_empty_result_adds_distinct_url_account(
     tmp_path: Path, person_result: PersonPostScenario
 ) -> None:
     baseline = tmp_path / "baseline"
@@ -195,7 +193,6 @@ def assert_empty_result_preserves_prior_tree(
         assert (
             invoke_collect(initial_server, tmp_path / "absent", baseline).exit_code == 0
         )
-    before = tree(baseline)
     server = FakeBrightDataServer()
     server.scenario.person_result = person_result
     server.scenario.person_actor_url = CHANGED_PERSON_URL
@@ -209,11 +206,15 @@ def assert_empty_result_preserves_prior_tree(
             credentials=ACTIVE_VALUE,
         )
 
-    assert result.exit_code == 4
-    assert report(result)["failed_accounts"] == 1
-    assert report(result)["succeeded_accounts"] == 0
-    assert SnapshotRepository(candidate).load_optional() is not None
-    assert tree(candidate) == before
+    assert result.exit_code == 0
+    assert report(result)["failed_accounts"] == 0
+    assert report(result)["succeeded_accounts"] == 1
+    state = SnapshotRepository(candidate).load_optional()
+    assert state is not None
+    assert tuple(account.id for account in state.accounts) == (
+        CHANGED_PERSON_URL,
+        PERSON_URL,
+    )
     assert server.scenario.identity_calls == server.scenario.scrape_calls == 0
     assert server.scenario.trigger_calls == 1
     assert server.scenario.progress_calls == 1

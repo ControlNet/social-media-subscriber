@@ -13,7 +13,7 @@ from tests.e2e.brightdata_server import (
     FakeBrightDataServer,
     PersonPostScenario,
 )
-from tests.e2e.pipeline_harness import invoke_collect, tree
+from tests.e2e.pipeline_harness import invoke_collect, report, tree
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -70,7 +70,15 @@ def assert_accepted_snapshot_and_ownership_failures_do_not_leak(tmp_path: Path) 
     assert not accepted.thread_alive
     assert not ownership.thread_alive
     assert unused.scenario.requests == []
-    combined = owned.output + conflict.output + malformed.output
+    assert report(owned)["failed_account_ids"] == [PERSON_URL]
+    assert report(conflict)["failed_account_ids"] == []
+    assert report(malformed)["failed_account_ids"] == []
+    combined = "\n".join(
+        line
+        for result in (owned, conflict, malformed)
+        for line in result.output.splitlines()
+        if not line.startswith("{")
+    )
     assert REVOKED_VALUE not in combined
     assert ACTIVE_VALUE not in combined
     assert MEDIA_CANARY not in combined

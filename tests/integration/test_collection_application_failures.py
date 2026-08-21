@@ -17,7 +17,6 @@ from social_media_subscriber.providers.brightdata.errors import (
     BrightDataErrorCategory,
 )
 from social_media_subscriber.storage.repository import SnapshotRepository
-from social_media_subscriber.storage.snapshot import SnapshotManifest, SnapshotState
 from tests.integration._collection_application_support import (
     COMPANY_URL,
     PERSON_URL,
@@ -36,65 +35,25 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.anyio
-async def test_mixed_known_unknown_validates_discovery_before_any_write(
+@pytest.mark.parametrize(
+    "posts",
+    [(), (post().model_copy(update={"post_type": "repost"}),)],
+    ids=("zero_records", "non_original_only"),
+)
+async def test_success_without_original_posts_persists_url_account(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    posts: tuple[BrightDataPost, ...],
 ) -> None:
-    # Given
-    _ = await run(request(tmp_path, settings(PERSON_URL)), (ApplicationClient(),))
-    _ = shutil.copytree(tmp_path / "candidate", tmp_path / "previous")
+    client = ApplicationClient(person_posts=posts)
 
-    def reject_write(
-        _repository: SnapshotRepository,
-        _state: SnapshotState,
-    ) -> SnapshotManifest:
-        reason = "candidate write occurred before discovery validation"
-        raise AssertionError(reason)
-
-    monkeypatch.setattr(SnapshotRepository, "write", reject_write)
-    invalid_company_post = post("company-1", actor_id="202").model_copy(
-        update={"user_id": None}
-    )
-    client = ApplicationClient(company_posts=(invalid_company_post,))
-
-    # When
-    result = await run(
-        request(
-            tmp_path,
-            settings(PERSON_URL, COMPANY_URL),
-            paths=("previous", "integrity"),
-        ),
-        (client,),
-    )
-
-    # Then
-    assert result.exit_code is CollectionExitCode.INTEGRITY
-    assert result.exit_code.value == 5
-    assert result.candidate_change is CandidateChange.ABSENT
-    assert not (tmp_path / "integrity").exists()
-    assert client.calls == [
-        ("person_posts", ((date(2026, 8, 15), date(2026, 8, 20)),)),
-        ("company_posts", ((date(2026, 8, 13), date(2026, 8, 20)),)),
-    ]
-
-
-@pytest.mark.anyio
-async def test_unknown_unresolved_new_account_is_partial_valid_candidate(
-    tmp_path: Path,
-) -> None:
-    # Given
-    client = ApplicationClient(person_posts=())
-
-    # When
     result = await run(request(tmp_path, settings(PERSON_URL)), (client,))
 
-    # Then
     state = SnapshotRepository(tmp_path / "candidate").load_optional()
-    assert result.exit_code is CollectionExitCode.PARTIAL
-    assert result.failed_accounts == 1
+    assert result.exit_code is CollectionExitCode.SUCCESS
+    assert result.failed_accounts == 0
     assert result.failed_account_ids == ()
     assert state is not None
-    assert state.accounts == ()
+    assert tuple(account.profile_url for account in state.accounts) == (PERSON_URL,)
     assert state.posts == ()
     assert state.source_records == ()
     assert client.calls == [("person_posts", ((date(2026, 8, 13), date(2026, 8, 20)),))]
@@ -102,54 +61,64 @@ async def test_unknown_unresolved_new_account_is_partial_valid_candidate(
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    "posts",
-    [
-        (),
-        (post().model_copy(update={"post_type": "repost"}),),
-    ],
-    ids=("zero", "nonoriginal"),
+    "category",
+    [BrightDataErrorCategory.INPUT, BrightDataErrorCategory.NOT_FOUND],
+    ids=("typed_input", "typed_not_found"),
 )
-async def test_unknown_zero_or_nonoriginal_is_partial_without_fabricated_identity(
-    tmp_path: Path,
-    posts: tuple[BrightDataPost, ...],
+async def test_typed_failure_does_not_create_new_url_account(
+    tmp_path: Path, category: BrightDataErrorCategory
 ) -> None:
-    # Given
-    client = ApplicationClient(person_posts=posts)
+    client = ApplicationClient(person_failure=BrightDataError(category))
 
-    # When
     result = await run(request(tmp_path, settings(PERSON_URL)), (client,))
 
-    # Then
     state = SnapshotRepository(tmp_path / "candidate").load_optional()
     assert result.exit_code is CollectionExitCode.PARTIAL
     assert result.failed_accounts == 1
-    assert result.failed_account_ids == ()
+    assert result.failed_account_ids == (PERSON_URL,)
     assert state is not None
-    assert state == SnapshotState((), (), ())
-    assert client.calls == [("person_posts", ((date(2026, 8, 13), date(2026, 8, 20)),))]
+    assert state.accounts == state.posts == state.source_records == ()
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    "failure",
-    [
-        BrightDataError(BrightDataErrorCategory.NOT_FOUND),
-        BrightDataError(BrightDataErrorCategory.RETRYABLE),
-    ],
+    "category",
+    [BrightDataErrorCategory.INPUT, BrightDataErrorCategory.NOT_FOUND],
+    ids=("typed_input", "typed_not_found"),
 )
-async def test_isolated_account_failure_preserves_history_and_merges_success(
-    tmp_path: Path, failure: BrightDataError
+async def test_typed_failure_preserves_existing_url_history(
+    tmp_path: Path, category: BrightDataErrorCategory
 ) -> None:
-    # Given
-    initial = ApplicationClient(company_posts=(post("company-1", actor_id="202"),))
+    _ = await run(request(tmp_path, settings(PERSON_URL)), (ApplicationClient(),))
+    _ = shutil.copytree(tmp_path / "candidate", tmp_path / "previous")
+    prior = tree(tmp_path / "previous")
+    client = ApplicationClient(person_failure=BrightDataError(category))
+
+    result = await run(
+        request(tmp_path, settings(PERSON_URL), paths=("previous", "failed")),
+        (client,),
+    )
+
+    assert result.exit_code is CollectionExitCode.PARTIAL
+    assert result.candidate_change is CandidateChange.UNCHANGED
+    assert result.failed_account_ids == (PERSON_URL,)
+    assert tree(tmp_path / "failed") == prior
+
+
+@pytest.mark.anyio
+async def test_isolated_failure_preserves_history_and_merges_success(
+    tmp_path: Path,
+) -> None:
+    initial = ApplicationClient(
+        company_posts=(post("company-1", actor_url=COMPANY_URL),)
+    )
     _ = await run(request(tmp_path, settings(PERSON_URL, COMPANY_URL)), (initial,))
     _ = shutil.copytree(tmp_path / "candidate", tmp_path / "previous")
     partial = ApplicationClient(
         person_posts=(post(text="Edited"),),
-        company_failure=failure,
+        company_failure=BrightDataError(BrightDataErrorCategory.NOT_FOUND),
     )
 
-    # When
     result = await run(
         request(
             tmp_path,
@@ -159,45 +128,18 @@ async def test_isolated_account_failure_preserves_history_and_merges_success(
         (partial,),
     )
 
-    # Then
     state = SnapshotRepository(tmp_path / "partial").load_optional()
     assert result.exit_code is CollectionExitCode.PARTIAL
     assert result.candidate_change is CandidateChange.CHANGED
-    assert result.failed_accounts == 1
+    assert result.failed_account_ids == (COMPANY_URL,)
     assert state is not None
     assert len(state.accounts) == len(state.posts) == 2
 
 
 @pytest.mark.anyio
-async def test_partial_failure_can_produce_unchanged_candidate(tmp_path: Path) -> None:
-    # Given
-    initial = ApplicationClient(company_posts=(post("company-1", actor_id="202"),))
-    _ = await run(request(tmp_path, settings(PERSON_URL, COMPANY_URL)), (initial,))
-    _ = shutil.copytree(tmp_path / "candidate", tmp_path / "previous")
-    prior = tree(tmp_path / "previous")
-    partial = ApplicationClient(
-        company_failure=BrightDataError(BrightDataErrorCategory.NOT_FOUND)
-    )
-
-    # When
-    result = await run(
-        request(
-            tmp_path,
-            settings(PERSON_URL, COMPANY_URL),
-            paths=("previous", "partial"),
-        ),
-        (partial,),
-    )
-
-    # Then
-    assert result.exit_code is CollectionExitCode.PARTIAL
-    assert result.candidate_change is CandidateChange.UNCHANGED
-    assert tree(tmp_path / "partial") == prior
-
-
-@pytest.mark.anyio
-async def test_total_pool_failure_writes_no_candidate(tmp_path: Path) -> None:
-    # Given
+async def test_total_pool_failure_writes_no_candidate_and_attributes_url(
+    tmp_path: Path,
+) -> None:
     clients = (
         ApplicationClient(
             person_failure=BrightDataError(BrightDataErrorCategory.QUOTA)
@@ -205,31 +147,26 @@ async def test_total_pool_failure_writes_no_candidate(tmp_path: Path) -> None:
         ApplicationClient(person_failure=BrightDataError(BrightDataErrorCategory.AUTH)),
     )
 
-    # When
     result = await run(
         request(tmp_path, settings(PERSON_URL, keys="synthetic-one\nsynthetic-two")),
         clients,
     )
 
-    # Then
     assert result.exit_code is CollectionExitCode.PROVIDER
     assert result.candidate_change is CandidateChange.ABSENT
+    assert result.failed_account_ids == (PERSON_URL,)
     assert not (tmp_path / "candidate").exists()
-    assert [call[0] for client in clients for call in client.calls] == [
-        "person_posts",
-        "person_posts",
-    ]
 
 
 @pytest.mark.anyio
 async def test_schema_abort_writes_no_candidate(tmp_path: Path) -> None:
-    # Given
-    invalid_post = post().model_copy(update={"user_id": None})
-    client = ApplicationClient(person_posts=(invalid_post,))
+    user_id_only = post().model_copy(update={"profile_url": None})
 
-    # When
-    result = await run(request(tmp_path, settings(PERSON_URL)), (client,))
+    result = await run(
+        request(tmp_path, settings(PERSON_URL)),
+        (ApplicationClient(person_posts=(user_id_only,)),),
+    )
 
-    # Then
     assert result.exit_code is CollectionExitCode.INTEGRITY
+    assert result.failed_account_ids == ()
     assert not (tmp_path / "candidate").exists()

@@ -1,94 +1,47 @@
 """Frozen canonical Account boundary contract."""
 
-import re
 from datetime import datetime
-from typing import Annotated, ClassVar, Final, Literal, Self, TypedDict, assert_never
-from urllib.parse import urlsplit
+from typing import Annotated, ClassVar, Final, Literal, Self, TypedDict
 
 from pydantic import (
     BaseModel,
     ConfigDict,
-    Field,
-    StringConstraints,
     WithJsonSchema,
     field_validator,
     model_validator,
 )
 from pydantic_core import PydanticCustomError
 
+from social_media_subscriber.accounts.errors import AccountInputError
+from social_media_subscriber.accounts.locator import parse_linkedin_locator
 from social_media_subscriber.domain.ids import (
     ACCOUNT_ID_PATTERN,
     AccountId,
-    PlatformAccountId,
-    account_id_for,
     is_canonical_account_id,
 )
 from social_media_subscriber.domain.platform import AccountKind, Platform
 from social_media_subscriber.domain.time import canonical_utc
 
-_PROFILE_PATH_PATTERN = re.compile(r"/(?:in|company)/[^/]+/\Z", re.ASCII)
-_UNSAFE_PROFILE_URL_PATTERN = re.compile(
-    r"(?:[\x00-\x1f\x7f\\]|%(?:[01][0-9a-f]|7f|2f|5c|2e))",
-    re.IGNORECASE,
-)
-_PROFILE_URL_SCHEMA_PATTERN: Final = (
-    r"^https://www\.linkedin\.com/(?:in|company)/"
-    r"(?!\.{1,2}/)(?![^/]*(?:\\|%(?:[01][0-9A-Fa-f]|7[fF]|2[fF]|5[cC]|2[eE])))"
-    r"[^/\x00-\x1f\x7f]+/$"
-)
+_CanonicalAccountId = Annotated[
+    AccountId,
+    WithJsonSchema({"type": "string", "pattern": ACCOUNT_ID_PATTERN}),
+]
 _CanonicalProfileUrl = Annotated[
     str,
-    StringConstraints(pattern=r"^https://www\.linkedin\.com/(?:in|company)/[^/]+/$"),
-    WithJsonSchema({"type": "string", "pattern": _PROFILE_URL_SCHEMA_PATTERN}),
-]
-_CanonicalPlatformAccountId = Annotated[
-    PlatformAccountId,
-    StringConstraints(pattern=r"^[0-9]+$"),
+    WithJsonSchema({"type": "string", "pattern": ACCOUNT_ID_PATTERN}),
 ]
 _PROFILE_URL_ERROR_CODE: Final = "canonical_profile_url"
 _PROFILE_URL_ERROR_MESSAGE: Final = (
     "value must be a canonical public LinkedIn profile URL"
 )
 _ACCOUNT_ID_ERROR_CODE: Final = "account_id_mismatch"
-_ACCOUNT_ID_ERROR_MESSAGE: Final = (
-    "account id does not match kind and platform account id"
-)
+_ACCOUNT_ID_ERROR_MESSAGE: Final = "account id must equal profile URL"
 _ACCOUNT_KIND_URL_ERROR_CODE: Final = "account_kind_url_mismatch"
-_ACCOUNT_KIND_URL_ERROR_MESSAGE: Final = (
-    "profile URL and aliases do not match account kind"
-)
+_ACCOUNT_KIND_URL_ERROR_MESSAGE: Final = "profile URL does not match account kind"
 
 
 class _AccountBoundaryInput(TypedDict, total=False):
     id: str | int | float | bool | None
-    platform_account_id: str | int | float | bool | None
-
-
-def _canonical_profile_url(value: str) -> str:
-    try:
-        parsed = urlsplit(value)
-        port = parsed.port
-    except ValueError:
-        port = -1
-        parsed = urlsplit("")
-    if (
-        _UNSAFE_PROFILE_URL_PATTERN.search(value) is not None
-        or parsed.scheme != "https"
-        or parsed.netloc != "www.linkedin.com"
-        or parsed.hostname != "www.linkedin.com"
-        or parsed.username is not None
-        or parsed.password is not None
-        or port is not None
-        or parsed.query
-        or parsed.fragment
-        or _PROFILE_PATH_PATTERN.fullmatch(parsed.path) is None
-        or any(segment in {".", ".."} for segment in parsed.path.split("/"))
-    ):
-        raise PydanticCustomError(
-            _PROFILE_URL_ERROR_CODE,
-            _PROFILE_URL_ERROR_MESSAGE,
-        )
-    return value
 
 
 class Account(BaseModel):
@@ -101,58 +54,41 @@ class Account(BaseModel):
         validate_default=True,
     )
 
-    schema_version: Literal[1] = 1
-    id: AccountId = Field(pattern=ACCOUNT_ID_PATTERN)
+    schema_version: Literal[2] = 2
+    id: _CanonicalAccountId
     platform: Literal[Platform.LINKEDIN]
     kind: AccountKind
-    platform_account_id: _CanonicalPlatformAccountId
     profile_url: _CanonicalProfileUrl
-    url_aliases: tuple[_CanonicalProfileUrl, ...] = Field(
-        json_schema_extra={"uniqueItems": True}
-    )
     first_seen_at: datetime
 
     @model_validator(mode="before")
     @classmethod
-    def redact_invalid_platform_identity(
+    def redact_invalid_identity(
         cls,
         values: _AccountBoundaryInput,
     ) -> _AccountBoundaryInput:
         """Replace malformed identity input before Pydantic renders errors."""
-        redacted = values.copy()
-        input_changed = False
-        match values.get("platform_account_id"):
-            case str() as platform_id if (
-                re.fullmatch(
-                    r"[0-9]+",
-                    platform_id,
-                    flags=re.ASCII,
-                )
-                is None
-            ):
-                redacted["platform_account_id"] = "<redacted>"
-                input_changed = True
-            case _:
-                pass
         match values.get("id"):
             case str() as account_id if not is_canonical_account_id(account_id):
+                redacted = values.copy()
                 redacted["id"] = "<redacted>"
-                input_changed = True
+                return redacted
             case _:
-                pass
-        return redacted if input_changed else values
+                return values
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str) -> AccountId:
+        """Require the Account ID to be an exact canonical LinkedIn URL."""
+        _ = _canonical_account_kind(value)
+        return AccountId(value)
 
     @field_validator("profile_url")
     @classmethod
     def validate_profile_url(cls, value: str) -> str:
-        """Reject non-canonical or unsafe profile URLs."""
-        return _canonical_profile_url(value)
-
-    @field_validator("url_aliases")
-    @classmethod
-    def normalize_url_aliases(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        """Validate, deduplicate, and sort all known canonical aliases."""
-        return tuple(sorted({_canonical_profile_url(value) for value in values}))
+        """Require the profile URL to be exact and canonical."""
+        _ = _canonical_account_kind(value)
+        return value
 
     @field_validator("first_seen_at")
     @classmethod
@@ -162,18 +98,13 @@ class Account(BaseModel):
 
     @model_validator(mode="after")
     def validate_identity(self) -> Self:
-        """Require the branded ID to match the stable platform identity."""
-        expected = account_id_for(self.kind, self.platform_account_id)
-        if self.id != expected:
+        """Require exact URL identity and Account kind agreement."""
+        if self.id != self.profile_url:
             raise PydanticCustomError(
                 _ACCOUNT_ID_ERROR_CODE,
                 _ACCOUNT_ID_ERROR_MESSAGE,
             )
-        expected_path = _account_kind_path(self.kind)
-        all_urls = (self.profile_url, *self.url_aliases)
-        if not all(
-            urlsplit(value).path.startswith(expected_path) for value in all_urls
-        ):
+        if _canonical_account_kind(self.id) is not self.kind:
             raise PydanticCustomError(
                 _ACCOUNT_KIND_URL_ERROR_CODE,
                 _ACCOUNT_KIND_URL_ERROR_MESSAGE,
@@ -181,10 +112,18 @@ class Account(BaseModel):
         return self
 
 
-def _account_kind_path(kind: AccountKind) -> str:
-    match kind:
-        case AccountKind.PERSON:
-            return "/in/"
-        case AccountKind.COMPANY:
-            return "/company/"
-    assert_never(kind)
+def _canonical_account_kind(value: str) -> AccountKind:
+    """Validate through the strict parser's canonicalization authority."""
+    try:
+        locator = parse_linkedin_locator(value)
+    except AccountInputError:
+        raise PydanticCustomError(
+            _PROFILE_URL_ERROR_CODE,
+            _PROFILE_URL_ERROR_MESSAGE,
+        ) from None
+    if locator.canonical_url != value:
+        raise PydanticCustomError(
+            _PROFILE_URL_ERROR_CODE,
+            _PROFILE_URL_ERROR_MESSAGE,
+        )
+    return locator.kind

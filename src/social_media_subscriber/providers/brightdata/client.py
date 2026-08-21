@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final, Self, TypedDict, final
+from typing import TYPE_CHECKING, Final, Self, final
 
 import anyio
 import httpx2
@@ -10,10 +10,8 @@ import structlog
 from pydantic import BaseModel, ValidationError
 
 from social_media_subscriber.providers.brightdata.constants import (
-    COMPANY_IDENTITY_DATASET,
     LINKEDIN_POSTS_DATASET,
     MAX_SYNC_BATCH_SIZE,
-    PERSON_IDENTITY_DATASET,
     SNAPSHOT_POLL_SECONDS,
     SNAPSHOT_TIMEOUT_SECONDS,
     STATUS_RETRY_DELAYS,
@@ -24,8 +22,6 @@ from social_media_subscriber.providers.brightdata.errors import (
     categorize_http_status,
 )
 from social_media_subscriber.providers.brightdata.models import (
-    BrightDataCompanyIdentity,
-    BrightDataPersonIdentity,
     BrightDataPost,
     BrightDataSnapshotEnvelope,
     BrightDataSnapshotId,
@@ -44,11 +40,6 @@ _LOGGER = structlog.stdlib.get_logger()
 _ACTIVE_SNAPSHOT_STATUSES: Final = frozenset({"building", "pending", "running"})
 _TERMINAL_SNAPSHOT_STATUSES: Final = frozenset({"canceled", "cancelled", "failed"})
 _DEFAULT_HTTP_CONFIG: Final = HttpClientConfig()
-
-
-class _ScrapeRequest(TypedDict):
-    input: list[dict[str, str]]
-    limit_per_input: None
 
 
 if TYPE_CHECKING:
@@ -92,28 +83,6 @@ class BrightDataClient:
         """Close the owned connection pool."""
         await self._http.aclose()
 
-    async def resolve_person_identities(
-        self, urls: Sequence[str]
-    ) -> tuple[BrightDataPersonIdentity, ...]:
-        """Resolve personal LinkedIn profile identities."""
-        return await self._scrape(
-            dataset=PERSON_IDENTITY_DATASET,
-            mode=None,
-            body=[{"url": url} for url in self._bounded(urls)],
-            item_type=BrightDataPersonIdentity,
-        )
-
-    async def resolve_company_identities(
-        self, urls: Sequence[str]
-    ) -> tuple[BrightDataCompanyIdentity, ...]:
-        """Resolve LinkedIn company identities."""
-        return await self._scrape(
-            dataset=COMPANY_IDENTITY_DATASET,
-            mode=None,
-            body=[{"url": url} for url in self._bounded(urls)],
-            item_type=BrightDataCompanyIdentity,
-        )
-
     async def collect_person_posts(
         self, inputs: Sequence[PostDiscoveryInput]
     ) -> tuple[BrightDataPost, ...]:
@@ -152,22 +121,17 @@ class BrightDataClient:
         self,
         *,
         dataset: str,
-        mode: str | None,
+        mode: str,
         body: list[dict[str, str]],
         item_type: type[ModelT],
     ) -> tuple[ModelT, ...]:
-        params = {"dataset_id": dataset}
-        if mode is None:
-            params.update({"notify": "false", "include_errors": "true"})
-            path, request = (
-                "/datasets/v3/scrape",
-                _ScrapeRequest(input=body, limit_per_input=None),
-            )
-        else:
-            params.update({"include_errors": "true"})
-            params.update({"type": "discover_new", "discover_by": mode})
-            path, request = "/datasets/v3/trigger", body
-        response = await self._request("POST", path, params, request)
+        params = {
+            "dataset_id": dataset,
+            "include_errors": "true",
+            "type": "discover_new",
+            "discover_by": mode,
+        }
+        response = await self._request("POST", "/datasets/v3/trigger", params, body)
         value = parse_response_content(response.content)
         if isinstance(value, list):
             return parse_items(value, item_type, snapshot_accepted=False)
@@ -181,7 +145,7 @@ class BrightDataClient:
             return parse_items([value], item_type, snapshot_accepted=False)
         await _LOGGER.ainfo(
             "provider.snapshot.accepted",
-            endpoint="scrape" if mode is None else "trigger",
+            endpoint="trigger",
             batch_count=len(body),
         )
         return await self._await_snapshot(envelope.snapshot_id, item_type)
@@ -232,7 +196,7 @@ class BrightDataClient:
         method: str,
         path: str,
         params: dict[str, str] | None,
-        body: _ScrapeRequest | None,
+        body: list[dict[str, str]] | None,
     ) -> httpx2.Response:
         try:
             return await self._request(method, path, params, body)
@@ -246,7 +210,7 @@ class BrightDataClient:
         method: str,
         path: str,
         params: dict[str, str] | None,
-        body: _ScrapeRequest | list[dict[str, str]] | None,
+        body: list[dict[str, str]] | None,
     ) -> httpx2.Response:
         for attempt in range(len(STATUS_RETRY_DELAYS) + 1):
             try:
@@ -266,7 +230,9 @@ class BrightDataClient:
                 _LOGGER.warning(
                     "provider.http.retry",
                     method=method,
-                    endpoint="scrape" if path == "/datasets/v3/scrape" else "snapshot",
+                    endpoint=(
+                        "trigger" if path == "/datasets/v3/trigger" else "snapshot"
+                    ),
                     status=response.status_code,
                     category=category,
                 )

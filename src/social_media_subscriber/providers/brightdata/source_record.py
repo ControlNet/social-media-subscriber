@@ -8,8 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_core import PydanticCustomError
 
 from social_media_subscriber.domain.ids import (
-    ACCOUNT_ID_PATTERN,
     AccountId,
+    CanonicalAccountId,
     ContentHash,
     PlatformPostId,
     post_id_for,
@@ -28,7 +28,7 @@ _HASH_MESSAGE: Final = "payload hash does not match the successful provider payl
 
 
 class BrightDataLinkedInPostSourceRecord(BaseModel):
-    """Schema-v1 source record whose identity is the canonical Post ID."""
+    """Schema-v2 source record whose owner is the canonical Account URL."""
 
     model_config: ClassVar[ConfigDict] = ConfigDict(
         extra="forbid",
@@ -38,11 +38,11 @@ class BrightDataLinkedInPostSourceRecord(BaseModel):
         validate_default=True,
     )
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     provider: Literal["brightdata"] = "brightdata"
     dataset_id: Literal["gd_lyy3tktm25m4avu764"] = BRIGHT_DATA_LINKEDIN_POST_DATASET_ID
     platform_post_id: PlatformPostId = Field(min_length=1)
-    account_id: AccountId = Field(pattern=ACCOUNT_ID_PATTERN)
+    account_id: CanonicalAccountId
     payload_sha256: ContentHash = Field(pattern=r"^[0-9a-f]{64}$")
     payload: dict[str, JsonValue]
 

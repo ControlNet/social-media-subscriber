@@ -42,11 +42,7 @@ def test_adapter_operation_contains_only_current_capabilities() -> None:
     values = tuple(operation.value for operation in AdapterOperation)
 
     # Then
-    assert values == (
-        "resolve_account_identity",
-        "collect_account_posts",
-        "discover_locator_posts",
-    )
+    assert values == ("collect_account_posts",)
 
 
 def test_adapter_package_import_does_not_read_environment_or_open_socket(
@@ -103,7 +99,7 @@ def test_decorator_attaches_one_immutable_metadata_value_to_class_and_instances(
     # When
     @adapter(
         platform=Platform.LINKEDIN,
-        operations=(AdapterOperation.RESOLVE_ACCOUNT_IDENTITY,),
+        operations=(AdapterOperation.COLLECT_ACCOUNT_POSTS,),
         account_kinds=(AccountKind.PERSON,),
         supports_batch=False,
     )
@@ -124,7 +120,7 @@ def test_decorator_attaches_one_immutable_metadata_value_to_class_and_instances(
     assert second.adapter_metadata is SyntheticDriver.adapter_metadata
     assert SyntheticDriver.adapter_metadata.platform is Platform.LINKEDIN
     assert SyntheticDriver.adapter_metadata.operations == (
-        AdapterOperation.RESOLVE_ACCOUNT_IDENTITY,
+        AdapterOperation.COLLECT_ACCOUNT_POSTS,
     )
     assert SyntheticDriver.adapter_metadata.account_kinds == (AccountKind.PERSON,)
     assert SyntheticDriver.adapter_metadata.supports_batch is False

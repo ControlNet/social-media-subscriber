@@ -6,7 +6,6 @@ from tests.integration.test_brightdata_adapter_support import (
     _NOW,
     AccountInput,
     AccountKind,
-    AdapterOperation,
     AdapterPostRequest,
     AdapterRequestError,
     AdapterRequestErrorCategory,
@@ -24,8 +23,8 @@ from tests.integration.test_brightdata_adapter_support import (
 @pytest.mark.anyio
 async def test_router_preserves_each_account_collection_window() -> None:
     # Given
-    person = _account(AccountKind.PERSON, "101", "person")
-    company = _account(AccountKind.COMPANY, "202", "company")
+    person = _account(AccountKind.PERSON, "person")
+    company = _account(AccountKind.COMPANY, "company")
     client = SyntheticBrightDataClient()
     runtime = bootstrap_runtime(
         AccountInput(
@@ -44,7 +43,7 @@ async def test_router_preserves_each_account_collection_window() -> None:
     )
 
     # When
-    _ = await runtime.router.route(requests, AdapterOperation.COLLECT_ACCOUNT_POSTS)
+    _ = await runtime.router.route(requests)
 
     # Then
     assert [call.windows for call in client.calls] == [
@@ -58,7 +57,7 @@ async def test_conflicting_duplicate_collection_windows_fail_before_provider_io(
     None
 ):
     # Given
-    account = _account(AccountKind.PERSON, "101", "person")
+    account = _account(AccountKind.PERSON, "person")
     client = SyntheticBrightDataClient()
     runtime = bootstrap_runtime(
         AccountInput(
@@ -77,7 +76,6 @@ async def test_conflicting_duplicate_collection_windows_fail_before_provider_io(
     with pytest.raises(AdapterRequestError) as captured:
         _ = await runtime.router.route(
             requests,
-            AdapterOperation.COLLECT_ACCOUNT_POSTS,
         )
     assert client.calls == []
     assert captured.value.category is AdapterRequestErrorCategory.CONFLICTING_WINDOW
@@ -86,7 +84,7 @@ async def test_conflicting_duplicate_collection_windows_fail_before_provider_io(
 @pytest.mark.anyio
 async def test_equivalent_duplicate_collection_windows_deduplicate() -> None:
     # Given
-    account = _account(AccountKind.PERSON, "101", "person")
+    account = _account(AccountKind.PERSON, "person")
     client = SyntheticBrightDataClient()
     runtime = bootstrap_runtime(
         AccountInput(
@@ -105,7 +103,6 @@ async def test_equivalent_duplicate_collection_windows_deduplicate() -> None:
     # When
     result = await runtime.router.route(
         (request, request),
-        AdapterOperation.COLLECT_ACCOUNT_POSTS,
     )
 
     # Then
@@ -115,7 +112,7 @@ async def test_equivalent_duplicate_collection_windows_deduplicate() -> None:
 
 def test_inverted_collection_window_fails_typed_before_provider_io() -> None:
     # Given
-    account = _account(AccountKind.PERSON, "101", "person")
+    account = _account(AccountKind.PERSON, "person")
 
     # When / Then
     with pytest.raises(AdapterRequestError) as captured:

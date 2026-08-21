@@ -20,8 +20,7 @@ if TYPE_CHECKING:
 class SnapshotConflictCategory(StrEnum):
     """Closed integrity-conflict categories."""
 
-    ACCOUNT_OWNERSHIP = "account ownership"
-    ALIAS = "alias"
+    ACCOUNT = "account"
     POST = "post"
     POST_OWNERSHIP = "post ownership"
     POST_ACCOUNT = "post account"
@@ -45,45 +44,21 @@ class SnapshotConflictError(Exception):
 def _merge_accounts(
     previous: tuple[Account, ...], current: tuple[Account, ...]
 ) -> tuple[Account, ...]:
-    merged = {account.id: account for account in previous}
-    for candidate in sorted(
-        current,
-        key=lambda account: (account.id, account.profile_url, account.first_seen_at),
-    ):
+    merged: dict[AccountId, Account] = {}
+    for candidate in (*previous, *current):
         existing = merged.get(candidate.id)
         if existing is None:
             merged[candidate.id] = candidate
             continue
-        stable_existing = (
-            existing.platform,
-            existing.kind,
-            existing.platform_account_id,
-        )
-        stable_candidate = (
-            candidate.platform,
-            candidate.kind,
-            candidate.platform_account_id,
-        )
+        stable_existing = (existing.platform, existing.kind, existing.profile_url)
+        stable_candidate = (candidate.platform, candidate.kind, candidate.profile_url)
         if stable_existing != stable_candidate:
-            raise SnapshotConflictError(
-                SnapshotConflictCategory.ACCOUNT_OWNERSHIP, candidate.id
-            )
-        alias_values = {*existing.url_aliases, *candidate.url_aliases}
-        if candidate.profile_url != existing.profile_url:
-            alias_values.update((existing.profile_url, candidate.profile_url))
-        aliases = tuple(sorted(alias_values))
+            raise SnapshotConflictError(SnapshotConflictCategory.ACCOUNT, candidate.id)
         merged[candidate.id] = existing.model_copy(
             update={
-                "url_aliases": aliases,
-                "first_seen_at": min(existing.first_seen_at, candidate.first_seen_at),
+                "first_seen_at": min(existing.first_seen_at, candidate.first_seen_at)
             }
         )
-    owners: dict[str, AccountId] = {}
-    for account in merged.values():
-        for alias in (account.profile_url, *account.url_aliases):
-            owner = owners.setdefault(alias, account.id)
-            if owner != account.id:
-                raise SnapshotConflictError(SnapshotConflictCategory.ALIAS, alias)
     return tuple(sorted(merged.values(), key=lambda account: account.id))
 
 

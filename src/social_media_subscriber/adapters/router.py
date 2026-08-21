@@ -11,14 +11,11 @@ from social_media_subscriber.adapters.registry import (
     ResolvedAdapterDrivers,
     UnsupportedAdapterCapability,
 )
-from social_media_subscriber.adapters.router_discovery import DiscoveryRouter
-from social_media_subscriber.adapters.router_identity import IdentityRouter
 from social_media_subscriber.adapters.router_outcomes import (
     AccountRouteFailed,
     AccountRouteFailureCategory,
     RouterDiagnostic,
     RouterDiagnosticCategory,
-    RouterOperationError,
     RouterResult,
     RouterRunStatus,
 )
@@ -28,19 +25,12 @@ from social_media_subscriber.domain.platform import AccountKind, Platform
 if TYPE_CHECKING:
     from pydantic import SecretStr
 
-    from social_media_subscriber.accounts.locator import LinkedInLocator
     from social_media_subscriber.adapters.instance import (
         AdapterInstance,
         AdapterInstanceFactory,
-        AdapterPostLocatorRequest,
         AdapterPostRequest,
     )
     from social_media_subscriber.adapters.registry import AdapterRegistry
-    from social_media_subscriber.adapters.router_discovery_state import (
-        DiscoveryRouterResult,
-    )
-    from social_media_subscriber.adapters.router_outcomes import IdentityRouterResult
-    from social_media_subscriber.domain.account import Account
     from social_media_subscriber.domain.ids import AccountId
 
 _MAX_BATCH_SIZE: Final = 20
@@ -91,17 +81,8 @@ class Router:
     async def route(
         self,
         requests: tuple[AdapterPostRequest, ...],
-        operation: AdapterOperation,
     ) -> RouterResult:
         """Collect Accounts deterministically with health scoped to this call."""
-        match operation:
-            case AdapterOperation.COLLECT_ACCOUNT_POSTS:
-                pass
-            case (
-                AdapterOperation.RESOLVE_ACCOUNT_IDENTITY
-                | AdapterOperation.DISCOVER_LOCATOR_POSTS
-            ):
-                raise RouterOperationError(operation)
         unique_requests: dict[AccountId, AdapterPostRequest] = {}
         for request in requests:
             existing = unique_requests.get(request.account.id)
@@ -140,24 +121,6 @@ class Router:
             else RouterRunStatus.SUCCESS
         )
         return state.result(status, include_posts=True)
-
-    async def resolve_identities(
-        self,
-        locators: tuple[LinkedInLocator, ...],
-        known_accounts: tuple[Account, ...],
-    ) -> IdentityRouterResult:
-        """Resolve locators through the same credential-bound instance pool."""
-        return await IdentityRouter(
-            self._registry,
-            self._instances,
-        ).resolve(locators, known_accounts)
-
-    async def discover_posts(
-        self,
-        requests: tuple[AdapterPostLocatorRequest, ...],
-    ) -> DiscoveryRouterResult:
-        """Discover locator Posts through the shared credential-bound pool."""
-        return await DiscoveryRouter(self._registry, self._instances).discover(requests)
 
     def _compatible_instances(
         self,

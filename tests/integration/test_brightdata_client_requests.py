@@ -15,7 +15,6 @@ from structlog.testing import capture_logs
 
 from social_media_subscriber.providers.brightdata.client import BrightDataClient
 from social_media_subscriber.providers.brightdata.constants import (
-    COMPANY_IDENTITY_DATASET,
     LINKEDIN_POSTS_DATASET,
 )
 from social_media_subscriber.providers.brightdata.errors import (
@@ -110,7 +109,16 @@ def _post(identifier: str = "post-1") -> dict[str, JsonValue]:
         "post_type": "post",
         "url": f"https://www.linkedin.com/posts/{identifier}",
         "user_id": "12345",
+        "user_url": "https://www.linkedin.com/in/example/",
     }
+
+
+def _input() -> PostDiscoveryInput:
+    return PostDiscoveryInput(
+        url="https://www.linkedin.com/in/example/",
+        start_date=date(2026, 8, 19),
+        end_date=date(2026, 8, 20),
+    )
 
 
 @pytest.mark.anyio
@@ -167,25 +175,6 @@ async def test_company_posts_follow_owned_snapshot_to_ready_download() -> None:
 
 
 @pytest.mark.anyio
-async def test_company_identity_uses_company_dataset() -> None:
-    # Given
-    url = "https://www.linkedin.com/company/example/"
-    async with fake_server([(200, [{"company_id": "123", "url": url}])]) as (
-        state,
-        base_url,
-    ):
-        client = BrightDataClient("test-secret", HttpClientConfig(base_url=base_url))
-
-        # When
-        async with client:
-            result = await client.resolve_company_identities((url,))
-
-    # Then
-    assert result[0].company_id == "123"
-    assert f"dataset_id={COMPANY_IDENTITY_DATASET}" in state.requests[0].target
-
-
-@pytest.mark.anyio
 @pytest.mark.parametrize(
     "malicious_snapshot_id",
     [
@@ -230,9 +219,7 @@ async def test_snapshot_id_cannot_escape_fixed_provider_endpoints(
             # When
             async with client:
                 with pytest.raises(BrightDataError) as captured:
-                    _ = await client.resolve_person_identities(
-                        ("https://www.linkedin.com/in/example/",)
-                    )
+                    _ = await client.collect_person_posts((_input(),))
 
     # Then
     assert captured.value.category is BrightDataErrorCategory.SCHEMA
@@ -249,11 +236,7 @@ async def test_snapshot_id_cannot_escape_fixed_provider_endpoints(
 @pytest.mark.anyio
 async def test_person_posts_accept_jsonl_and_exact_trigger_contract() -> None:
     # Given
-    item = PostDiscoveryInput(
-        url="https://www.linkedin.com/in/example/",
-        start_date=date(2026, 8, 19),
-        end_date=date(2026, 8, 20),
-    )
+    item = _input()
     response = b"\n".join(
         json.dumps(_post(identifier)).encode() for identifier in ("post-1", "post-2")
     )
@@ -297,9 +280,7 @@ async def test_retryable_statuses_use_exact_bounded_backoff(status: int) -> None
         # When / Then
         async with client:
             with pytest.raises(BrightDataError) as captured:
-                _ = await client.resolve_person_identities(
-                    ("https://www.linkedin.com/in/example/",)
-                )
+                _ = await client.collect_person_posts((_input(),))
 
     assert captured.value.category is BrightDataErrorCategory.RETRYABLE
     assert sleeps == [1.0, 2.0]

@@ -9,6 +9,7 @@ from social_media_subscriber.application.results import (
     CollectionResult,
 )
 from social_media_subscriber.cli import create_app
+from social_media_subscriber.domain.ids import AccountId
 from tests.unit.test_cli import FakeApplication, json_report
 
 
@@ -171,3 +172,41 @@ def test_collect_preserves_application_exit_contract(
     # Then
     assert result.exit_code == int(exit_code)
     assert json_report(result.output)["candidate_change"] == candidate_change.value
+
+
+def test_collect_reports_canonical_failed_account_urls_with_exact_keys() -> None:
+    # Given
+    failed_url = "https://www.linkedin.com/in/synthetic-not-found/"
+    application = FakeApplication(
+        collection_result=CollectionResult(
+            CollectionExitCode.PARTIAL,
+            CandidateChange.UNCHANGED,
+            "d" * 64,
+            0,
+            1,
+            (AccountId(failed_url),),
+        )
+    )
+
+    # When
+    result = CliRunner().invoke(
+        create_app(application),
+        ["collect", "--previous-snapshot", "prior", "--output", "candidate"],
+        env={
+            "ACCOUNTS": failed_url,
+            "BRIGHT_DATA_API_KEYS": "canary-secret",
+        },
+    )
+
+    # Then
+    assert result.exit_code == int(CollectionExitCode.PARTIAL)
+    assert json_report(result.output) == {
+        "candidate_change": "unchanged",
+        "command": "collect",
+        "digest": "d" * 64,
+        "exit_code": 4,
+        "failed_account_ids": [failed_url],
+        "failed_accounts": 1,
+        "succeeded_accounts": 0,
+    }
+    assert "canary-secret" not in result.output

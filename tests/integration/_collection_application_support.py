@@ -10,11 +10,7 @@ from social_media_subscriber.application.collect import (
     CollectionRequest,
     collect_snapshot,
 )
-from social_media_subscriber.providers.brightdata.models import (
-    BrightDataCompanyIdentity,
-    BrightDataPersonIdentity,
-    BrightDataPost,
-)
+from social_media_subscriber.providers.brightdata.models import BrightDataPost
 from social_media_subscriber.settings import Settings
 
 if TYPE_CHECKING:
@@ -42,7 +38,8 @@ def settings(*urls: str, keys: str = "synthetic-key") -> Settings:
 def post(
     post_id: str = "activity-1",
     *,
-    actor_id: str = "101",
+    actor_url: str = PERSON_URL,
+    provider_user_id: str | None = "synthetic-provider-user",
     text: str = "Synthetic post",
     likes: int = 1,
 ) -> BrightDataPost:
@@ -52,7 +49,8 @@ def post(
             "date_posted": "2026-08-18T12:00:00+00:00",
             "post_type": "post",
             "url": f"https://www.linkedin.com/posts/{post_id}/",
-            "user_id": actor_id,
+            "profile_url": actor_url,
+            "user_id": provider_user_id,
             "post_text": text,
             "num_likes": likes,
         }
@@ -61,16 +59,6 @@ def post(
 
 @dataclass(slots=True)
 class ApplicationClient:
-    person_identity: BrightDataPersonIdentity | None = field(
-        default_factory=lambda: BrightDataPersonIdentity(
-            linkedin_num_id="101", url=PERSON_URL
-        )
-    )
-    company_identity: BrightDataCompanyIdentity | None = field(
-        default_factory=lambda: BrightDataCompanyIdentity(
-            company_id="202", url=COMPANY_URL
-        )
-    )
     person_posts: tuple[BrightDataPost, ...] = field(default_factory=lambda: (post(),))
     company_posts: tuple[BrightDataPost, ...] = ()
     person_failure: BrightDataError | None = None
@@ -80,24 +68,6 @@ class ApplicationClient:
 
     async def aclose(self) -> None:
         self.close_calls += 1
-
-    async def resolve_person_identities(
-        self, urls: Sequence[str]
-    ) -> tuple[BrightDataPersonIdentity, ...]:
-        _ = urls
-        self.calls.append(("person_identity", ()))
-        if self.person_failure is not None:
-            raise self.person_failure
-        return () if self.person_identity is None else (self.person_identity,)
-
-    async def resolve_company_identities(
-        self, urls: Sequence[str]
-    ) -> tuple[BrightDataCompanyIdentity, ...]:
-        _ = urls
-        self.calls.append(("company_identity", ()))
-        if self.company_failure is not None:
-            raise self.company_failure
-        return () if self.company_identity is None else (self.company_identity,)
 
     async def collect_person_posts(
         self, inputs: Sequence[PostDiscoveryInput]

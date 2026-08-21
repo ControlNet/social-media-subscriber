@@ -34,9 +34,7 @@ type BrightDataSnapshotId = Annotated[
 _POST_TIMESTAMP_ERROR: Final = "provider_post_timestamp"
 _POST_TIMESTAMP_MESSAGE: Final = "provider post timestamp must be timezone-aware UTC"
 _POST_ACTOR_ERROR: Final = "provider_post_actor"
-_POST_ACTOR_MESSAGE: Final = (
-    "provider post must contain an actor URL or stable actor ID"
-)
+_POST_ACTOR_MESSAGE: Final = "provider post must contain an actor URL"
 _JSON_OBJECT_ADAPTER: Final[TypeAdapter[dict[str, JsonValue]]] = TypeAdapter(
     dict[str, JsonValue],
     config=ConfigDict(strict=True),
@@ -87,20 +85,6 @@ class _BrightDataModel(BaseModel):
     def validate_recursive_json(cls, value: JsonValue) -> dict[str, JsonValue]:
         """Reject non-JSON values before open-ended provider fields are accepted."""
         return _JSON_OBJECT_ADAPTER.validate_python(value)
-
-
-class BrightDataPersonIdentity(_BrightDataModel):
-    """Personal profile lookup fields needed for canonical identity."""
-
-    linkedin_num_id: str | None = None
-    url: str | None = None
-
-
-class BrightDataCompanyIdentity(_BrightDataModel):
-    """Company lookup fields needed for canonical identity."""
-
-    company_id: str | None = None
-    url: str | None = None
 
 
 class BrightDataPost(_BrightDataModel):
@@ -156,9 +140,9 @@ class BrightDataPost(_BrightDataModel):
 
     @model_validator(mode="after")
     def validate_actor_reference(self) -> Self:
-        """Require enough provider identity to associate ownership without I/O."""
+        """Require at least one actor URL for later strict ownership validation."""
         actor_urls = (self.use_url, self.user_url, self.profile_url, self.company_url)
-        if self.user_id is None and not any(actor_urls):
+        if not any(actor_urls):
             raise PydanticCustomError(_POST_ACTOR_ERROR, _POST_ACTOR_MESSAGE)
         return self
 

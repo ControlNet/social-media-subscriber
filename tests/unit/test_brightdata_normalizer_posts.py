@@ -5,8 +5,6 @@ from pydantic import ValidationError
 
 from social_media_subscriber.domain import AccountKind
 from social_media_subscriber.providers.brightdata.models import (
-    BrightDataCompanyIdentity,
-    BrightDataPersonIdentity,
     BrightDataPost,
     BrightDataSnapshotEnvelope,
 )
@@ -14,15 +12,7 @@ from social_media_subscriber.providers.brightdata.normalization_errors import (
     BrightDataNormalizationError,
     BrightDataNormalizationErrorCategory,
 )
-from social_media_subscriber.providers.brightdata.normalization_outcomes import (
-    ResolvedAccountIdentity,
-    UnresolvedAccountIdentity,
-)
-from social_media_subscriber.providers.brightdata.normalize import (
-    normalize_posts,
-    resolve_company_identity,
-    resolve_person_identity,
-)
+from social_media_subscriber.providers.brightdata.normalize import normalize_posts
 from social_media_subscriber.providers.brightdata.source_record import (
     BrightDataLinkedInPostSourceRecord,
     source_record_path,
@@ -49,42 +39,6 @@ def test_provider_models_are_frozen_typed_and_drift_tolerant() -> None:
     assert envelope.snapshot_id == "synthetic-snapshot-1"
     with pytest.raises(ValidationError):
         post.id = "changed"
-
-
-def test_identity_resolution_uses_only_plan_approved_stable_ids() -> None:
-    # Given
-    person = BrightDataPersonIdentity(
-        linkedin_num_id="12345",
-        url="https://linkedin.com/in/synthetic-ada",
-    )
-    company = BrightDataCompanyIdentity(
-        company_id="67890",
-        url="https://uk.linkedin.com/company/synthetic-labs/",
-    )
-
-    # When
-    resolved_person = resolve_person_identity(
-        person,
-        "https://www.linkedin.com/in/synthetic-ada/",
-        FIRST_SEEN,
-    )
-    resolved_company = resolve_company_identity(
-        company,
-        "https://www.linkedin.com/company/synthetic-labs/",
-        FIRST_SEEN,
-    )
-    unresolved = resolve_person_identity(
-        BrightDataPersonIdentity(linkedin_num_id=None),
-        "https://www.linkedin.com/in/missing-id/",
-        FIRST_SEEN,
-    )
-
-    # Then
-    assert isinstance(resolved_person, ResolvedAccountIdentity)
-    assert resolved_person.account.id == "linkedin:person:12345"
-    assert isinstance(resolved_company, ResolvedAccountIdentity)
-    assert resolved_company.account.id == "linkedin:company:67890"
-    assert isinstance(unresolved, UnresolvedAccountIdentity)
 
 
 def test_original_records_preserve_complete_source_and_allowlist_canonical_fields() -> (
@@ -125,7 +79,7 @@ def test_original_records_preserve_complete_source_and_allowlist_canonical_field
         ("synthetic-person-unknown.json", "unknown"),
     ],
 )
-def test_non_original_kinds_are_preserved_and_counted(
+def test_non_original_kinds_are_skipped_without_persisting_source(
     fixture: str,
     skip_field: str,
 ) -> None:
@@ -136,7 +90,7 @@ def test_non_original_kinds_are_preserved_and_counted(
     result = normalize_posts(account(), (record,), FIRST_SEEN)
 
     # Then
-    assert len(result.source_records) == 1
+    assert result.source_records == ()
     assert result.posts == ()
     assert getattr(result.skipped, skip_field) == 1
     assert result.skipped.total == 1

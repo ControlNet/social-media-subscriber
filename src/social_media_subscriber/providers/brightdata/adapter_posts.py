@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, assert_never
 
-from social_media_subscriber.accounts.errors import AccountInputError
-from social_media_subscriber.accounts.locator import parse_linkedin_locator
 from social_media_subscriber.domain.platform import AccountKind
+from social_media_subscriber.providers.brightdata.actor_ownership import (
+    actor_account_id,
+)
 from social_media_subscriber.providers.brightdata.adapter_contracts import (
     BrightDataPostBatchResult,
     CollectedAccountPosts,
@@ -23,7 +24,6 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from social_media_subscriber.adapters.instance import AdapterPostRequest
-    from social_media_subscriber.domain.account import Account
     from social_media_subscriber.domain.ids import AccountId
     from social_media_subscriber.providers.brightdata.adapter_contracts import (
         BrightDataClientContract,
@@ -66,10 +66,13 @@ class BrightDataPostCollector:
             )
             records = await self._collect_kind(kind, inputs)
             for record in records:
-                owner = self._record_owner(
-                    tuple(item.account for item in selected), record
-                )
-                records_by_account[owner].append(record)
+                owner = actor_account_id(record, kind)
+                try:
+                    records_by_account[owner].append(record)
+                except KeyError:
+                    raise BrightDataNormalizationError(
+                        BrightDataNormalizationErrorCategory.OWNERSHIP
+                    ) from None
         outcomes: list[CollectedAccountPosts] = []
         for request in requests:
             normalized = normalize_posts(
@@ -98,40 +101,3 @@ class BrightDataPostCollector:
             case AccountKind.COMPANY:
                 return await self.client.collect_company_posts(inputs)
         assert_never(kind)
-
-    @staticmethod
-    def _record_owner(
-        accounts: tuple[Account, ...], record: BrightDataPost
-    ) -> AccountId:
-        candidates = accounts
-        if record.user_id is not None:
-            candidates = tuple(
-                account
-                for account in candidates
-                if account.platform_account_id == record.user_id
-            )
-        for actor_url in (
-            record.use_url,
-            record.user_url,
-            record.profile_url,
-            record.company_url,
-        ):
-            if actor_url is None:
-                continue
-            try:
-                locator = parse_linkedin_locator(actor_url)
-            except AccountInputError:
-                raise BrightDataNormalizationError(
-                    BrightDataNormalizationErrorCategory.OWNERSHIP
-                ) from None
-            candidates = tuple(
-                account
-                for account in candidates
-                if locator.kind is account.kind
-                and locator.canonical_url in (account.profile_url, *account.url_aliases)
-            )
-        if len(candidates) != 1:
-            raise BrightDataNormalizationError(
-                BrightDataNormalizationErrorCategory.OWNERSHIP
-            )
-        return candidates[0].id

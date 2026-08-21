@@ -1,13 +1,18 @@
-from social_media_subscriber.domain.account import Account
-from social_media_subscriber.domain.ids import (
-    AccountId,
-    ContentHash,
-    PlatformAccountId,
-    PlatformPostId,
-    PostId,
-)
-from social_media_subscriber.domain.platform import AccountKind, Platform
-from social_media_subscriber.domain.post import Post, PostKind
+from __future__ import annotations
+
+from importlib import import_module
+from typing import TYPE_CHECKING, Final, cast
+
+if TYPE_CHECKING:
+    from social_media_subscriber.domain.account import Account
+    from social_media_subscriber.domain.ids import (
+        AccountId,
+        ContentHash,
+        PlatformPostId,
+        PostId,
+    )
+    from social_media_subscriber.domain.platform import AccountKind, Platform
+    from social_media_subscriber.domain.post import Post, PostKind
 
 __all__ = [
     "Account",
@@ -15,9 +20,34 @@ __all__ = [
     "AccountKind",
     "ContentHash",
     "Platform",
-    "PlatformAccountId",
     "PlatformPostId",
     "Post",
     "PostId",
     "PostKind",
 ]
+
+_EXPORTS: Final = {
+    "Account": ("social_media_subscriber.domain.account", "Account"),
+    "AccountId": ("social_media_subscriber.domain.ids", "AccountId"),
+    "AccountKind": ("social_media_subscriber.domain.platform", "AccountKind"),
+    "ContentHash": ("social_media_subscriber.domain.ids", "ContentHash"),
+    "Platform": ("social_media_subscriber.domain.platform", "Platform"),
+    "PlatformPostId": (
+        "social_media_subscriber.domain.ids",
+        "PlatformPostId",
+    ),
+    "Post": ("social_media_subscriber.domain.post", "Post"),
+    "PostId": ("social_media_subscriber.domain.ids", "PostId"),
+    "PostKind": ("social_media_subscriber.domain.post", "PostKind"),
+}
+
+
+def __getattr__(name: str) -> object:
+    """Load public domain types without package initialization cycles."""
+    try:
+        module_name, attribute_name = _EXPORTS[name]
+    except KeyError as error:
+        raise AttributeError(name) from error
+    value = cast("object", getattr(import_module(module_name), attribute_name))
+    globals()[name] = value
+    return value

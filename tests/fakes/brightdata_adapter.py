@@ -4,20 +4,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from social_media_subscriber.domain.platform import AccountKind
-from social_media_subscriber.providers.brightdata.models import (
-    BrightDataCompanyIdentity,
-    BrightDataPersonIdentity,
-    BrightDataPost,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import date
 
+    from social_media_subscriber.providers.brightdata.models import BrightDataPost
     from social_media_subscriber.providers.brightdata.requests import PostDiscoveryInput
-
-
-type IdentityResult = BrightDataPersonIdentity | BrightDataCompanyIdentity
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,8 +23,6 @@ class AdapterClientCall:
 
 @dataclass(slots=True)
 class SyntheticBrightDataClient:
-    person_identities: tuple[BrightDataPersonIdentity, ...] = ()
-    company_identities: tuple[BrightDataCompanyIdentity, ...] = ()
     person_posts: tuple[BrightDataPost, ...] = ()
     company_posts: tuple[BrightDataPost, ...] = ()
     failure: BaseException | None = None
@@ -40,26 +31,6 @@ class SyntheticBrightDataClient:
 
     async def aclose(self) -> None:
         self.close_calls += 1
-
-    async def resolve_person_identities(
-        self, urls: Sequence[str]
-    ) -> tuple[BrightDataPersonIdentity, ...]:
-        self.calls.append(
-            AdapterClientCall("identity", AccountKind.PERSON, tuple(urls))
-        )
-        if self.failure is not None:
-            raise self.failure
-        return self.person_identities
-
-    async def resolve_company_identities(
-        self, urls: Sequence[str]
-    ) -> tuple[BrightDataCompanyIdentity, ...]:
-        self.calls.append(
-            AdapterClientCall("identity", AccountKind.COMPANY, tuple(urls))
-        )
-        if self.failure is not None:
-            raise self.failure
-        return self.company_identities
 
     async def collect_person_posts(
         self, inputs: Sequence[PostDiscoveryInput]

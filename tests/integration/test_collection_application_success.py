@@ -179,13 +179,15 @@ async def test_known_zero_posts_preserves_history(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_mixed_known_unknown_uses_incremental_and_discovery_windows(
+async def test_mixed_existing_and_new_urls_use_incremental_and_initial_windows(
     tmp_path: Path,
 ) -> None:
     # Given
     _ = await run(request(tmp_path, settings(PERSON_URL)), (ApplicationClient(),))
     _ = shutil.copytree(tmp_path / "candidate", tmp_path / "previous")
-    client = ApplicationClient(company_posts=(post("company-1", actor_id="202"),))
+    client = ApplicationClient(
+        company_posts=(post("company-1", actor_url=COMPANY_URL),)
+    )
 
     # When
     result = await run(
@@ -249,7 +251,9 @@ async def test_mixed_known_unknown_merges_and_writes_exactly_once(
 
     monkeypatch.setattr(collect_module, "merge_snapshot", track_merge)
     monkeypatch.setattr(SnapshotRepository, "write", track_write)
-    client = ApplicationClient(company_posts=(post("company-1", actor_id="202"),))
+    client = ApplicationClient(
+        company_posts=(post("company-1", actor_url=COMPANY_URL),)
+    )
 
     # When
     result = await run(

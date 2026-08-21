@@ -6,12 +6,11 @@ import re
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, ClassVar, Final, Literal, Self
+from typing import ClassVar, Final, Literal, Self
 from urllib.parse import parse_qsl, urlsplit
 
 from pydantic import (
     BaseModel,
-    BeforeValidator,
     ConfigDict,
     Field,
     field_validator,
@@ -20,14 +19,13 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from social_media_subscriber.domain.ids import (
-    ACCOUNT_ID_PATTERN,
     AccountId,
+    CanonicalAccountId,
     ContentHash,
     PlatformPostId,
     PostId,
     is_canonical_account_id,
     post_id_for,
-    redact_invalid_account_id,
 )
 from social_media_subscriber.domain.time import canonical_utc
 
@@ -48,14 +46,10 @@ _CONTENT_HASH_ERROR_CODE: Final = "content_hash_mismatch"
 _CONTENT_HASH_ERROR_MESSAGE: Final = "content hash does not match stable post fields"
 _ACCOUNT_ID_ERROR_CODE: Final = "canonical_account_id"
 _ACCOUNT_ID_ERROR_MESSAGE: Final = "value must be a canonical LinkedIn Account ID"
-_CanonicalAccountId = Annotated[
-    AccountId,
-    BeforeValidator(redact_invalid_account_id),
-]
 
 
 class PostKind(StrEnum):
-    """Canonical Post variants supported in schema version one."""
+    """Canonical Post variants supported in schema version two."""
 
     ORIGINAL = "original"
 
@@ -117,7 +111,7 @@ def _approved_link(value: str) -> str:
 class StablePostContent:
     """Fields whose canonical values determine a Post content hash."""
 
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     id: PostId
     platform_post_id: PlatformPostId
     account_id: AccountId
@@ -183,10 +177,10 @@ class Post(BaseModel):
         validate_default=True,
     )
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     id: PostId = Field(pattern=r"^linkedin:post:.+$")
     platform_post_id: PlatformPostId = Field(min_length=1)
-    account_id: _CanonicalAccountId = Field(pattern=ACCOUNT_ID_PATTERN)
+    account_id: CanonicalAccountId
     canonical_url: str
     published_at: datetime
     text: str | None

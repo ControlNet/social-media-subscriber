@@ -23,42 +23,39 @@ test_post_or_source_only_change_updates_candidate = (
 test_known_zero_posts_preserves_history = (
     success.test_known_zero_posts_preserves_history
 )
-test_mixed_known_unknown_uses_incremental_and_discovery_windows = (
-    success.test_mixed_known_unknown_uses_incremental_and_discovery_windows
+test_mixed_existing_and_new_urls_use_incremental_and_initial_windows = (
+    success.test_mixed_existing_and_new_urls_use_incremental_and_initial_windows
 )
 test_mixed_known_unknown_merges_and_writes_exactly_once = (
     success.test_mixed_known_unknown_merges_and_writes_exactly_once
 )
-test_mixed_known_unknown_validates_discovery_before_any_write = (
-    failures.test_mixed_known_unknown_validates_discovery_before_any_write
+test_success_without_original_posts_persists_url_account = (
+    failures.test_success_without_original_posts_persists_url_account
 )
-test_unknown_unresolved_new_account_is_partial_valid_candidate = (
-    failures.test_unknown_unresolved_new_account_is_partial_valid_candidate
+test_typed_failure_does_not_create_new_url_account = (
+    failures.test_typed_failure_does_not_create_new_url_account
 )
-test_unknown_zero_or_nonoriginal_is_partial_without_fabricated_identity = (
-    failures.test_unknown_zero_or_nonoriginal_is_partial_without_fabricated_identity
+test_typed_failure_preserves_existing_url_history = (
+    failures.test_typed_failure_preserves_existing_url_history
 )
-test_isolated_account_failure_preserves_history_and_merges_success = (
-    failures.test_isolated_account_failure_preserves_history_and_merges_success
+test_isolated_failure_preserves_history_and_merges_success = (
+    failures.test_isolated_failure_preserves_history_and_merges_success
 )
-test_partial_failure_can_produce_unchanged_candidate = (
-    failures.test_partial_failure_can_produce_unchanged_candidate
-)
-test_total_pool_failure_writes_no_candidate = (
-    failures.test_total_pool_failure_writes_no_candidate
+test_total_pool_failure_writes_no_candidate_and_attributes_url = (
+    failures.test_total_pool_failure_writes_no_candidate_and_attributes_url
 )
 test_schema_abort_writes_no_candidate = failures.test_schema_abort_writes_no_candidate
-test_same_numeric_changed_slug_preserves_alias_and_record_ownership = (
-    ownership.test_same_numeric_changed_slug_preserves_alias_and_record_ownership
+test_changed_slug_creates_distinct_url_accounts = (
+    ownership.test_changed_slug_creates_distinct_url_accounts
 )
-test_adversarial_discovery_abort_preserves_prior_snapshot_bytes = (
-    ownership.test_adversarial_discovery_abort_preserves_prior_snapshot_bytes
+test_actor_ownership_conflict_preserves_prior_snapshot_bytes = (
+    ownership.test_actor_ownership_conflict_preserves_prior_snapshot_bytes
 )
-test_prior_alias_conflict_aborts_before_candidate = (
-    ownership.test_prior_alias_conflict_aborts_before_candidate
+test_duplicate_post_claimed_by_two_url_owners_is_atomic = (
+    ownership.test_duplicate_post_claimed_by_two_url_owners_is_atomic
 )
-test_accepted_snapshot_failure_is_terminal_partial_without_reroute = (
-    ownership.test_accepted_snapshot_failure_is_terminal_partial_without_reroute
+test_accepted_snapshot_failure_is_terminal_without_reroute = (
+    ownership.test_accepted_snapshot_failure_is_terminal_without_reroute
 )
 test_corrupt_prior_and_invalid_override_are_preflight_failures = (
     preflight.test_corrupt_prior_and_invalid_override_are_preflight_failures

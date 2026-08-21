@@ -22,9 +22,6 @@ from social_media_subscriber.providers.brightdata import client as client_module
 from social_media_subscriber.providers.brightdata.adapter_contracts import (
     BrightDataAdapterConfig,
 )
-from social_media_subscriber.providers.brightdata.constants import (
-    PERSON_IDENTITY_DATASET,
-)
 from social_media_subscriber.providers.http import HttpClientConfig
 from social_media_subscriber.settings import Settings
 
@@ -89,18 +86,17 @@ def _request(
 
 
 def _success_handler(request: httpx2.Request) -> httpx2.Response:
-    if request.url.params.get("dataset_id") == PERSON_IDENTITY_DATASET:
-        payload = [{"linkedin_num_id": "101", "url": _PERSON_URL}]
-    else:
-        payload = [
-            {
-                "id": "activity-1",
-                "date_posted": "2026-08-18T12:00:00+00:00",
-                "post_type": "post",
-                "url": "https://www.linkedin.com/posts/activity-1/",
-                "user_id": "101",
-            }
-        ]
+    _ = request
+    payload = [
+        {
+            "id": "activity-1",
+            "date_posted": "2026-08-18T12:00:00+00:00",
+            "post_type": "post",
+            "url": "https://www.linkedin.com/posts/activity-1/",
+            "user_id": "synthetic-provider-user",
+            "profile_url": _PERSON_URL,
+        }
+    ]
     return httpx2.Response(200, json=payload)
 
 
@@ -188,9 +184,7 @@ async def test_production_collection_closes_transport_once_on_success(
     assert len(transport_factory.clients) == 2
     assert all(client.is_closed for client in transport_factory.clients)
     assert [client.close_calls for client in transport_factory.clients] == [1, 1]
-    assert PERSON_IDENTITY_DATASET not in {
-        request.url.params.get("dataset_id") for request in requests
-    }
+    assert requests
 
 
 @pytest.mark.anyio

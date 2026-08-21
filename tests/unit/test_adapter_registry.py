@@ -22,7 +22,11 @@ from social_media_subscriber.adapters.registry_errors import (
     InvalidAdapterMetadataError,
     MissingAdapterMetadataError,
 )
+from social_media_subscriber.bootstrap import EXPLICIT_ADAPTER_REGISTRY
 from social_media_subscriber.domain.platform import AccountKind, Platform
+from social_media_subscriber.providers.brightdata.adapter import (
+    BrightDataLinkedInAdapter,
+)
 
 
 class _DeclaredAdapterDriver(AdapterDriver):
@@ -68,14 +72,14 @@ def test_registry_returns_typed_outcome_for_unsupported_capability() -> None:
     # Given
     @adapter(
         platform=Platform.LINKEDIN,
-        operations=(AdapterOperation.RESOLVE_ACCOUNT_IDENTITY,),
+        operations=(AdapterOperation.COLLECT_ACCOUNT_POSTS,),
         account_kinds=(AccountKind.PERSON,),
         supports_batch=False,
     )
-    class IdentityDriver(_DeclaredAdapterDriver):
+    class PersonPostsDriver(_DeclaredAdapterDriver):
         pass
 
-    registry = AdapterRegistry((IdentityDriver,))
+    registry = AdapterRegistry((PersonPostsDriver,))
 
     # When
     result = registry.resolve(
@@ -89,6 +93,32 @@ def test_registry_returns_typed_outcome_for_unsupported_capability() -> None:
     assert result.platform is Platform.LINKEDIN
     assert result.operation is AdapterOperation.COLLECT_ACCOUNT_POSTS
     assert result.account_kind is AccountKind.COMPANY
+
+
+def test_production_registry_exposes_only_posts_for_supported_kinds() -> None:
+    # Given
+    metadata = BrightDataLinkedInAdapter.adapter_metadata
+
+    # When
+    resolutions = tuple(
+        EXPLICIT_ADAPTER_REGISTRY.resolve(
+            platform=Platform.LINKEDIN,
+            operation=AdapterOperation.COLLECT_ACCOUNT_POSTS,
+            account_kind=account_kind,
+        )
+        for account_kind in (AccountKind.PERSON, AccountKind.COMPANY)
+    )
+
+    # Then
+    assert EXPLICIT_ADAPTER_REGISTRY.driver_classes == (BrightDataLinkedInAdapter,)
+    assert metadata.operations == (AdapterOperation.COLLECT_ACCOUNT_POSTS,)
+    assert metadata.account_kinds == (AccountKind.PERSON, AccountKind.COMPANY)
+    assert metadata.supports_batch is True
+    assert all(
+        isinstance(resolution, ResolvedAdapterDrivers)
+        and resolution.driver_classes == (BrightDataLinkedInAdapter,)
+        for resolution in resolutions
+    )
 
 
 def test_registry_rejects_undecorated_driver_before_instance_creation() -> None:

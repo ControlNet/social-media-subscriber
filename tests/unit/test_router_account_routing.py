@@ -4,7 +4,6 @@ __test__ = False
 
 import pytest
 
-from social_media_subscriber.adapters import AdapterOperation
 from social_media_subscriber.adapters.instance import AdapterInstanceOrdinal
 from social_media_subscriber.adapters.router_outcomes import (
     AccountRouteFailed,
@@ -22,7 +21,7 @@ async def test_empty_account_set_succeeds_without_provider_calls() -> None:
     router, factory = build_router(((),))
 
     # When
-    result = await router.route((), AdapterOperation.COLLECT_ACCOUNT_POSTS)
+    result = await router.route(())
 
     # Then
     assert result.aggregate.status is RouterRunStatus.SUCCESS
@@ -37,9 +36,7 @@ async def test_zero_instance_pool_returns_account_scoped_exhaustion() -> None:
     router, factory = build_router((), ())
 
     # When
-    result = await router.route(
-        build_post_requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
-    )
+    result = await router.route(build_post_requests((account,)))
 
     # Then
     assert result.accounts == (
@@ -59,9 +56,7 @@ async def test_batches_are_bounded_and_stably_distributed(size: int) -> None:
     router, factory = build_router(((), (), ()), ("key-a", "key-b", "key-c"))
 
     # When
-    result = await router.route(
-        build_post_requests(accounts), AdapterOperation.COLLECT_ACCOUNT_POSTS
-    )
+    result = await router.route(build_post_requests(accounts))
 
     # Then
     assert result.aggregate.status is RouterRunStatus.SUCCESS
@@ -86,7 +81,6 @@ async def test_person_and_company_batches_are_separate_and_stable() -> None:
     # When
     _ = await router.route(
         build_post_requests((*companies, *people)),
-        AdapterOperation.COLLECT_ACCOUNT_POSTS,
     )
 
     # Then

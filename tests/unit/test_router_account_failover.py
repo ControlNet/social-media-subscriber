@@ -4,7 +4,6 @@ __test__ = False
 
 import pytest
 
-from social_media_subscriber.adapters import AdapterOperation
 from social_media_subscriber.adapters.instance import (
     AccountRejectionCategory,
     BatchCompleted,
@@ -54,9 +53,7 @@ async def test_disabled_instance_fails_over_once_for_the_run(
     router, factory = build_router(((first_step,), (CompleteBatch(),)))
 
     # When
-    result = await router.route(
-        build_post_requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
-    )
+    result = await router.route(build_post_requests((account,)))
 
     # Then
     assert [call.ordinal for call in factory.calls] == [0, 1]
@@ -74,9 +71,7 @@ async def test_transient_pre_acceptance_failure_tries_each_instance_once() -> No
     )
 
     # When
-    result = await router.route(
-        build_post_requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
-    )
+    result = await router.route(build_post_requests((account,)))
 
     # Then
     assert [call.ordinal for call in factory.calls] == [0, 1]
@@ -95,9 +90,7 @@ async def test_invalid_account_result_never_rotates_credentials() -> None:
     router, factory = build_router(((rejected,), (CompleteBatch(),)))
 
     # When
-    result = await router.route(
-        build_post_requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
-    )
+    result = await router.route(build_post_requests((account,)))
 
     # Then
     assert [call.ordinal for call in factory.calls] == [0]
@@ -122,7 +115,6 @@ async def test_not_found_account_is_partial_without_credential_rotation() -> Non
     # When
     result = await router.route(
         build_post_requests((missing, found)),
-        AdapterOperation.COLLECT_ACCOUNT_POSTS,
     )
 
     # Then
@@ -146,9 +138,7 @@ async def test_schema_failure_aborts_without_failover_or_posts() -> None:
     router, factory = build_router(((SchemaBatchFailure(),), (CompleteBatch(),)))
 
     # When
-    result = await router.route(
-        build_post_requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
-    )
+    result = await router.route(build_post_requests((account,)))
 
     # Then
     assert [call.ordinal for call in factory.calls] == [0]
@@ -164,9 +154,7 @@ async def test_inconsistent_batch_identity_aborts_as_schema_corruption() -> None
     router, factory = build_router(((BatchCompleted(()),), (CompleteBatch(),)))
 
     # When
-    result = await router.route(
-        build_post_requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
-    )
+    result = await router.route(build_post_requests((account,)))
 
     # Then
     assert [call.ordinal for call in factory.calls] == [0]
@@ -183,12 +171,8 @@ async def test_health_is_fresh_for_each_route_call() -> None:
     )
 
     # When
-    first = await router.route(
-        build_post_requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
-    )
-    second = await router.route(
-        build_post_requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
-    )
+    first = await router.route(build_post_requests((account,)))
+    second = await router.route(build_post_requests((account,)))
 
     # Then
     assert [call.ordinal for call in factory.calls] == [0, 1, 0]

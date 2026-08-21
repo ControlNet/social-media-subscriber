@@ -9,12 +9,9 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from social_media_subscriber.adapters.instance import AdapterPostLocatorOutcome
     from social_media_subscriber.domain.ids import AccountId
     from social_media_subscriber.domain.post import Post
     from social_media_subscriber.providers.brightdata.models import (
-        BrightDataCompanyIdentity,
-        BrightDataPersonIdentity,
         BrightDataPost,
     )
     from social_media_subscriber.providers.brightdata.normalization_outcomes import (
@@ -31,18 +28,6 @@ class BrightDataClientContract(Protocol):
 
     async def aclose(self) -> None:
         """Close the credential-bound transport."""
-        ...
-
-    async def resolve_person_identities(
-        self, urls: Sequence[str]
-    ) -> tuple[BrightDataPersonIdentity, ...]:
-        """Resolve person records for canonical LinkedIn URLs."""
-        ...
-
-    async def resolve_company_identities(
-        self, urls: Sequence[str]
-    ) -> tuple[BrightDataCompanyIdentity, ...]:
-        """Resolve company records for canonical LinkedIn URLs."""
         ...
 
     async def collect_person_posts(
@@ -80,10 +65,3 @@ class BrightDataPostBatchResult:
     """Ordered complete results for every requested Account."""
 
     accounts: tuple[CollectedAccountPosts, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class BrightDataLocatorPostBatchResult:
-    """Ordered complete discovery outcomes for every requested locator."""
-
-    outcomes: tuple[AdapterPostLocatorOutcome, ...]

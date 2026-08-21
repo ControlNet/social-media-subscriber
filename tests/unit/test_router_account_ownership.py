@@ -4,7 +4,6 @@ __test__ = False
 
 import pytest
 
-from social_media_subscriber.adapters import AdapterOperation
 from social_media_subscriber.adapters.instance import (
     BatchCompleted,
     CollectedAccount,
@@ -33,9 +32,7 @@ async def test_duplicate_post_ids_are_idempotent_within_a_result() -> None:
     router, _factory = build_router(((CompleteBatch(((post, post),)),),))
 
     # When
-    result = await router.route(
-        build_post_requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
-    )
+    result = await router.route(build_post_requests((account,)))
 
     # Then
     assert result.posts == (post,)
@@ -61,9 +58,7 @@ async def test_equivalent_source_records_collapse_with_deterministic_skips() -> 
     router, _factory = build_router(((completed,),))
 
     # When
-    result = await router.route(
-        build_post_requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
-    )
+    result = await router.route(build_post_requests((account,)))
 
     # Then
     assert result.source_records == (source,)
@@ -90,9 +85,7 @@ async def test_differing_source_payload_aborts_and_suppresses_all_output() -> No
     router, _factory = build_router(((completed,),))
 
     # When
-    result = await router.route(
-        build_post_requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
-    )
+    result = await router.route(build_post_requests((account,)))
 
     # Then
     assert result.aggregate.status is RouterRunStatus.ABORTED
@@ -113,9 +106,7 @@ async def test_source_account_ownership_mismatch_aborts_without_output() -> None
     router, _factory = build_router(((completed,),))
 
     # When
-    result = await router.route(
-        build_post_requests((account,)), AdapterOperation.COLLECT_ACCOUNT_POSTS
-    )
+    result = await router.route(build_post_requests((account,)))
 
     # Then
     assert result.aggregate.status is RouterRunStatus.ABORTED

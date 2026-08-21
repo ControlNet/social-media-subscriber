@@ -15,14 +15,10 @@ if TYPE_CHECKING:
 
     from pydantic import SecretStr
 
-    from social_media_subscriber.accounts.locator import LinkedInLocator
     from social_media_subscriber.adapters.protocol import AdapterDriver
     from social_media_subscriber.domain.account import Account
     from social_media_subscriber.domain.ids import AccountId
     from social_media_subscriber.domain.post import Post
-    from social_media_subscriber.providers.brightdata.normalization_outcomes import (
-        AccountIdentityOutcome,
-    )
     from social_media_subscriber.providers.brightdata.source_record import (
         BrightDataLinkedInPostSourceRecord,
     )
@@ -44,7 +40,6 @@ class AdapterRequestErrorCategory(StrEnum):
 
     INVERTED_WINDOW = "inverted_window"
     CONFLICTING_WINDOW = "conflicting_window"
-    MIXED_LOCATOR_KIND = "mixed_locator_kind"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,20 +68,6 @@ class AdapterPostRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class AdapterPostLocatorRequest:
-    """Provider-neutral locator plus inclusive Posts discovery dates."""
-
-    locator: LinkedInLocator
-    start_date: date
-    end_date: date
-
-    def __post_init__(self) -> None:
-        """Reject inverted dates before an Adapter instance can run."""
-        if self.start_date > self.end_date:
-            raise AdapterRequestError(AdapterRequestErrorCategory.INVERTED_WINDOW)
-
-
-@dataclass(frozen=True, slots=True)
 class AdapterBatch:
     """One kind-homogeneous post-request batch bounded by the Router."""
 
@@ -96,68 +77,6 @@ class AdapterBatch:
     def accounts(self) -> tuple[Account, ...]:
         """Return ordered Accounts for result identity validation."""
         return tuple(request.account for request in self.requests)
-
-
-@dataclass(frozen=True, slots=True)
-class AdapterPostLocatorBatch:
-    """One kind-homogeneous deduplicated locator batch bounded by the Router."""
-
-    requests: tuple[AdapterPostLocatorRequest, ...]
-
-    def __post_init__(self) -> None:
-        """Canonicalize equivalent requests before provider I/O."""
-        if self.requests and any(
-            request.locator.kind is not self.requests[0].locator.kind
-            for request in self.requests
-        ):
-            raise AdapterRequestError(AdapterRequestErrorCategory.MIXED_LOCATOR_KIND)
-        unique_requests: dict[str, AdapterPostLocatorRequest] = {}
-        for request in self.requests:
-            existing = unique_requests.get(request.locator.canonical_url)
-            if existing is not None and (
-                existing.start_date != request.start_date
-                or existing.end_date != request.end_date
-            ):
-                raise AdapterRequestError(
-                    AdapterRequestErrorCategory.CONFLICTING_WINDOW
-                )
-            if existing is None:
-                unique_requests[request.locator.canonical_url] = request
-        object.__setattr__(self, "requests", tuple(unique_requests.values()))
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedLocatorPosts:
-    """One discovered locator with its resolved Account collection result."""
-
-    locator: LinkedInLocator
-    account: Account
-    collected: CollectedAccount
-
-
-@dataclass(frozen=True, slots=True)
-class UnresolvedLocatorPosts:
-    """One locator whose Posts cannot establish an Account."""
-
-    locator: LinkedInLocator
-
-
-type AdapterPostLocatorOutcome = ResolvedLocatorPosts | UnresolvedLocatorPosts
-
-
-@dataclass(frozen=True, slots=True)
-class LocatorPostsBatchCompleted:
-    """A fully classified Posts discovery response for every locator."""
-
-    outcomes: tuple[AdapterPostLocatorOutcome, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class AdapterIdentityBatch:
-    """One kind-homogeneous locator batch with immutable known identities."""
-
-    locators: tuple[LinkedInLocator, ...]
-    known_accounts: tuple[Account, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,13 +108,6 @@ class BatchCompleted:
 
 
 @dataclass(frozen=True, slots=True)
-class IdentityBatchCompleted:
-    """A fully classified identity response preserving locator order."""
-
-    outcomes: tuple[AccountIdentityOutcome, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class RetryableBatchFailure:
     """A transient pre-acceptance failure eligible for instance failover."""
 
@@ -212,7 +124,7 @@ class InvalidCredentialBatchFailure:
 
 @dataclass(frozen=True, slots=True)
 class SchemaBatchFailure:
-    """Provider schema or identity corruption requiring a run abort."""
+    """Provider schema or ownership corruption requiring a run abort."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,24 +134,6 @@ class AcceptedSnapshotBatchFailure:
 
 type AdapterAttempt = (
     BatchCompleted
-    | RetryableBatchFailure
-    | QuotaBatchFailure
-    | InvalidCredentialBatchFailure
-    | SchemaBatchFailure
-    | AcceptedSnapshotBatchFailure
-)
-
-type AdapterIdentityAttempt = (
-    IdentityBatchCompleted
-    | RetryableBatchFailure
-    | QuotaBatchFailure
-    | InvalidCredentialBatchFailure
-    | SchemaBatchFailure
-    | AcceptedSnapshotBatchFailure
-)
-
-type AdapterPostLocatorAttempt = (
-    LocatorPostsBatchCompleted
     | RetryableBatchFailure
     | QuotaBatchFailure
     | InvalidCredentialBatchFailure
@@ -260,20 +154,6 @@ class AdapterInstance(Protocol):
 
     async def collect(self, batch: AdapterBatch) -> AdapterAttempt:
         """Collect one bounded homogeneous batch after client-level retries."""
-        ...
-
-    async def discover_posts(
-        self,
-        batch: AdapterPostLocatorBatch,
-    ) -> AdapterPostLocatorAttempt:
-        """Discover Accounts and Posts for one bounded homogeneous locator batch."""
-        ...
-
-    async def resolve_identity(
-        self,
-        batch: AdapterIdentityBatch,
-    ) -> AdapterIdentityAttempt:
-        """Resolve one bounded homogeneous locator batch."""
         ...
 
 

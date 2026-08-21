@@ -70,9 +70,9 @@ UNSAFE_APPROVED_LINKS = [
     "https://example.com/?next=%7Fadmin",
 ]
 VALID_POST_ACCOUNT_IDS = [
-    AccountId("linkedin:person:0"),
-    AccountId("linkedin:person:123"),
-    AccountId("linkedin:company:456"),
+    AccountId("https://www.linkedin.com/in/synthetic-ada/"),
+    AccountId("https://www.linkedin.com/in/synthetic-grace/"),
+    AccountId("https://www.linkedin.com/company/synthetic-labs/"),
 ]
 INVALID_POST_ACCOUNT_IDS = [
     AccountId(""),
@@ -93,13 +93,16 @@ INVALID_POST_ACCOUNT_IDS = [
     AccountId("linkedin:group:123"),
     AccountId("urn:li:person:123"),
     AccountId("LinkedIn:person:123"),
+    AccountId("https://linkedin.com/in/synthetic-ada/"),
+    AccountId("https://www.linkedin.com/in/synthetic-ada"),
+    AccountId("https://www.linkedin.com/in/synthetic%2eada/"),
 ]
 
 
 def _stable_post(account_id: AccountId) -> StablePostContent:
     platform_post_id = PlatformPostId("urn:li:activity:123")
     return StablePostContent(
-        schema_version=1,
+        schema_version=2,
         id=post_id_for(platform_post_id),
         platform_post_id=platform_post_id,
         account_id=account_id,
@@ -137,6 +140,7 @@ def test_post_normalizes_stable_content_and_verifies_hash() -> None:
     ("field", "value"),
     [
         ("published_at", "2026-08-19T08:15:00"),
+        ("schema_version", 1),
         ("id", "linkedin:person:12345"),
         ("canonical_url", "https://evil.example/posts/123"),
         ("canonical_url", "https://www.linkedin.com/posts/example-123\n"),
@@ -246,7 +250,7 @@ def test_stable_post_content_rejects_encoded_structural_approved_link(
 
 
 @pytest.mark.parametrize("account_id", VALID_POST_ACCOUNT_IDS)
-def test_post_accepts_canonical_ascii_numeric_account_id(account_id: AccountId) -> None:
+def test_post_accepts_canonical_url_account_id(account_id: AccountId) -> None:
     # Given
     stable = _stable_post(account_id)
 

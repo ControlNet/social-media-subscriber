@@ -3,59 +3,51 @@
 from __future__ import annotations
 
 import hashlib
-import re
-from dataclasses import dataclass
-from typing import Final, NewType, assert_never, override
+from typing import Annotated, Final, NewType
 
-from social_media_subscriber.domain.platform import AccountKind
+from pydantic import BeforeValidator, Field, WithJsonSchema
+
+from social_media_subscriber.accounts.errors import AccountInputError
+from social_media_subscriber.accounts.locator import parse_linkedin_locator
 
 AccountId = NewType("AccountId", str)
 PostId = NewType("PostId", str)
-PlatformAccountId = NewType("PlatformAccountId", str)
 PlatformPostId = NewType("PlatformPostId", str)
 ContentHash = NewType("ContentHash", str)
-ACCOUNT_ID_PATTERN: Final = r"^linkedin:(?:person|company):[0-9]+$"
-_NUMERIC_PLATFORM_ID_PATTERN: Final = re.compile(r"[0-9]+", re.ASCII)
-_CANONICAL_ACCOUNT_ID_PATTERN: Final = re.compile(
-    r"linkedin:(?:person|company):[0-9]+",
-    re.ASCII,
+ACCOUNT_ID_PATTERN: Final = (
+    r"^https://www\.linkedin\.com/(?:in|company)/"
+    r"(?!\.{1,2}/)(?![^/]*(?:\\|%(?:[01][0-9A-Fa-f]|7[fF]|2[fF]|5[cC]|2[eE])))"
+    r"[^/\x00-\x1f\x7f]+/$"
+)
+_RUNTIME_ACCOUNT_ID_PATTERN: Final = (
+    r"^https://www\.linkedin\.com/(?:in|company)/[^/]+/$"
 )
 
 
-@dataclass(frozen=True, slots=True)
-class InvalidPlatformAccountIdError(ValueError):
-    """A LinkedIn Account identity is not a non-empty ASCII numeric ID."""
-
-    value_length: int
-
-    @override
-    def __str__(self) -> str:
-        """Describe the required grammar without echoing boundary input."""
-        return "platform account ID must contain only ASCII digits"
-
-
 def is_canonical_account_id(value: str) -> bool:
-    """Return whether a value follows the canonical LinkedIn Account ID grammar."""
-    return _CANONICAL_ACCOUNT_ID_PATTERN.fullmatch(value) is not None
+    """Return whether a value is an exact canonical LinkedIn Account URL."""
+    try:
+        locator = parse_linkedin_locator(value)
+    except AccountInputError:
+        return False
+    return locator.canonical_url == value
 
 
-def redact_invalid_account_id(value: str) -> str:
+def redact_invalid_account_id(value: object) -> object:
     """Replace malformed Account IDs before boundary error rendering."""
-    return value if is_canonical_account_id(value) else "<redacted>"
+    return (
+        value
+        if isinstance(value, str) and is_canonical_account_id(value)
+        else "<redacted>"
+    )
 
 
-def account_id_for(
-    kind: AccountKind, platform_account_id: PlatformAccountId
-) -> AccountId:
-    """Build the canonical LinkedIn Account ID for one stable provider identity."""
-    if _NUMERIC_PLATFORM_ID_PATTERN.fullmatch(platform_account_id) is None:
-        raise InvalidPlatformAccountIdError(value_length=len(platform_account_id))
-    match kind:
-        case AccountKind.PERSON:
-            return AccountId(f"linkedin:person:{platform_account_id}")
-        case AccountKind.COMPANY:
-            return AccountId(f"linkedin:company:{platform_account_id}")
-    assert_never(kind)
+CanonicalAccountId = Annotated[
+    AccountId,
+    BeforeValidator(redact_invalid_account_id),
+    Field(pattern=_RUNTIME_ACCOUNT_ID_PATTERN),
+    WithJsonSchema({"type": "string", "pattern": ACCOUNT_ID_PATTERN}),
+]
 
 
 def post_id_for(platform_post_id: PlatformPostId) -> PostId:

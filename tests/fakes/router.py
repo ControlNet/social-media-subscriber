@@ -12,23 +12,14 @@ from social_media_subscriber.adapters import (
 from social_media_subscriber.adapters.instance import (
     AdapterAttempt,
     AdapterBatch,
-    AdapterIdentityAttempt,
-    AdapterIdentityBatch,
     AdapterInstanceOrdinal,
-    AdapterPostLocatorAttempt,
-    AdapterPostLocatorBatch,
     BatchCompleted,
     CollectedAccount,
-    LocatorPostsBatchCompleted,
-    SchemaBatchFailure,
-    UnresolvedLocatorPosts,
 )
 from social_media_subscriber.domain.account import Account
 from social_media_subscriber.domain.ids import (
     AccountId,
-    PlatformAccountId,
     PlatformPostId,
-    account_id_for,
     post_id_for,
 )
 from social_media_subscriber.domain.platform import AccountKind, Platform
@@ -47,10 +38,7 @@ class DeclaredFakeDriver:
 
 @adapter(
     platform=Platform.LINKEDIN,
-    operations=(
-        AdapterOperation.COLLECT_ACCOUNT_POSTS,
-        AdapterOperation.DISCOVER_LOCATOR_POSTS,
-    ),
+    operations=(AdapterOperation.COLLECT_ACCOUNT_POSTS,),
     account_kinds=(AccountKind.PERSON, AccountKind.COMPANY),
     supports_batch=True,
 )
@@ -73,22 +61,13 @@ class RouterCall:
     kind: AccountKind
 
 
-@dataclass(frozen=True, slots=True)
-class LocatorRouterCall:
-    ordinal: AdapterInstanceOrdinal
-    locator_urls: tuple[str, ...]
-    kind: AccountKind
-
-
 @final
 @dataclass(slots=True)
 class ScriptedInstance:
     driver_class: type[AdapterDriver]
     ordinal: AdapterInstanceOrdinal
     steps: list[FakeStep]
-    locator_steps: list[AdapterPostLocatorAttempt]
     calls: list[RouterCall]
-    locator_calls: list[LocatorRouterCall]
     close_calls: int = 0
 
     async def aclose(self) -> None:
@@ -119,40 +98,12 @@ class ScriptedInstance:
             case _:
                 return step
 
-    async def discover_posts(
-        self,
-        batch: AdapterPostLocatorBatch,
-    ) -> AdapterPostLocatorAttempt:
-        """Record a discovery batch and return one complete scripted attempt."""
-        self.locator_calls.append(
-            LocatorRouterCall(
-                self.ordinal,
-                tuple(request.locator.canonical_url for request in batch.requests),
-                batch.requests[0].locator.kind,
-            )
-        )
-        if self.locator_steps:
-            return self.locator_steps.pop(0)
-        return LocatorPostsBatchCompleted(
-            tuple(UnresolvedLocatorPosts(request.locator) for request in batch.requests)
-        )
-
-    async def resolve_identity(
-        self,
-        batch: AdapterIdentityBatch,
-    ) -> AdapterIdentityAttempt:
-        """Reject identity use from the collection-only Router fake."""
-        _ = batch
-        return SchemaBatchFailure()
-
 
 @final
 @dataclass(slots=True)
 class ScriptedFactory:
     scripts: tuple[tuple[FakeStep, ...], ...]
-    locator_scripts: tuple[tuple[AdapterPostLocatorAttempt, ...], ...] = ()
     calls: list[RouterCall] = field(default_factory=list)
-    locator_calls: list[LocatorRouterCall] = field(default_factory=list)
     created_ordinals: list[AdapterInstanceOrdinal] = field(default_factory=list)
 
     def create(
@@ -163,29 +114,22 @@ class ScriptedFactory:
         _ = credential
         self.created_ordinals.append(ordinal)
         script = self.scripts[ordinal] if ordinal < len(self.scripts) else ()
-        locator_script = (
-            self.locator_scripts[ordinal] if ordinal < len(self.locator_scripts) else ()
-        )
         return ScriptedInstance(
             FakeDriver,
             ordinal,
             list(script),
-            list(locator_script),
             self.calls,
-            self.locator_calls,
         )
 
 
 def make_account(kind: AccountKind, number: int) -> Account:
-    platform_id = PlatformAccountId(str(number))
     path = "in" if kind is AccountKind.PERSON else "company"
+    profile_url = f"https://www.linkedin.com/{path}/synthetic-{number}/"
     return Account(
-        id=account_id_for(kind, platform_id),
+        id=AccountId(profile_url),
         platform=Platform.LINKEDIN,
         kind=kind,
-        platform_account_id=platform_id,
-        profile_url=f"https://www.linkedin.com/{path}/{number}/",
-        url_aliases=(),
+        profile_url=profile_url,
         first_seen_at=datetime(2026, 8, 20, tzinfo=UTC),
     )
 
@@ -194,7 +138,7 @@ def make_post(account_id: AccountId, number: int) -> Post:
     platform_post_id = PlatformPostId(f"activity-{number}")
     return Post.from_stable(
         StablePostContent(
-            schema_version=1,
+            schema_version=2,
             id=post_id_for(platform_post_id),
             platform_post_id=platform_post_id,
             account_id=account_id,
