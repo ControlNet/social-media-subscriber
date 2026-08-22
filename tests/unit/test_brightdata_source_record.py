@@ -169,6 +169,10 @@ def test_source_record_requires_explicit_version_and_provenance(field: str) -> N
         {"provider": {"responseAuthentication": {"value": _CANARY}}},
         {"provider": {"RESPONSE_AUTHENTICATION": {"value": _CANARY}}},
         {"provider": {"response-authentication": {"value": _CANARY}}},
+        {"provider": {"providerresponsepayload": {"value": _CANARY}}},
+        {"provider": {"requestmetadata": {"value": _CANARY}}},
+        {"provider": {"errordetails": {"value": _CANARY}}},
+        {"provider": {"token_count": _CANARY}},
         {"context": [{"client_secret": _CANARY}]},
     ],
 )
@@ -199,6 +203,12 @@ def test_source_record_preserves_ordinary_nested_provider_content(
             "request_count": 12,
             "response_rate": 0.95,
             "error_rate": 0.05,
+            "header_count": 4,
+            "cookie_count": 2,
+            "token_count": 8,
+            "bearer_count": 1,
+            "secret_count": 0,
+            "authentication_rate": 0.9,
         }
     }
     values = _source_values_with_payload(ordinary)

@@ -235,6 +235,10 @@ def test_repository_rejects_legacy_v1_records(tmp_path: Path, record_glob: str) 
         {"provider_metadata": {"responseAuthentication": {"value": SENSITIVE_CANARY}}},
         {"provider_metadata": {"RESPONSE_AUTHENTICATION": {"value": SENSITIVE_CANARY}}},
         {"provider_metadata": {"response-authentication": {"value": SENSITIVE_CANARY}}},
+        {"provider_metadata": {"providerresponsepayload": {"value": SENSITIVE_CANARY}}},
+        {"provider_metadata": {"requestmetadata": {"value": SENSITIVE_CANARY}}},
+        {"provider_metadata": {"errordetails": {"value": SENSITIVE_CANARY}}},
+        {"provider_metadata": {"token_count": SENSITIVE_CANARY}},
     ],
 )
 def test_repository_rejects_rehashed_sensitive_source_payload_without_canary_leak(

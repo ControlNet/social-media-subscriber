@@ -41,21 +41,27 @@ _TRANSPORT_FIELD_TOKENS: Final = frozenset(
 _TRANSPORT_CONTAINER_TOKENS: Final = frozenset(
     {"body", "context", "data", "details", "info", "metadata", "payload"}
 )
-_FIELD_TOKEN: Final = re.compile(r"[A-Z]+(?=[A-Z][a-z]|[0-9]|\Z)|[A-Z]?[a-z]+|[0-9]+")
+_METRIC_FIELD_SUFFIXES: Final = ("count", "rate")
+
+
+def _is_safe_metric_field(value: str, item: JsonValue) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", value.casefold())
+    return (
+        normalized.endswith(_METRIC_FIELD_SUFFIXES)
+        and isinstance(item, int | float)
+        and not isinstance(item, bool)
+    )
 
 
 def _is_forbidden_field_name(value: str) -> bool:
     normalized = re.sub(r"[^a-z0-9]", "", value.casefold())
-    tokens = frozenset(
-        match.group(0).casefold() for match in _FIELD_TOKEN.finditer(value)
-    )
     return (
         normalized in _FORBIDDEN_FIELD_NAMES
         or normalized.endswith("auth")
         or any(marker in normalized for marker in _FORBIDDEN_FIELD_MARKERS)
         or (
-            bool(tokens & _TRANSPORT_FIELD_TOKENS)
-            and bool(tokens & _TRANSPORT_CONTAINER_TOKENS)
+            any(token in normalized for token in _TRANSPORT_FIELD_TOKENS)
+            and any(token in normalized for token in _TRANSPORT_CONTAINER_TOKENS)
         )
     )
 
@@ -65,7 +71,8 @@ def contains_forbidden_field(value: JsonValue) -> bool:
     match value:
         case dict() as mapping:
             return any(
-                _is_forbidden_field_name(key) or contains_forbidden_field(item)
+                (not _is_safe_metric_field(key, item) and _is_forbidden_field_name(key))
+                or contains_forbidden_field(item)
                 for key, item in mapping.items()
             )
         case list() as values:

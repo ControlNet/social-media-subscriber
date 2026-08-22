@@ -45,6 +45,12 @@ def test_repository_preserves_rehashed_ordinary_source_metrics(tmp_path: Path) -
         "request_count": 12,
         "response_rate": 0.95,
         "error_rate": 0.05,
+        "header_count": 4,
+        "cookie_count": 2,
+        "token_count": 8,
+        "bearer_count": 1,
+        "secret_count": 0,
+        "authentication_rate": 0.9,
     }
     payload.update(ordinary)
     source["payload"] = payload

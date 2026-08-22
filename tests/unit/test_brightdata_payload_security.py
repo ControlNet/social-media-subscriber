@@ -93,6 +93,10 @@ def test_success_payload_rejects_normalized_sensitive_key_without_canary_leak(
         {"providerErrorInfo": {"value": _CANARY}},
         {"providerExceptionDetails": {"value": _CANARY}},
         {"providerSessionInfo": {"value": _CANARY}},
+        {"providerresponsepayload": {"value": _CANARY}},
+        {"requestmetadata": {"value": _CANARY}},
+        {"errordetails": {"value": _CANARY}},
+        {"token_count": _CANARY},
         {"transport": [{"Authorization": _CANARY}]},
         {"provider": {"client.secret": _CANARY}},
         {"provider": [{"API Key": _CANARY}]},
@@ -124,6 +128,12 @@ def test_success_payload_preserves_ordinary_nested_provider_content() -> None:
         "request_count": 12,
         "response_rate": 0.95,
         "error_rate": 0.05,
+        "header_count": 4,
+        "cookie_count": 2,
+        "token_count": 8,
+        "bearer_count": 1,
+        "secret_count": 0,
+        "authentication_rate": 0.9,
     }
     payload = _post_payload() | {"provider_details": ordinary_content}
 
