@@ -22,6 +22,9 @@ from social_media_subscriber.providers.brightdata.normalization_errors import (
     BrightDataNormalizationError,
     BrightDataNormalizationErrorCategory,
 )
+from social_media_subscriber.providers.brightdata.payload_security import (
+    contains_forbidden_field,
+)
 
 type JsonValue = (
     bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
@@ -40,13 +43,6 @@ _JSON_OBJECT_ADAPTER: Final[TypeAdapter[dict[str, JsonValue]]] = TypeAdapter(
     config=ConfigDict(strict=True),
 )
 _HASHTAGS_ADAPTER: Final[TypeAdapter[tuple[str, ...]]] = TypeAdapter(tuple[str, ...])
-_FORBIDDEN_POST_FIELDS: Final = frozenset(
-    """accessToken apiKey auth authorization clientSecret cookie cookies
-    credential credentials error errors headers httpHeaders password
-    rawBody rawResponse request requestHeader requestHeaders requestId requests
-    responseHeader responseHeaders secret secrets setCookie snapshotId
-    token""".casefold().split()
-)
 _FORBIDDEN_FIELD_ERROR: Final = "provider_post_forbidden_field"
 _FORBIDDEN_FIELD_MESSAGE: Final = "provider post contains non-persistable metadata"
 _LINKEDIN_HOST: Final = re.compile(
@@ -64,29 +60,10 @@ _TRACKING_QUERY_KEYS: Final = frozenset(
 )
 
 
-def _normalized_field_name(value: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", value.casefold())
-
-
-def _contains_forbidden_field(value: JsonValue) -> bool:
-    match value:
-        case dict() as mapping:
-            return any(
-                _normalized_field_name(key) in _FORBIDDEN_POST_FIELDS
-                or _contains_forbidden_field(item)
-                for key, item in mapping.items()
-            )
-        case list() as values:
-            return any(_contains_forbidden_field(item) for item in values)
-        case bool() | int() | float() | str() | None:
-            return False
-    assert_never(value)
-
-
 def validate_persistable_post_payload(value: JsonValue) -> dict[str, JsonValue]:
     """Return safe provider JSON or raise without reflecting rejected material."""
     payload = _JSON_OBJECT_ADAPTER.validate_python(value)
-    if _contains_forbidden_field(payload):
+    if contains_forbidden_field(payload):
         raise PydanticCustomError(_FORBIDDEN_FIELD_ERROR, _FORBIDDEN_FIELD_MESSAGE)
     return payload
 
