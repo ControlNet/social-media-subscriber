@@ -82,6 +82,14 @@ def _contains_forbidden_field(value: JsonValue) -> bool:
     assert_never(value)
 
 
+def validate_persistable_post_payload(value: JsonValue) -> dict[str, JsonValue]:
+    """Return safe provider JSON or raise without reflecting rejected material."""
+    payload = _JSON_OBJECT_ADAPTER.validate_python(value)
+    if _contains_forbidden_field(payload):
+        raise PydanticCustomError(_FORBIDDEN_FIELD_ERROR, _FORBIDDEN_FIELD_MESSAGE)
+    return payload
+
+
 class _BrightDataModel(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(
         extra="allow",
@@ -118,13 +126,7 @@ class BrightDataPost(_BrightDataModel):
     @classmethod
     def reject_non_persistable_metadata(cls, value: JsonValue) -> dict[str, JsonValue]:
         """Exclude transport, request, and error material from successful posts."""
-        payload = _JSON_OBJECT_ADAPTER.validate_python(value)
-        if _contains_forbidden_field(payload):
-            raise PydanticCustomError(
-                _FORBIDDEN_FIELD_ERROR,
-                _FORBIDDEN_FIELD_MESSAGE,
-            )
-        return payload
+        return validate_persistable_post_payload(value)
 
     @field_validator("hashtags", mode="before")
     @classmethod

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, override
 
 import pytest
 
+from social_media_subscriber.publishing import git as publishing_git
 from social_media_subscriber.publishing.git import (
     InvalidPublicationError,
     Published,
@@ -19,6 +21,7 @@ from social_media_subscriber.publishing.process import (
     run_git,
 )
 from social_media_subscriber.storage.repository import (
+    SnapshotIntegrityCategory,
     SnapshotIntegrityError,
     SnapshotRepository,
 )
@@ -32,9 +35,11 @@ from tests.integration.test_dist_publisher import (
     setup_repositories,
     snapshot,
 )
+from tests.unit.test_storage_repository import tree_bytes
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from social_media_subscriber.storage.safe_tree import DirectoryTree
+    from social_media_subscriber.storage.snapshot import SnapshotState
 
 
 def test_absent_lease_fails_when_dist_appeared_before_publication(
@@ -117,6 +122,57 @@ def test_corrupt_candidate_is_rejected_before_git_publication(tmp_path: Path) ->
     with pytest.raises(SnapshotIntegrityError):
         _ = publish_snapshot(request(source, candidate, "absent"))
     assert not remote_has_dist(remote)
+
+
+def test_candidate_root_replacement_after_validation_is_rejected_before_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, _ = setup_repositories(tmp_path)
+    candidate = tmp_path / "candidate"
+    validated = tmp_path / "validated-candidate"
+    outside = tmp_path / "outside"
+    snapshot(candidate)
+    candidate_bytes = tree_bytes(candidate)
+    outside.mkdir()
+    sentinel = outside / "sentinel.txt"
+    _ = sentinel.write_bytes(b"external sentinel")
+    original_read_bytes = Path.read_bytes
+    replaced = False
+    external_read = False
+
+    class ReplacingRepository(SnapshotRepository):
+        @override
+        def _load_tree(self, tree: DirectoryTree) -> SnapshotState:
+            nonlocal replaced
+            state = super()._load_tree(tree)
+            if not replaced:
+                replaced = True
+                _ = candidate.rename(validated)
+                candidate.symlink_to(outside, target_is_directory=True)
+            return state
+
+    def guarded_read_bytes(path: Path) -> bytes:
+        nonlocal external_read
+        if path == candidate / sentinel.name:
+            external_read = True
+            message = "publisher reopened the replaced snapshot path"
+            raise AssertionError(message)
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(publishing_git, "SnapshotRepository", ReplacingRepository)
+    monkeypatch.setattr(Path, "read_bytes", guarded_read_bytes)
+    runner = RecordingRunner()
+
+    with pytest.raises(SnapshotIntegrityError) as raised:
+        _ = publish_snapshot(request(source, candidate, "absent"), runner=runner)
+
+    assert raised.value.reason is SnapshotIntegrityCategory.UNSAFE_PATH
+    assert external_read is False
+    assert candidate.is_symlink()
+    assert original_read_bytes(sentinel) == b"external sentinel"
+    assert tree_bytes(validated) == candidate_bytes
+    assert runner.commands == []
+    assert [command for command in runner.commands if command[0] == "push"] == []
 
 
 @dataclass(slots=True)

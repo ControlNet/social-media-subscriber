@@ -26,17 +26,15 @@ from social_media_subscriber.publishing.process import (
     GitRunner,
     run_git,
 )
-from social_media_subscriber.serialization.json import read_json
-from social_media_subscriber.storage.layout import MANIFEST
 from social_media_subscriber.storage.repository import (
     SnapshotIntegrityCategory,
     SnapshotIntegrityError,
     SnapshotRepository,
 )
-from social_media_subscriber.storage.snapshot import SnapshotManifest
 
 if TYPE_CHECKING:
     from social_media_subscriber.application.results import CollectionResult
+    from social_media_subscriber.storage.snapshot import SnapshotManifest
 
 DIST_BRANCH = "dist"
 _DIST_REF = "refs/heads/dist"
@@ -82,10 +80,10 @@ class DefaultCliApplication:
 
     def verify(self, snapshot: Path) -> SnapshotManifest:
         """Load the complete tree before returning its manifest."""
-        state = SnapshotRepository(snapshot).load_optional()
-        if state is None:
+        validated = SnapshotRepository(snapshot).read_optional()
+        if validated is None:
             raise SnapshotIntegrityError(SnapshotIntegrityCategory.INVENTORY)
-        return read_json(snapshot / MANIFEST, SnapshotManifest)
+        return validated.manifest
 
     def publish(self, command: PublicationCommand) -> PublishResult:
         """Precheck and materialize the exact lease before publication."""

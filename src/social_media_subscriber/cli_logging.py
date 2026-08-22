@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
-import traceback
 from dataclasses import asdict, dataclass
-from typing import Final
+from enum import StrEnum
 
 from social_media_subscriber.publishing.git import (
     InvalidPublicationError,
@@ -20,61 +18,72 @@ from social_media_subscriber.publishing.process import (
 )
 from social_media_subscriber.storage.repository import SnapshotIntegrityError
 
-_URL: Final = re.compile(r"https?://[^\s\"']+")
-_REDACTED: Final = "[REDACTED]"
+
+class CliFailureCategory(StrEnum):
+    """Closed machine-readable terminal failure categories."""
+
+    PUBLICATION_INVALID = "publication_invalid"
+    STALE_LEASE = "stale_lease"
+    GIT_COMMAND = "git_command"
+    GIT_INTERRUPTED = "git_interrupted"
+    INTEGRITY = "integrity"
+    UNHANDLED = "unhandled"
 
 
 @dataclass(frozen=True, slots=True)
 class ErrorRecord:
-    """Stable error fields shared by developer and CI renderers."""
+    """Safe stable fields shared by developer and CI renderers."""
 
     event: str
-    error_type: str
-    category: str
+    category: CliFailureCategory
     message: str
-    stack: str
 
 
-def _category(error: Exception) -> str:
+def _category(error: Exception) -> CliFailureCategory:
     match error:
-        case InvalidPublicationError(category=category):
-            return category.value
+        case InvalidPublicationError():
+            return CliFailureCategory.PUBLICATION_INVALID
         case StalePublicationError():
-            return "stale_lease"
+            return CliFailureCategory.STALE_LEASE
         case GitCommandError():
-            return "git_command"
+            return CliFailureCategory.GIT_COMMAND
         case GitInterruptedError():
-            return "git_interrupted"
+            return CliFailureCategory.GIT_INTERRUPTED
         case SnapshotIntegrityError():
-            return "integrity"
+            return CliFailureCategory.INTEGRITY
         case _:
-            return "unhandled"
+            return CliFailureCategory.UNHANDLED
 
 
-def _redact(value: str) -> str:
-    sanitized = _URL.sub(_REDACTED, value)
-    for name in ("ACCOUNTS", "BRIGHT_DATA_API_KEYS"):
-        raw = os.environ.get(name, "")
-        for secret in (line.strip() for line in raw.splitlines()):
-            if secret:
-                sanitized = sanitized.replace(secret, _REDACTED)
-    return sanitized
+def _message(category: CliFailureCategory) -> str:
+    match category:
+        case CliFailureCategory.PUBLICATION_INVALID:
+            return "Publication input or snapshot is invalid"
+        case CliFailureCategory.STALE_LEASE:
+            return "Publication lease is stale"
+        case CliFailureCategory.GIT_COMMAND:
+            return "Publication command failed"
+        case CliFailureCategory.GIT_INTERRUPTED:
+            return "Publication command interrupted"
+        case CliFailureCategory.INTEGRITY:
+            return "Snapshot integrity validation failed"
+        case CliFailureCategory.UNHANDLED:
+            return "Unexpected internal failure"
 
 
 def log_exception(error: Exception) -> None:
-    """Render one redacted terminal failure with preserved exception context."""
+    """Render one terminal failure without consuming exception-owned data."""
+    category = _category(error)
     record = ErrorRecord(
         event="cli.failure",
-        error_type=type(error).__name__,
-        category=_category(error),
-        message=_redact(str(error)),
-        stack=_redact("".join(traceback.format_exception(error))),
+        category=category,
+        message=_message(category),
     )
     if os.environ.get("CI", "").lower() == "true":
         rendered = json.dumps(asdict(record), sort_keys=True, separators=(",", ":"))
     else:
         rendered = (
-            f"ERROR {record.event} type={record.error_type} "
-            f"category={record.category} message={record.message}\n{record.stack}"
+            f"ERROR {record.event} category={record.category.value} "
+            f"message={record.message}"
         )
     _ = sys.stderr.write(f"{rendered}\n")

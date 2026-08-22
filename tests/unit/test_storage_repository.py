@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -23,6 +24,7 @@ from social_media_subscriber.providers.brightdata.source_record import (
 from social_media_subscriber.serialization.json import (
     JsonBoundaryModel,
     canonical_json_bytes,
+    canonical_json_value_bytes,
 )
 from social_media_subscriber.storage.layout import MANIFEST, snapshot_digest
 from social_media_subscriber.storage.repository import (
@@ -36,6 +38,7 @@ if TYPE_CHECKING:
 
 NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
 ACCOUNT_URL = "https://www.linkedin.com/in/synthetic-ada/"
+SENSITIVE_CANARY = "EXPLICIT_NEGATIVE_TEST_CREDENTIAL_CANARY"
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 
 
@@ -84,6 +87,20 @@ def _tree(root: Path) -> dict[str, bytes]:
         for path in sorted(root.rglob("*"))
         if path.is_file()
     }
+
+
+def _refresh_manifest_digest(root: Path) -> None:
+    non_manifest = {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file() and path.relative_to(root) != MANIFEST
+    }
+    manifest = SnapshotManifest.model_validate_json((root / MANIFEST).read_bytes())
+    _ = (root / MANIFEST).write_bytes(
+        canonical_json_bytes(
+            manifest.model_copy(update={"digest": snapshot_digest(non_manifest)})
+        )
+    )
 
 
 def storage_state() -> SnapshotState:
@@ -169,20 +186,50 @@ def test_repository_rejects_legacy_v1_records(tmp_path: Path, record_glob: str) 
             }
         )
     _ = record.write_bytes(_JSON_OBJECT.dump_json(payload))
-    non_manifest = {
-        path.relative_to(root): path.read_bytes()
-        for path in root.rglob("*")
-        if path.is_file() and path.relative_to(root) != MANIFEST
-    }
-    manifest = SnapshotManifest.model_validate_json((root / MANIFEST).read_bytes())
-    _ = (root / MANIFEST).write_bytes(
-        canonical_json_bytes(
-            manifest.model_copy(update={"digest": snapshot_digest(non_manifest)})
-        )
-    )
+    _refresh_manifest_digest(root)
 
     with pytest.raises(SnapshotIntegrityError):
         _ = SnapshotRepository(root).load_optional()
+
+
+@pytest.mark.parametrize(
+    "payload_update",
+    [
+        {"snapshotId": SENSITIVE_CANARY},
+        {"provider_metadata": {"snapshot_id": SENSITIVE_CANARY}},
+        {
+            "provider_metadata": {
+                "request": {"headers": {"authorization": SENSITIVE_CANARY}}
+            }
+        },
+    ],
+)
+def test_repository_rejects_rehashed_sensitive_source_payload_without_canary_leak(
+    tmp_path: Path,
+    payload_update: dict[str, JsonValue],
+) -> None:
+    # Given
+    root = tmp_path / "dist"
+    _ = SnapshotRepository(root).write(_state())
+    record = next(root.glob("source/brightdata/linkedin/posts/*.json"))
+    source = _JSON_OBJECT.validate_json(record.read_bytes())
+    payload = _JSON_OBJECT.validate_python(source["payload"])
+    payload.update(payload_update)
+    source["payload"] = payload
+    source["payload_sha256"] = hashlib.sha256(
+        canonical_json_value_bytes(payload)
+    ).hexdigest()
+    _ = record.write_bytes(canonical_json_value_bytes(source))
+    _refresh_manifest_digest(root)
+
+    # When / Then
+    with pytest.raises(SnapshotIntegrityError) as captured:
+        _ = SnapshotRepository(root).load_optional()
+    diagnostic = f"{captured.value!s} {captured.value!r}"
+    assert SENSITIVE_CANARY not in diagnostic
+    assert "snapshot_id" not in diagnostic
+    assert "snapshotId" not in diagnostic
+    assert "authorization" not in diagnostic
 
 
 def test_failed_candidate_encoding_preserves_prior_bytes(tmp_path: Path) -> None:

@@ -47,6 +47,10 @@ from social_media_subscriber.storage.snapshot import (
     SnapshotManifest,
     SnapshotState,
 )
+from social_media_subscriber.storage.validated_snapshot import (
+    ValidatedSnapshot,
+    require_entry_identity,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -95,6 +99,11 @@ class SnapshotRepository:
 
     def load_optional(self) -> SnapshotState | None:
         """Load a fully validated snapshot or return None when absent."""
+        validated = self.read_optional()
+        return None if validated is None else validated.state
+
+    def read_optional(self) -> ValidatedSnapshot | None:
+        """Read one validated immutable tree through anchored descriptors."""
         try:
             with DirectoryAnchor.open(self._root, create_parent=False) as anchor:
                 identity = anchor.entry_identity()
@@ -102,7 +111,11 @@ class SnapshotRepository:
                     return None
                 anchor.verify_parent_path()
                 with anchor.open_entry(expected=identity) as root:
-                    return self._load_tree(read_directory_tree(root.descriptor))
+                    tree = read_directory_tree(root.descriptor)
+                    state = self._load_tree(tree)
+                    anchor.verify_parent_path()
+                    require_entry_identity(anchor, identity)
+                    return ValidatedSnapshot.from_files(state, tree.files)
         except FileNotFoundError:
             return None
         except UnsafePathError as error:
@@ -223,10 +236,7 @@ class SnapshotRepository:
             for account in state.accounts
         }
         files.update(
-            (
-                POSTS_DIRECTORY / record_filename(post.id),
-                self._encoder(post),
-            )
+            (POSTS_DIRECTORY / record_filename(post.id), self._encoder(post))
             for post in state.posts
         )
         files.update(

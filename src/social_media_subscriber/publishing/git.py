@@ -98,14 +98,10 @@ def _checked(
 
 
 def _validated_tree(root: Path) -> dict[Path, bytes]:
-    state = SnapshotRepository(root).load_optional()
-    if state is None:
+    validated = SnapshotRepository(root).read_optional()
+    if validated is None:
         raise InvalidPublicationError(InvalidPublicationCategory.SNAPSHOT_REQUIRED)
-    return {
-        path.relative_to(root): path.read_bytes()
-        for path in sorted(root.rglob("*"))
-        if path.is_file()
-    }
+    return dict(validated.files)
 
 
 def _materialize(tree: dict[Path, bytes], destination: Path) -> None:

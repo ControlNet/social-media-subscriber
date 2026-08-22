@@ -1,18 +1,36 @@
 from __future__ import annotations
 
-from typing import Final
+import hashlib
+from typing import Final, Literal
 
 import pytest
-from pydantic import ValidationError
+from pydantic import ConfigDict, TypeAdapter, ValidationError
 
 from social_media_subscriber.domain.ids import AccountId
-from social_media_subscriber.providers.brightdata.models import BrightDataPost
+from social_media_subscriber.providers.brightdata.models import (
+    BrightDataPost,
+    JsonValue,
+)
 from social_media_subscriber.providers.brightdata.source_record import (
     BrightDataLinkedInPostSourceRecord,
     source_record_path,
 )
+from social_media_subscriber.serialization.json import canonical_json_value_bytes
 
 _ACCOUNT_URL: Final = "https://www.linkedin.com/in/synthetic-ada/"
+_CANARY: Final = "EXPLICIT_NEGATIVE_TEST_CREDENTIAL_CANARY"
+_SENSITIVE_MARKERS: Final = (
+    "snapshot_id",
+    "snapshotId",
+    "API Key",
+    "authorization",
+    "Authorization",
+    "client_secret",
+)
+_JSON_OBJECT: Final[TypeAdapter[dict[str, JsonValue]]] = TypeAdapter(
+    dict[str, JsonValue],
+    config=ConfigDict(strict=True),
+)
 
 
 def _source_record() -> BrightDataLinkedInPostSourceRecord:
@@ -28,6 +46,29 @@ def _source_record() -> BrightDataLinkedInPostSourceRecord:
     )
     return BrightDataLinkedInPostSourceRecord.from_post(
         AccountId(_ACCOUNT_URL), provider_post
+    )
+
+
+def _source_values_with_payload(
+    payload_update: dict[str, JsonValue],
+) -> dict[str, JsonValue]:
+    values = _JSON_OBJECT.validate_python(_source_record().model_dump())
+    payload = _JSON_OBJECT.validate_python(values["payload"])
+    payload.update(payload_update)
+    values["payload"] = payload
+    values["payload_sha256"] = hashlib.sha256(
+        canonical_json_value_bytes(payload)
+    ).hexdigest()
+    return values
+
+
+def _validate_source_values(
+    boundary: Literal["python", "json"], values: dict[str, JsonValue]
+) -> BrightDataLinkedInPostSourceRecord:
+    if boundary == "python":
+        return BrightDataLinkedInPostSourceRecord.model_validate(values)
+    return BrightDataLinkedInPostSourceRecord.model_validate_json(
+        canonical_json_value_bytes(values)
     )
 
 
@@ -83,3 +124,51 @@ def test_source_record_requires_explicit_version_and_provenance(field: str) -> N
     with pytest.raises(ValidationError) as captured:
         _ = BrightDataLinkedInPostSourceRecord.model_validate(values)
     assert captured.value.errors(include_input=False)[0]["loc"] == (field,)
+
+
+@pytest.mark.parametrize("boundary", ["python", "json"])
+@pytest.mark.parametrize(
+    "payload_update",
+    [
+        {"snapshot_id": _CANARY},
+        {"snapshotId": _CANARY},
+        {"API Key": _CANARY},
+        {"authorization": _CANARY},
+        {"provider_metadata": {"snapshot_id": _CANARY}},
+        {"provider": {"request": {"headers": {"Authorization": _CANARY}}}},
+        {"context": [{"client_secret": _CANARY}]},
+    ],
+)
+def test_source_record_rejects_rehashed_sensitive_payload_without_canary_leak(
+    boundary: Literal["python", "json"],
+    payload_update: dict[str, JsonValue],
+) -> None:
+    # Given
+    values = _source_values_with_payload(payload_update)
+
+    # When / Then
+    with pytest.raises(ValidationError) as captured:
+        _ = _validate_source_values(boundary, values)
+    diagnostic = f"{captured.value!s} {captured.value!r}"
+    assert _CANARY not in diagnostic
+    assert all(marker not in diagnostic for marker in _SENSITIVE_MARKERS)
+
+
+@pytest.mark.parametrize("boundary", ["python", "json"])
+def test_source_record_preserves_ordinary_nested_provider_content(
+    boundary: Literal["python", "json"],
+) -> None:
+    # Given
+    ordinary: dict[str, JsonValue] = {
+        "provider_details": {
+            "campaign": {"label": "Synthetic launch", "impressions": 42},
+            "annotations": ["featured", {"locale": "en-US"}],
+        }
+    }
+    values = _source_values_with_payload(ordinary)
+
+    # When
+    restored = _validate_source_values(boundary, values)
+
+    # Then
+    assert restored.payload["provider_details"] == ordinary["provider_details"]

@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Final, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_core import PydanticCustomError
 
 from social_media_subscriber.domain.ids import (
@@ -15,7 +15,10 @@ from social_media_subscriber.domain.ids import (
     post_id_for,
     record_filename,
 )
-from social_media_subscriber.providers.brightdata.models import JsonValue
+from social_media_subscriber.providers.brightdata.models import (
+    JsonValue,
+    validate_persistable_post_payload,
+)
 from social_media_subscriber.serialization.json import canonical_json_value_bytes
 
 if TYPE_CHECKING:
@@ -45,6 +48,12 @@ class BrightDataLinkedInPostSourceRecord(BaseModel):
     account_id: CanonicalAccountId
     payload_sha256: ContentHash = Field(pattern=r"^[0-9a-f]{64}$")
     payload: dict[str, JsonValue]
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def validate_payload_metadata(cls, value: JsonValue) -> dict[str, JsonValue]:
+        """Reject secret or request metadata before payload hashing or acceptance."""
+        return validate_persistable_post_payload(value)
 
     @classmethod
     def from_post(cls, account_id: AccountId, post: "BrightDataPost") -> Self:
