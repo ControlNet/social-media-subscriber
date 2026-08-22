@@ -144,6 +144,7 @@ is `Account.id == Account.profile_url`; each `Post.account_id` and Bright Data
 source-record account_id must equal that exact canonical URL. A changed slug is
 a distinct Account, not a rename. No migration or compatibility reader is
 provided. Alias reconciliation and entity merging are not supported here.
+Downstream consumers own those cross-URL decisions.
 
 Every provider record must include at least one of
 `use_url, user_url, profile_url, and company_url`. The collector parses every

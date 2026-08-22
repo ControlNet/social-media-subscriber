@@ -61,7 +61,8 @@ the generator.
 The parser canonicalizes accepted locators, de-duplicates them while preserving
 first occurrence, and rejects malformed hosts, credentials-in-URLs, ports,
 query-like path variations, control characters, invalid percent escaping, and
-non-person/company paths. It does not retain arbitrary user text downstream.
+percent-encoded slug variants, and non-person/company paths. It does not retain
+arbitrary user text downstream.
 
 The strict locator parser is the only Account canonicalization authority. For
 every persisted Account, `Account.id == Account.profile_url` and both values are
@@ -73,7 +74,8 @@ is no Identity/Profile lookup route.
 A changed person or company slug canonicalizes to a new URL and is a distinct
 Account. The old and new URL histories can coexist. Numeric provider identity,
 alias reconciliation, migration, compatibility loading, and entity merging are
-not supported in this repository.
+not supported in this repository. Downstream consumers own those
+cross-URL decisions.
 
 Every successful Bright Data record must contain at least one of
 `use_url, user_url, profile_url, and company_url`. Ownership validation parses

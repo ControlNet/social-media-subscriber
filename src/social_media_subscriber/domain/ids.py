@@ -16,7 +16,7 @@ PlatformPostId = NewType("PlatformPostId", str)
 ContentHash = NewType("ContentHash", str)
 ACCOUNT_ID_PATTERN: Final = (
     r"^https://www\.linkedin\.com/(?:in|company)/"
-    r"(?!\.{1,2}/)(?![^/]*(?:\\|%(?:[01][0-9A-Fa-f]|7[fF]|2[fF]|5[cC]|2[eE])))"
+    r"(?!\.{1,2}/)(?![^/]*(?:\\|%))"
     r"[^/?#\x00-\x1f\x7f]+/$"
 )
 _RUNTIME_ACCOUNT_ID_PATTERN: Final = (

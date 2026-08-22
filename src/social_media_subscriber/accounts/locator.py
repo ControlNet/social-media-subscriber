@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Final
-from urllib.parse import unquote_to_bytes, urlsplit
+from urllib.parse import urlsplit
 
 from social_media_subscriber.accounts.errors import (
     AccountInputError,
@@ -19,8 +19,6 @@ _HOST_PATTERN: Final = re.compile(
     re.ASCII,
 )
 _PATH_PATTERN: Final = re.compile(r"/(in|company)/([^/]+)/?\Z", re.ASCII)
-_PERCENT_ESCAPE_PATTERN: Final = re.compile(r"%(?:[0-9A-Fa-f]{2})")
-_ENCODED_DOT_PATTERN: Final = re.compile(r"%2e", re.IGNORECASE)
 _ASCII_CONTROL_BOUNDARY: Final = 32
 _ASCII_DELETE: Final = 127
 _ACCOUNT_KIND_BY_PATH: Final = {
@@ -43,11 +41,6 @@ def _invalid_locator() -> AccountInputError:
         category=AccountInputErrorCategory.INVALID_ACCOUNT_URL,
         field=AccountInputField.ACCOUNTS,
     )
-
-
-def _has_malformed_percent_escape(value: str) -> bool:
-    without_valid_escapes = _PERCENT_ESCAPE_PATTERN.sub("", value)
-    return "%" in without_valid_escapes
 
 
 def parse_linkedin_locator(raw: str) -> LinkedInLocator:
@@ -82,25 +75,16 @@ def parse_linkedin_locator(raw: str) -> LinkedInLocator:
         raise _invalid_locator()
 
     path_kind, segment = path_match.groups()
-    if (
-        _has_malformed_percent_escape(segment)
-        or _ENCODED_DOT_PATTERN.search(segment) is not None
-    ):
+    if "%" in segment:
         raise _invalid_locator()
 
-    try:
-        decoded_segment = unquote_to_bytes(segment).decode("utf-8")
-    except UnicodeDecodeError:
-        raise _invalid_locator() from None
-
     if (
-        not decoded_segment
-        or decoded_segment in {".", ".."}
-        or "/" in decoded_segment
-        or "\\" in decoded_segment
+        not segment
+        or segment in {".", ".."}
+        or "\\" in segment
         or any(
             ord(character) < _ASCII_CONTROL_BOUNDARY or ord(character) == _ASCII_DELETE
-            for character in decoded_segment
+            for character in segment
         )
     ):
         raise _invalid_locator()

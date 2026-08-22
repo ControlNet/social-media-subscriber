@@ -139,6 +139,10 @@ def test_schema_generation_is_deterministic_and_structural(tmp_path: Path) -> No
                     "https://www.linkedin.com/in/syn%2Fthetic/",
                     "https://www.linkedin.com/in/syn%5cthetic/",
                     "https://www.linkedin.com/in/%2e%2E/",
+                    "https://www.linkedin.com/in/synthetic%ZZ/",
+                    "https://www.linkedin.com/in/synthetic%FF/",
+                    "https://www.linkedin.com/in/synthetic%F0%28%8C%28/",
+                    "https://www.linkedin.com/in/synthetic%E9%9B%AA/",
                     "https://www.linkedin.com/in/../",
                 ):
                     assert re.fullmatch(pattern, unsafe_url) is None
@@ -168,6 +172,10 @@ def test_schema_generation_is_deterministic_and_structural(tmp_path: Path) -> No
             "https://www.linkedin.com/in/synthetic-ada?tracking=unsafe/",
             "https://www.linkedin.com/in/synthetic-ada#about/",
             "https://www.linkedin.com/in/synthetic%2eada/",
+            "https://www.linkedin.com/in/synthetic%ZZ/",
+            "https://www.linkedin.com/in/synthetic%FF/",
+            "https://www.linkedin.com/in/synthetic%F0%28%8C%28/",
+            "https://www.linkedin.com/company/synthetic%E9%9B%AA/",
         ):
             assert re.fullmatch(post_account_id_pattern, invalid_id) is None
 

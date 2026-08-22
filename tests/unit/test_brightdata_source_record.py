@@ -136,6 +136,12 @@ def test_source_record_requires_explicit_version_and_provenance(field: str) -> N
         {"authorization": _CANARY},
         {"provider_metadata": {"snapshot_id": _CANARY}},
         {"provider": {"request": {"headers": {"Authorization": _CANARY}}}},
+        {"provider": {"requestHeaders": {"x-synthetic-header": _CANARY}}},
+        {"provider": {"request_headers": {"x-synthetic-header": _CANARY}}},
+        {"provider": {"request-headers": {"x-synthetic-header": _CANARY}}},
+        {"provider": {"responseHeaders": {"x-synthetic-header": _CANARY}}},
+        {"provider": {"response_headers": {"x-synthetic-header": _CANARY}}},
+        {"provider": {"response-headers": {"x-synthetic-header": _CANARY}}},
         {"context": [{"client_secret": _CANARY}]},
     ],
 )

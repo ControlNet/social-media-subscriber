@@ -43,7 +43,7 @@ _HASHTAGS_ADAPTER: Final[TypeAdapter[tuple[str, ...]]] = TypeAdapter(tuple[str, 
 _FORBIDDEN_POST_FIELDS: Final = frozenset(
     """accessToken apiKey auth authorization clientSecret cookie cookies
     credential credentials error errors headers httpHeaders password
-    rawBody rawResponse request requestId requests
+    rawBody rawResponse request requestHeaders requestId requests responseHeaders
     secret secrets setCookie snapshotId token""".casefold().split()
 )
 _FORBIDDEN_FIELD_ERROR: Final = "provider_post_forbidden_field"

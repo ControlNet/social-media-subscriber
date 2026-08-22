@@ -1,10 +1,19 @@
 from __future__ import annotations
 
-from tests.unit import test_router_accepted_snapshot as accepted_snapshot
+import pytest
+
+from social_media_subscriber.adapters.instance import AcceptedSnapshotBatchFailure
+from social_media_subscriber.adapters.router_outcomes import (
+    AccountRouteFailed,
+    AccountRouteFailureCategory,
+)
+from social_media_subscriber.domain.platform import AccountKind
+from tests.fakes.router import CompleteBatch, make_account
 from tests.unit import test_router_account_failover as account_failover
 from tests.unit import test_router_account_ownership as account_ownership
 from tests.unit import test_router_account_routing as account_routing
 from tests.unit import test_router_contracts as contracts
+from tests.unit.test_router_support import build_post_requests, build_router
 
 test_adapter_surface_exposes_only_normal_account_posts = (
     contracts.test_adapter_surface_exposes_only_normal_account_posts
@@ -30,9 +39,26 @@ test_disabled_instance_fails_over_once_for_the_run = (
 test_transient_pre_acceptance_failure_tries_each_instance_once = (
     account_failover.test_transient_pre_acceptance_failure_tries_each_instance_once
 )
-test_accepted_snapshot_failure_never_retriggers_another_instance = (
-    accepted_snapshot.test_accepted_snapshot_failure_never_retriggers_another_instance
-)
+
+
+@pytest.mark.anyio
+async def test_accepted_snapshot_failure_never_retriggers_another_instance() -> None:
+    account = make_account(AccountKind.PERSON, 1)
+    router, factory = build_router(
+        ((AcceptedSnapshotBatchFailure(),), (CompleteBatch(),))
+    )
+
+    result = await router.route(build_post_requests((account,)))
+
+    assert [call.ordinal for call in factory.calls] == [0]
+    assert result.accounts == (
+        AccountRouteFailed(
+            account.id,
+            AccountRouteFailureCategory.ACCEPTED_SNAPSHOT_FAILED,
+        ),
+    )
+
+
 test_invalid_account_result_never_rotates_credentials = (
     account_failover.test_invalid_account_result_never_rotates_credentials
 )

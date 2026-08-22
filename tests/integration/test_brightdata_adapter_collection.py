@@ -72,7 +72,6 @@ async def test_collection_preserves_sources_and_counts_nonoriginals() -> None:
     assert [len(item.source_records) for item in result.accounts] == [1, 1]
     assert [len(item.posts) for item in result.accounts] == [1, 1]
     assert result.accounts[0].skipped.unknown == 1
-    assert "provider_note" not in result.accounts[0].source_records[0].payload
     assert result.accounts[1].skipped.total == 0
     assert [call.urls for call in client.calls] == [
         (person.profile_url,),

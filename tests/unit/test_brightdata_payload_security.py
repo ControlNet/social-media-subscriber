@@ -55,6 +55,12 @@ def test_success_payload_rejects_normalized_sensitive_key_without_canary_leak(
     "nested_metadata",
     [
         {"request": {"headers": {"authorization": _CANARY}}},
+        {"requestHeaders": {"x-synthetic-header": _CANARY}},
+        {"request_headers": {"x-synthetic-header": _CANARY}},
+        {"request-headers": {"x-synthetic-header": _CANARY}},
+        {"responseHeaders": {"x-synthetic-header": _CANARY}},
+        {"response_headers": {"x-synthetic-header": _CANARY}},
+        {"response-headers": {"x-synthetic-header": _CANARY}},
         {"transport": [{"Authorization": _CANARY}]},
         {"provider": {"client.secret": _CANARY}},
         {"provider": [{"API Key": _CANARY}]},

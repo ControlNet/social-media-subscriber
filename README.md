@@ -42,7 +42,7 @@ coexist.
 Account, Post, and Bright Data source records use `schema_version: 2`. Legacy
 v1 records and snapshots are rejected instead of being converted. No migration
 or compatibility reader is provided. Alias reconciliation and entity merging
-are not supported; those decisions belong in a separate consuming system.
+are not supported; those decisions belong to downstream consumers.
 
 Every successful provider record must supply at least one actor field from
 `use_url, user_url, profile_url, and company_url`. The collector parses every

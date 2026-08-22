@@ -3,7 +3,7 @@
   "description": "Versioned provider-neutral original Post persisted at the boundary.",
   "properties": {
     "account_id": {
-      "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%(?:[01][0-9A-Fa-f]|7[fF]|2[fF]|5[cC]|2[eE])))[^/?#\\x00-\\x1f\\x7f]+/$",
+      "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/$",
       "title": "Account Id",
       "type": "string"
     },
