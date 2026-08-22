@@ -202,6 +202,12 @@ def test_repository_rejects_legacy_v1_records(tmp_path: Path, record_glob: str) 
                 "request": {"headers": {"authorization": SENSITIVE_CANARY}}
             }
         },
+        {"provider_metadata": {"requestHeader": {"x-synthetic": SENSITIVE_CANARY}}},
+        {"provider_metadata": {"request_header": {"x-synthetic": SENSITIVE_CANARY}}},
+        {"provider_metadata": {"request-header": {"x-synthetic": SENSITIVE_CANARY}}},
+        {"provider_metadata": {"responseHeader": {"x-synthetic": SENSITIVE_CANARY}}},
+        {"provider_metadata": {"response_header": {"x-synthetic": SENSITIVE_CANARY}}},
+        {"provider_metadata": {"response-header": {"x-synthetic": SENSITIVE_CANARY}}},
     ],
 )
 def test_repository_rejects_rehashed_sensitive_source_payload_without_canary_leak(
