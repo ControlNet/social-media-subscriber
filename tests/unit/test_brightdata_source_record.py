@@ -161,6 +161,9 @@ def test_source_record_requires_explicit_version_and_provenance(field: str) -> N
         {"provider": {"CLIENT_REQUEST_HEADERS": {"value": _CANARY}}},
         {"provider": {"client-request-headers": {"value": _CANARY}}},
         {"provider": {"providerAuthInfo": {"value": _CANARY}}},
+        {"provider": {"providerBearerInfo": {"value": _CANARY}}},
+        {"provider": {"PROVIDER_BEARER_INFO": {"value": _CANARY}}},
+        {"provider": {"provider-bearer-info": {"value": _CANARY}}},
         {"provider": {"PROVIDER_AUTH_INFO": {"value": _CANARY}}},
         {"provider": {"provider-auth-info": {"value": _CANARY}}},
         {"provider": {"responseAuthentication": {"value": _CANARY}}},
@@ -193,6 +196,9 @@ def test_source_record_preserves_ordinary_nested_provider_content(
         "provider_details": {
             "campaign": {"label": "Synthetic launch", "impressions": 42},
             "annotations": ["featured", {"locale": "en-US"}],
+            "request_count": 12,
+            "response_rate": 0.95,
+            "error_rate": 0.05,
         }
     }
     values = _source_values_with_payload(ordinary)

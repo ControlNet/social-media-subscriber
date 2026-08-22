@@ -22,31 +22,41 @@ _FORBIDDEN_FIELD_MARKERS: Final = (
     "authentication",
     "authorization",
     "authinfo",
+    "bearer",
     "clientsecret",
     "cookie",
     "credential",
-    "error",
-    "exception",
     "header",
     "password",
     "rawbody",
     "rawresponse",
-    "request",
-    "response",
     "secret",
-    "session",
     "setcookie",
     "snapshotid",
     "token",
 )
+_TRANSPORT_FIELD_TOKENS: Final = frozenset(
+    {"error", "exception", "request", "response", "session"}
+)
+_TRANSPORT_CONTAINER_TOKENS: Final = frozenset(
+    {"body", "context", "data", "details", "info", "metadata", "payload"}
+)
+_FIELD_TOKEN: Final = re.compile(r"[A-Z]+(?=[A-Z][a-z]|[0-9]|\Z)|[A-Z]?[a-z]+|[0-9]+")
 
 
 def _is_forbidden_field_name(value: str) -> bool:
     normalized = re.sub(r"[^a-z0-9]", "", value.casefold())
+    tokens = frozenset(
+        match.group(0).casefold() for match in _FIELD_TOKEN.finditer(value)
+    )
     return (
         normalized in _FORBIDDEN_FIELD_NAMES
         or normalized.endswith("auth")
         or any(marker in normalized for marker in _FORBIDDEN_FIELD_MARKERS)
+        or (
+            bool(tokens & _TRANSPORT_FIELD_TOKENS)
+            and bool(tokens & _TRANSPORT_CONTAINER_TOKENS)
+        )
     )
 
 

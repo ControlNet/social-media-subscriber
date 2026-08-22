@@ -80,6 +80,9 @@ def test_success_payload_rejects_normalized_sensitive_key_without_canary_leak(
         {"CLIENT_REQUEST_HEADERS": {"value": _CANARY}},
         {"client-request-headers": {"value": _CANARY}},
         {"providerAuthInfo": {"value": _CANARY}},
+        {"providerBearerInfo": {"value": _CANARY}},
+        {"PROVIDER_BEARER_INFO": {"value": _CANARY}},
+        {"provider-bearer-info": {"value": _CANARY}},
         {"PROVIDER_AUTH_INFO": {"value": _CANARY}},
         {"provider-auth-info": {"value": _CANARY}},
         {"responseAuthentication": {"value": _CANARY}},
@@ -118,6 +121,9 @@ def test_success_payload_preserves_ordinary_nested_provider_content() -> None:
         },
         "annotations": ["featured", {"locale": "en-US"}],
         "author": {"name": "Synthetic Ada", "authored_at": "2026-08-20"},
+        "request_count": 12,
+        "response_rate": 0.95,
+        "error_rate": 0.05,
     }
     payload = _post_payload() | {"provider_details": ordinary_content}
 
