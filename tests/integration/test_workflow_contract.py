@@ -148,10 +148,21 @@ def test_collection_gates_secrets_and_scopes_write_to_publication_job() -> None:
     assert "secrets.ACCOUNTS" in _COLLECT_PATH.read_text()
     assert "secrets.SOURCES" in _COLLECT_PATH.read_text()
     assert "pull_request" not in mapping(workflow["on"])
+    publication_steps = _steps(workflow, "publication")
     publication_commands = "\n".join(
-        text(step["run"]) for step in _steps(workflow, "publication") if "run" in step
+        text(step["run"]) for step in publication_steps if "run" in step
     )
     assert "pixi run verify" not in publication_commands
+    publish = next(
+        step
+        for step in publication_steps
+        if step.get("name") == "Verify and publish candidate"
+    )
+    publish_command = text(publish["run"])
+    assert "GIT_CONFIG_COUNT=1" in publish_command
+    assert "http.https://github.com/.extraheader" in publish_command
+    assert "x-access-token:%s" in publish_command
+    assert "git remote set-url" not in publish_command
 
 
 @pytest.mark.parametrize(

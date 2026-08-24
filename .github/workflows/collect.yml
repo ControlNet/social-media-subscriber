@@ -128,6 +128,9 @@ jobs:
       - name: Verify and publish candidate
         run: |
           set -euo pipefail
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
           pixi run subscriber verify-snapshot "$CANDIDATE_SNAPSHOT"
           pixi run subscriber publish-dist \
             --snapshot "$CANDIDATE_SNAPSHOT" \
