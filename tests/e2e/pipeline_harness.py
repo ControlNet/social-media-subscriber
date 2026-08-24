@@ -135,7 +135,7 @@ def invoke_contained_scenario(
 
 
 def report(result: CliResult) -> dict[str, str | int | list[str] | None]:
-    reports = [line for line in result.output.splitlines() if line.startswith("{")]
+    reports = [line for line in result.stdout.splitlines() if line.startswith("{")]
     assert len(reports) == 1
     return _REPORT.validate_json(reports[0])
 

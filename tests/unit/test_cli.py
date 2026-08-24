@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from pydantic import TypeAdapter
 from typer.testing import CliRunner
@@ -26,6 +27,11 @@ if TYPE_CHECKING:
     from social_media_subscriber.publishing.git import PublishResult
 
 _REPORT_ADAPTER = TypeAdapter(dict[str, str | int | list[str] | None])
+_ANSI_CSI: Final = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _plain_terminal_text(value: str) -> str:
+    return _ANSI_CSI.sub("", value)
 
 
 class CanaryProviderError(Exception):
@@ -90,13 +96,16 @@ def test_help_exposes_only_approved_public_inputs() -> None:
 
     # Then
     assert root.exit_code == collect.exit_code == publish.exit_code == 0
-    assert {"collect", "verify-snapshot", "publish-dist"} <= set(root.output.split())
-    assert "--previous-snapshot" in collect.output
-    assert "--output" in collect.output
-    assert "--expected-sha" in publish.output
+    root_help = _plain_terminal_text(root.output)
+    collect_help = _plain_terminal_text(collect.output)
+    publish_help = _plain_terminal_text(publish.output)
+    assert {"collect", "verify-snapshot", "publish-dist"} <= set(root_help.split())
+    assert "--previous-snapshot" in collect_help
+    assert "--output" in collect_help
+    assert "--expected-sha" in publish_help
     forbidden = ("api-key", "base-url", "platform", "payload", "fixture")
     assert all(
-        token not in (collect.output + publish.output).lower() for token in forbidden
+        token not in (collect_help + publish_help).lower() for token in forbidden
     )
 
 

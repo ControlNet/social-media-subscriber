@@ -30,6 +30,9 @@ class CliResult(Protocol):
     @property
     def exit_code(self) -> int: ...
 
+    @property
+    def stdout(self) -> str: ...
+
 
 _REPORT_ADAPTER = TypeAdapter(dict[str, str | int | None])
 
@@ -173,13 +176,13 @@ def test_publish_materializes_exact_baseline_and_preserves_unchanged_sha(
 
     # When
     first = contained_cli.invoke(create_app(), [*arguments, "absent"])
-    first_sha = _report(first.output)["sha"]
+    first_sha = _report(first.stdout)["sha"]
     second = contained_cli.invoke(create_app(), [*arguments, str(first_sha)])
 
     # Then
     assert first.exit_code == second.exit_code == 0
-    assert _report(first.output)["result"] == "published"
-    assert _report(second.output) == {
+    assert _report(first.stdout)["result"] == "published"
+    assert _report(second.stdout) == {
         "command": "publish-dist",
         "exit_code": 0,
         "result": "unchanged",
@@ -216,7 +219,7 @@ def test_publish_stale_precheck_exits_six_without_source_mutation(
 
     # Then
     assert result.exit_code == 6
-    assert _report(result.output)["exit_code"] == 6
+    assert _report(result.stdout)["exit_code"] == 6
     assert tuple(contained_cli.source.iterdir()) == before
     advertised = subprocess.run(  # noqa: S603 - executable resolved before invocation
         (_git_binary(), "show-ref"),

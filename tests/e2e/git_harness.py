@@ -23,6 +23,9 @@ class CliResult(Protocol):
     @property
     def output(self) -> str: ...
 
+    @property
+    def stdout(self) -> str: ...
+
 
 def git(cwd: Path, *arguments: str) -> str:
     assert _GIT is not None
