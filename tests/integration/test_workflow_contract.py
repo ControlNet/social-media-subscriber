@@ -148,6 +148,10 @@ def test_collection_gates_secrets_and_scopes_write_to_publication_job() -> None:
     assert "secrets.ACCOUNTS" in _COLLECT_PATH.read_text()
     assert "secrets.SOURCES" in _COLLECT_PATH.read_text()
     assert "pull_request" not in mapping(workflow["on"])
+    publication_commands = "\n".join(
+        text(step["run"]) for step in _steps(workflow, "publication") if "run" in step
+    )
+    assert "pixi run verify" not in publication_commands
 
 
 @pytest.mark.parametrize(

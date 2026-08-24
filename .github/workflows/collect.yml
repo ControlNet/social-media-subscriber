@@ -73,8 +73,6 @@ jobs:
           cache: false
       - name: Install locked environment
         run: pixi install --locked
-      - name: Verify source
-        run: pixi run verify
       - name: Observe immutable dist lease
         run: |
           set -euo pipefail
