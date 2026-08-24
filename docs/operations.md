@@ -226,12 +226,14 @@ historical backfill.
 Apify runs `harvestapi/linkedin-profile-posts` separately for each Account and
 passes the request start date as `postedLimitDate`. It includes reposts and quote
 posts, disables comments and reactions, and enforces the complete inclusive date
-window locally. It sends no Actor charge limit and no maximum post count, then
-reads dataset pages until exhausted without a total item limit. Once an Actor run
-may have been accepted, a later timeout, polling, dataset, or schema failure does
-not fail over to another token or provider during that Account attempt; retry
-only through a new approved collection run. Do not execute this command for
-exploratory CLI testing: it is a live provider action.
+window locally. It sends no Actor charge limit and sends `maxPosts=0` as the
+Actor's unlimited sentinel; omitting `maxPosts` activates the provider default
+and can truncate the dataset. It then reads dataset pages until exhausted without
+a total item limit. Once an Actor run may have been accepted, a later timeout,
+polling, dataset, or schema failure does not fail over to another token or
+provider during that Account attempt; retry only through a new approved
+collection run. Do not execute this command for exploratory CLI testing: it is a
+live provider action.
 
 | Exit | Binary observable | Required action |
 | --- | --- | --- |

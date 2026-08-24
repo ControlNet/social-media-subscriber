@@ -121,7 +121,8 @@ def test_apify_docs_define_window_and_failover_boundaries() -> None:
         "a repost can identify its original author",
         "disables comments and reactions",
         "enforces the complete inclusive date window locally",
-        "no Actor charge limit and no maximum post count",
+        "maxPosts=0 as the Actor's unlimited sentinel",
+        "omitting maxPosts activates the provider default",
         "without a total item limit",
         "does not fail over to another token or provider",
     )

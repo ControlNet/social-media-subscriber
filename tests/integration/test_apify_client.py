@@ -74,6 +74,7 @@ async def test_client_starts_date_bounded_actor_run_and_downloads_dataset() -> N
     assert json.loads(start.content) == {
         "includeQuotePosts": True,
         "includeReposts": True,
+        "maxPosts": 0,
         "postNestedComments": False,
         "postNestedReactions": False,
         "postedLimitDate": "2023-01-02",

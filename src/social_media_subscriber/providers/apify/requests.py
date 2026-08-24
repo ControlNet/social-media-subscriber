@@ -21,6 +21,7 @@ class ApifyPostInput:
         """Return the exact actor input with costly nested scraping disabled."""
         return {
             "targetUrls": [self.profile_url],
+            "maxPosts": 0,
             "postedLimitDate": self.start_date.isoformat(),
             "includeQuotePosts": True,
             "includeReposts": True,

@@ -192,11 +192,13 @@ and must be evaluated as a distinct source before it can contribute records.
 
 The Apify adapter runs `harvestapi/linkedin-profile-posts` once per Account. It
 passes the inclusive request start date as `postedLimitDate`, includes reposts
-and quote posts, and disables reaction/comment collection. It does not send an
-Actor charge limit or a maximum post count. The Actor has no end-date input, so
-the complete inclusive date window is enforced locally after the complete
-dataset is validated. Dataset items are read page by page until exhausted, with
-no total item limit. The run has a 30-minute polling limit. Apify can provide
+and quote posts, and disables reaction/comment collection. It sends no Actor
+charge limit. It sends `maxPosts=0` as the Actor's unlimited sentinel because
+omitting `maxPosts` activates the provider default and can truncate the dataset.
+The Actor has no end-date input, so the complete inclusive date window is
+enforced locally after the complete dataset is validated. Dataset items are read
+page by page until exhausted, with no total item limit. The run has a 30-minute
+polling limit. Apify can provide
 substantially deeper first-time history than the Bright Data feed, but the
 requested range and provider result still remain subject to the Actor's upstream
 availability and provider contract. Actor request metadata such as `query`, page,
