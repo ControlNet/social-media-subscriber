@@ -57,7 +57,6 @@ class _SnapshotReport(TypedDict):
     digest: str
     exit_code: int
     post_count: int
-    source_record_count: int
 
 
 class _PublishReport(TypedDict):
@@ -146,16 +145,16 @@ def _register_collect(app: typer.Typer, service: CliApplication) -> None:
     ) -> None:
         try:
             raw_accounts = os.environ.get("ACCOUNTS")
-            raw_keys = os.environ.get("BRIGHT_DATA_API_KEYS")
-            if raw_accounts is None or raw_keys is None:
+            raw_sources = os.environ.get("SOURCES")
+            if raw_accounts is None or raw_sources is None:
                 _input_failure()
             settings = Settings(
                 accounts=SecretStr(raw_accounts),
-                bright_data_api_keys=SecretStr(raw_keys),
+                sources=SecretStr(raw_sources),
             )
             if not settings.accounts.get_secret_value().strip():
                 _input_failure()
-            if not settings.bright_data_api_keys.get_secret_value().strip():
+            if not settings.sources.get_secret_value().strip():
                 _input_failure()
             start, end = _parse_window(start_date, end_date)
         except (CliInputError, ValidationError):
@@ -187,7 +186,7 @@ def _register_verification(app: typer.Typer, service: CliApplication) -> None:
     @app.command("verify-snapshot")
     def verify_snapshot_command(snapshot: Annotated[Path, typer.Argument()]) -> None:
         try:
-            manifest = service.verify(snapshot)
+            summary = service.verify(snapshot)
         except SnapshotIntegrityError:
             _emit(
                 {
@@ -203,12 +202,11 @@ def _register_verification(app: typer.Typer, service: CliApplication) -> None:
             raise typer.Exit(int(CollectionExitCode.INTEGRITY)) from None
         _emit(
             {
-                "account_count": manifest.account_count,
+                "account_count": summary.account_count,
                 "command": "verify-snapshot",
-                "digest": manifest.digest,
+                "digest": summary.digest,
                 "exit_code": 0,
-                "post_count": manifest.post_count,
-                "source_record_count": manifest.source_record_count,
+                "post_count": summary.post_count,
             },
             "Snapshot verified",
         )

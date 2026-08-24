@@ -8,12 +8,13 @@ from enum import StrEnum, unique
 from typing import TYPE_CHECKING, override
 
 from social_media_subscriber.adapters.instance import AdapterPostRequest
+from social_media_subscriber.domain.platform import LINKEDIN_EARLIEST_DATE
 
 if TYPE_CHECKING:
     from social_media_subscriber.domain.account import Account
+    from social_media_subscriber.domain.ids import AccountId
     from social_media_subscriber.storage.snapshot import SnapshotState
 
-_INITIAL_DAYS = 7
 _OVERLAP_DAYS = 3
 
 
@@ -67,26 +68,25 @@ def build_post_requests(
     context: WindowContext,
 ) -> tuple[AdapterPostRequest, ...]:
     """Calculate one inclusive provider-neutral request per Account."""
-    prior_posts = () if previous is None else previous.posts
+    prior_account_ids: frozenset[AccountId] = (
+        frozenset()
+        if previous is None
+        else frozenset(account.id for account in previous.accounts)
+    )
+    run_date = context.run_started_at.date()
     requests: list[AdapterPostRequest] = []
     for account in accounts:
-        newest = max(
-            (
-                post.published_at.date()
-                for post in prior_posts
-                if post.account_id == account.id
-            ),
-            default=None,
-        )
         if context.override.start_date is not None:
             start_date = context.override.start_date
             end_date = context.override.end_date
             if end_date is None:
                 raise WindowInputError(WindowInputErrorCategory.INCOMPLETE)
         else:
-            base = context.run_started_at.date() if newest is None else newest
-            days = _INITIAL_DAYS if newest is None else _OVERLAP_DAYS
-            start_date = base - timedelta(days=days)
-            end_date = context.run_started_at.date()
+            start_date = (
+                run_date - timedelta(days=_OVERLAP_DAYS)
+                if account.id in prior_account_ids
+                else LINKEDIN_EARLIEST_DATE
+            )
+            end_date = run_date
         requests.append(AdapterPostRequest(account, start_date, end_date))
     return tuple(requests)

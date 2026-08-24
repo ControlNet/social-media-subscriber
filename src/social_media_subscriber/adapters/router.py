@@ -7,10 +7,6 @@ from typing import TYPE_CHECKING, Final, final
 
 from social_media_subscriber.adapters import instance as instance_contract
 from social_media_subscriber.adapters.operations import AdapterOperation
-from social_media_subscriber.adapters.registry import (
-    ResolvedAdapterDrivers,
-    UnsupportedAdapterCapability,
-)
 from social_media_subscriber.adapters.router_outcomes import (
     AccountRouteFailed,
     AccountRouteFailureCategory,
@@ -23,18 +19,15 @@ from social_media_subscriber.adapters.router_state import RouterRunState
 from social_media_subscriber.domain.platform import AccountKind, Platform
 
 if TYPE_CHECKING:
-    from pydantic import SecretStr
-
     from social_media_subscriber.adapters.instance import (
         AdapterInstance,
-        AdapterInstanceFactory,
+        AdapterInstanceSpec,
         AdapterPostRequest,
     )
     from social_media_subscriber.adapters.registry import AdapterRegistry
     from social_media_subscriber.domain.ids import AccountId
 
 _MAX_BATCH_SIZE: Final = 20
-_KIND_ORDER: Final = (AccountKind.PERSON, AccountKind.COMPANY)
 
 
 @final
@@ -48,25 +41,23 @@ class Router:
     def __init__(
         self,
         registry: AdapterRegistry,
-        factory: AdapterInstanceFactory,
-        credentials: tuple[SecretStr, ...],
+        instance_specs: tuple[AdapterInstanceSpec, ...],
     ) -> None:
-        """Create exactly one instance for each first-seen unique credential."""
+        """Create one ordered adapter instance per source specification."""
         self._registry = registry
-        unique_credentials: list[SecretStr] = []
-        seen_values: set[str] = set()
-        for credential in credentials:
-            value = credential.get_secret_value()
-            if value not in seen_values:
-                seen_values.add(value)
-                unique_credentials.append(credential)
-        self._instances = tuple(
-            factory.create(
-                credential,
-                instance_contract.AdapterInstanceOrdinal(index),
-            )
-            for index, credential in enumerate(unique_credentials)
-        )
+        registered = frozenset(registry.driver_classes)
+        instances: list[AdapterInstance] = []
+        for spec in instance_specs:
+            if spec.driver_class not in registered:
+                message = f"invalid Adapter instance spec: {spec.driver_class.__name__}"
+                raise ValueError(message)
+            ordinal = instance_contract.AdapterInstanceOrdinal(len(instances))
+            instance = spec.factory.create(spec.credential, ordinal)
+            if instance.driver_class is not spec.driver_class:
+                message = "Adapter factory returned an instance for a different driver"
+                raise ValueError(message)
+            instances.append(instance)
+        self._instances = tuple(instances)
         self._closed = False
 
     async def aclose(self) -> None:
@@ -99,18 +90,23 @@ class Router:
             unique_requests[key] for key in sorted(unique_requests, key=str)
         )
         state = RouterRunState.for_instances(self._instances)
-        batch_number = 0
-        for kind in _KIND_ORDER:
-            kind_requests = tuple(
-                request for request in ordered_requests if request.account.kind is kind
-            )
-            for offset in range(0, len(kind_requests), _MAX_BATCH_SIZE):
-                batch = instance_contract.AdapterBatch(
-                    requests=kind_requests[offset : offset + _MAX_BATCH_SIZE]
+        for platform in Platform:
+            for kind in AccountKind:
+                kind_requests = tuple(
+                    request
+                    for request in ordered_requests
+                    if request.account.platform is platform
+                    and request.account.kind is kind
                 )
-                if await self._route_batch(batch, batch_number, state):
-                    return state.result(RouterRunStatus.ABORTED, include_posts=False)
-                batch_number += 1
+                batch_size = self._batch_size(platform, kind)
+                for offset in range(0, len(kind_requests), batch_size):
+                    batch = instance_contract.AdapterBatch(
+                        requests=kind_requests[offset : offset + batch_size]
+                    )
+                    if await self._route_batch(batch, state):
+                        return state.result(
+                            RouterRunStatus.ABORTED, include_posts=False
+                        )
 
         status = (
             RouterRunStatus.PARTIAL
@@ -124,38 +120,45 @@ class Router:
 
     def _compatible_instances(
         self,
+        platform: Platform,
         operation: AdapterOperation,
         kind: AccountKind,
     ) -> tuple[AdapterInstance, ...] | None:
-        resolution = self._registry.resolve(
-            platform=Platform.LINKEDIN,
+        driver_classes = self._registry.resolve(
+            platform=platform,
             operation=operation,
             account_kind=kind,
         )
-        match resolution:
-            case ResolvedAdapterDrivers(driver_classes=driver_classes):
-                return tuple(
-                    instance
-                    for instance in self._instances
-                    if instance.driver_class in driver_classes
-                )
-            case UnsupportedAdapterCapability():
-                return None
+        if not driver_classes:
+            return None
+        return tuple(
+            instance
+            for instance in self._instances
+            if instance.driver_class in driver_classes
+        )
+
+    def _batch_size(self, platform: Platform, kind: AccountKind) -> int:
+        compatible = self._compatible_instances(
+            platform,
+            AdapterOperation.COLLECT_ACCOUNT_POSTS,
+            kind,
+        )
+        if compatible and any(
+            not instance.driver_class.adapter_metadata.supports_batch
+            for instance in compatible
+        ):
+            return 1
+        return _MAX_BATCH_SIZE
 
     async def _route_batch(
         self,
         batch: instance_contract.AdapterBatch,
-        start_index: int,
         state: RouterRunState,
     ) -> bool:
         compatible = self._collection_instances(batch, state)
         if compatible is None:
             return False
-        ordered = tuple(
-            compatible[(start_index + index) % len(compatible)]
-            for index in range(len(compatible))
-        )
-        for adapter_instance in ordered:
+        for adapter_instance in compatible:
             if not state.is_healthy(adapter_instance):
                 continue
             attempt = await adapter_instance.collect(batch)
@@ -188,6 +191,7 @@ class Router:
         state: RouterRunState,
     ) -> tuple[AdapterInstance, ...] | None:
         compatible = self._compatible_instances(
+            batch.accounts[0].platform,
             AdapterOperation.COLLECT_ACCOUNT_POSTS,
             batch.accounts[0].kind,
         )

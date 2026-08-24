@@ -29,7 +29,7 @@ from tests.integration._collection_application_support import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from social_media_subscriber.storage.snapshot import SnapshotManifest, SnapshotState
+    from social_media_subscriber.storage.snapshot import SnapshotState, SnapshotSummary
 
 
 @pytest.mark.anyio
@@ -46,14 +46,10 @@ async def test_all_success_new_run_writes_valid_candidate(tmp_path: Path) -> Non
     assert result.candidate_change is CandidateChange.CHANGED
     assert result.digest is not None
     assert state is not None
-    assert (len(state.accounts), len(state.posts), len(state.source_records)) == (
-        1,
-        1,
-        1,
-    )
+    assert (len(state.accounts), len(state.posts)) == (1, 1)
     assert client.calls[-1] == (
         "person_posts",
-        ((date(2026, 8, 13), date(2026, 8, 20)),),
+        ((date(2003, 5, 5), date(2026, 8, 20)),),
     )
 
 
@@ -72,12 +68,8 @@ async def test_posts_first_unknown_uses_posts_without_identity_lookup(
     assert result.exit_code is CollectionExitCode.SUCCESS
     assert result.failed_accounts == 0
     assert state is not None
-    assert (len(state.accounts), len(state.posts), len(state.source_records)) == (
-        1,
-        1,
-        1,
-    )
-    assert client.calls == [("person_posts", ((date(2026, 8, 13), date(2026, 8, 20)),))]
+    assert (len(state.accounts), len(state.posts)) == (1, 1)
+    assert client.calls == [("person_posts", ((date(2003, 5, 5), date(2026, 8, 20)),))]
 
 
 @pytest.mark.anyio
@@ -118,7 +110,7 @@ async def test_overlap_rerun_is_byte_identical_no_change(tmp_path: Path) -> None
     assert first.exit_code is second.exit_code is CollectionExitCode.SUCCESS
     assert second.candidate_change is CandidateChange.UNCHANGED
     assert tree(tmp_path / "second") == before
-    assert client.calls == [("person_posts", ((date(2026, 8, 15), date(2026, 8, 20)),))]
+    assert client.calls == [("person_posts", ((date(2026, 8, 17), date(2026, 8, 20)),))]
 
 
 @pytest.mark.anyio
@@ -149,8 +141,8 @@ async def test_post_or_source_only_change_updates_candidate(
     state = SnapshotRepository(tmp_path / "changed").load_optional()
     assert result.candidate_change is CandidateChange.CHANGED
     assert state is not None
-    assert state.posts[0].text == expected_text
-    assert state.source_records[0].payload["num_likes"] == expected_likes
+    assert state.posts[0].content["text"] == expected_text
+    assert state.posts[0].content["num_likes"] == expected_likes
 
 
 @pytest.mark.anyio
@@ -171,10 +163,10 @@ async def test_known_zero_posts_preserves_history(tmp_path: Path) -> None:
     state = SnapshotRepository(tmp_path / "zero").load_optional()
     assert result.candidate_change is CandidateChange.UNCHANGED
     assert state is not None
-    assert len(state.posts) == len(state.source_records) == 1
+    assert len(state.posts) == 1
     assert tree(tmp_path / "zero") == prior
     assert zero_client.calls == [
-        ("person_posts", ((date(2026, 8, 15), date(2026, 8, 20)),))
+        ("person_posts", ((date(2026, 8, 17), date(2026, 8, 20)),))
     ]
 
 
@@ -203,20 +195,13 @@ async def test_mixed_existing_and_new_urls_use_incremental_and_initial_windows(
     state = SnapshotRepository(tmp_path / "mixed").load_optional()
     assert result.exit_code is CollectionExitCode.SUCCESS
     assert state is not None
-    assert (len(state.accounts), len(state.posts), len(state.source_records)) == (
-        2,
-        2,
-        2,
-    )
+    assert (len(state.accounts), len(state.posts)) == (2, 2)
     assert {post.account_id for post in state.posts} == {
         account.id for account in state.accounts
     }
-    assert {source.account_id for source in state.source_records} == {
-        account.id for account in state.accounts
-    }
     assert client.calls == [
-        ("person_posts", ((date(2026, 8, 15), date(2026, 8, 20)),)),
-        ("company_posts", ((date(2026, 8, 13), date(2026, 8, 20)),)),
+        ("person_posts", ((date(2026, 8, 17), date(2026, 8, 20)),)),
+        ("company_posts", ((date(2003, 5, 5), date(2026, 8, 20)),)),
     ]
 
 
@@ -244,7 +229,7 @@ async def test_mixed_known_unknown_merges_and_writes_exactly_once(
     def track_write(
         repository: SnapshotRepository,
         state: SnapshotState,
-    ) -> SnapshotManifest:
+    ) -> SnapshotSummary:
         nonlocal write_calls
         write_calls += 1
         return original_write(repository, state)
@@ -269,6 +254,6 @@ async def test_mixed_known_unknown_merges_and_writes_exactly_once(
     assert result.exit_code is CollectionExitCode.SUCCESS
     assert merge_calls == write_calls == 1
     assert client.calls == [
-        ("person_posts", ((date(2026, 8, 15), date(2026, 8, 20)),)),
-        ("company_posts", ((date(2026, 8, 13), date(2026, 8, 20)),)),
+        ("person_posts", ((date(2026, 8, 17), date(2026, 8, 20)),)),
+        ("company_posts", ((date(2003, 5, 5), date(2026, 8, 20)),)),
     ]

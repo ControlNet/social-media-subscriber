@@ -12,7 +12,7 @@ if TYPE_CHECKING:
         PostId,
     )
     from social_media_subscriber.domain.platform import AccountKind, Platform
-    from social_media_subscriber.domain.post import Post, PostKind
+    from social_media_subscriber.domain.post import Post
 
 __all__ = [
     "Account",
@@ -23,7 +23,6 @@ __all__ = [
     "PlatformPostId",
     "Post",
     "PostId",
-    "PostKind",
 ]
 
 _EXPORTS: Final = {
@@ -38,7 +37,6 @@ _EXPORTS: Final = {
     ),
     "Post": ("social_media_subscriber.domain.post", "Post"),
     "PostId": ("social_media_subscriber.domain.ids", "PostId"),
-    "PostKind": ("social_media_subscriber.domain.post", "PostKind"),
 }
 
 

@@ -39,12 +39,12 @@ diff; and `verify` exits `0`. If `schemas-check` reports a diff, do not discard
 it blindly—inspect it and either regenerate/commit the intended contract change
 or restore the known-good worktree according to your normal review process.
 
-The URL identity v2 documentation and repository contracts can be checked
+The persisted data documentation and repository contracts can be checked
 without a provider, credential, Git remote, or publication target. From the
 repository root, these are copy-pastable offline Pixi commands:
 
 ```sh
-pixi run test tests/unit/test_documentation_contract.py -k url_identity_docs -q
+pixi run test tests/unit/test_documentation_contract.py -k persisted_data_docs -q
 pixi run schemas-check
 pixi run verify
 ```
@@ -64,26 +64,30 @@ integrity failure. It does not contact a provider or Git remote.
 
 ## Secrets: multiline, non-repository handling
 
-`ACCOUNTS` and `BRIGHT_DATA_API_KEYS` are newline-delimited values. The parser
-trims blank lines and de-duplicates values in first-seen order. For `ACCOUNTS`,
-each line must be an approved public LinkedIn person/company locator; credentials
-and query parameters are rejected. Do not put either value in a shell command,
-shell history, `.env.local`, tracked file, or a workflow input.
+`ACCOUNTS` and `SOURCES` are newline-delimited values. For `ACCOUNTS`, each line
+must be an approved public LinkedIn person/company locator; credentials and
+query parameters are rejected. Each non-empty `SOURCES` line must follow
+`<source_id>:<api_token>`. The parser splits only the first colon, so provider
+tokens may contain additional colons. Source IDs are case-normalized, unknown
+IDs reject the whole input, and exact source/token duplicates keep only their
+first occurrence. The current allowlist contains only `brightdata`. Line order
+is failover priority. Do not put either value in a shell command, shell history,
+`.env.local`, tracked file, or a workflow input.
 
 Prepare files outside the repository with restrictive permissions, populate them
 only through a trusted local editor or secret manager, and use shell redirection
 so the secret is not an argument. The following commands are copy-pastable;
-they deliberately create empty temporary files and do not invent account or key
+they deliberately create empty temporary files and do not invent account or source
 values:
 
 ```sh
 umask 077
 accounts_file="$(mktemp -t subscriber-accounts.XXXXXX)"
-keys_file="$(mktemp -t subscriber-keys.XXXXXX)"
+sources_file="$(mktemp -t subscriber-sources.XXXXXX)"
 "${EDITOR:?set EDITOR to a trusted editor}" "$accounts_file"
-"${EDITOR:?set EDITOR to a trusted editor}" "$keys_file"
+"${EDITOR:?set EDITOR to a trusted editor}" "$sources_file"
 gh secret set ACCOUNTS < "$accounts_file"
-gh secret set BRIGHT_DATA_API_KEYS < "$keys_file"
+gh secret set SOURCES < "$sources_file"
 ```
 
 Run these only from the intended GitHub repository context after confirming the
@@ -117,6 +121,9 @@ remediated and rescanned. `staged` intentionally scans only staged paths.
 The collection workflow has a UTC cron schedule, `17 3 * * *`, and
 `workflow_dispatch` inputs `start_date` and `end_date`. A manual request must
 provide both dates or neither; dates are inclusive and must not be inverted.
+Scheduled collection runs once per day. Accounts absent from the previous
+snapshot are backfilled from `2003-05-05`; accounts already present use an
+inclusive window from the UTC run date minus three days through the run date.
 Use a manual dispatch only for an approved bounded operation. Read GitHub's
 official [workflow events documentation](https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows)
 for schedule/manual trigger behavior.
@@ -126,24 +133,25 @@ Workflow permissions are intentionally split:
 | Job | `contents` permission | Purpose |
 | --- | --- | --- |
 | CI | `read` | Verify source on push/pull request. |
-| Collection preflight | `read` | Detect whether both provider secrets are available. |
+| Collection preflight | `read` | Detect whether both runtime secrets are available. |
 | Collection publication | `write` | Verify, collect, and update the leased `dist` snapshot only. |
 
-A scheduled run with either secret absent reports a successful disabled
-collection. A manual run with either secret absent fails preflight. Collection
+A scheduled run with `ACCOUNTS` or `SOURCES` absent reports a successful
+disabled collection. A manual run with either one absent fails preflight. Collection
 serialization uses the `social-media-subscriber-dist` concurrency group and
 does not cancel an in-progress job. Do not change the job permission or
 concurrency policy to make an ad-hoc test easier.
 
 ## Collection operation and exit response
 
-### URL identity v2 operator contract
+### Persisted data operator contract
 
-Each approved input canonicalizes to the Account key. The persisted invariant
-is `Account.id == Account.profile_url`; each `Post.account_id` and Bright Data
-source-record account_id must equal that exact canonical URL. A changed slug is
-a distinct Account, not a rename. No migration or compatibility reader is
-provided. Alias reconciliation and entity merging are not supported here.
+Each approved input canonicalizes to the Account key. `profile_url` is the only
+persisted Account identity, and each `Post.account_profile_url` must equal that
+exact canonical URL. Runtime code exposes derived `Account.id`, `Post.id`, and
+`Post.content_hash` properties without duplicating them in JSON. A changed slug
+is a distinct Account, not a rename. Alias reconciliation and entity merging are
+not supported here.
 Downstream consumers own those cross-URL decisions.
 
 Every provider record must include at least one of
@@ -153,12 +161,12 @@ requires the one resulting canonical URL to equal the requested Account.
 `user_id` is optional provider payload data only; it is not consulted for
 ownership, routing, discovery, or merging.
 
-Account, Post, and Bright Data source records are `schema_version: 2`. Legacy v1
-records and snapshots are rejected before provider or publication work; the
-snapshot manifest remains at its existing version and shape. A successful
-response with zero records (or only non-original records) is success and creates
-the requested Account without Posts/source records. A typed `NOT_FOUND` does
-not create a new Account; on refresh, prior history is retained.
+The persisted dataset contains only `accounts.json`, Account records, and
+unified Platform Post records. It does not contain a feed, provider source copy,
+or snapshot manifest. A successful response with zero records creates the
+requested Account without Posts. Reply, repost, quote, media-only, and unknown
+provider post types are retained. A typed `NOT_FOUND` does not create a new
+Account; on refresh, prior history is retained.
 
 For typed input/`NOT_FOUND` and terminal provider failures,
 `failed_account_ids` contains canonical requested LinkedIn URLs. An integrity,
@@ -178,17 +186,22 @@ pixi run subscriber collect \
   --end-date YYYY-MM-DD
 ```
 
-Omit both date options only for the default incremental policy. The initial
-window is seven days ending at the UTC run date; known accounts overlap their
-newest persisted post date by three days. A complete explicit pair replaces all
-per-account default windows. Do not execute that command for exploratory CLI
+Omit both date options only for the default policy. An Account absent from the
+previous snapshot is backfilled from LinkedIn's launch date, `2003-05-05`,
+through the UTC run date. An Account already present uses the inclusive range
+from the run date minus three days through the run date, even when it has no
+persisted Posts. A complete explicit pair replaces all per-account defaults.
+First-time backfills may take substantially longer and consume more provider
+credits; the Bright Data snapshot wait limit is 30 minutes. A valid JSON list
+without provider errors is required, but Bright Data exposes no independently
+verifiable truncation marker. Do not execute this command for exploratory CLI
 testing: it is a live provider action.
 
 | Exit | Binary observable | Required action |
 | --- | --- | --- |
 | `0` | JSON `candidate_change` is `changed` or `unchanged`. | Verify the candidate. An unchanged state is normal. |
 | `2` | JSON shows no candidate and invalid input/configuration. | Correct the malformed path/date/account configuration or missing secret. |
-| `3` | JSON shows no candidate after provider pool exhaustion. | Stop. Check authorized provider status/capacity; do not cycle keys outside policy. |
+| `3` | JSON shows no candidate after provider pool exhaustion. | Stop. Check authorized provider status/capacity; do not reorder or cycle sources outside policy. |
 | `4` | JSON names a valid partial candidate and failed-account count. | Alert the named operator; inspect redacted logs and account-level outcomes. The workflow verifies/publishes the candidate, then exits `4` to leave an alert. |
 | `5` | JSON has `candidate_change: "absent"` after integrity/schema/merge/storage failure. | Contain. Do not publish or hand-edit the tree; preserve redacted diagnostics and investigate. |
 | `6` | `publish-dist` reports a publication error. | Treat as a stale/invalid lease or Git failure; never force or retry the same attempt. |
@@ -250,7 +263,7 @@ all of the following in the approved change record:
 
 Immediately before the opt-in run, check the redaction boundary without printing
 secret contents: confirm the two environment variables are set in the current
-process, confirm the account/key files are outside the repository, and capture
+process, confirm the account/source files are outside the repository, and capture
 only `git status --short`, command exit code, and the emitted redacted JSON
 summary. If the credit gate is not explicitly approved, the process hangs, the
 provider returns unexpected text, or the date/account scope differs from the
@@ -262,7 +275,7 @@ the retention policy, Trash the temporary secret files, unset the two
 environment variables, and confirm the source worktree is clean:
 
 ```sh
-unset ACCOUNTS BRIGHT_DATA_API_KEYS
+unset ACCOUNTS SOURCES
 git status --short
 ```
 
@@ -283,7 +296,7 @@ be useful for investigation but is not a lease replacement.
 ### Partial, provider, or schema failure
 
 For `4`, investigate the failed account count and run-local instance health
-without exposing keys. For `3`, stop until capacity/authorization is restored.
+without exposing credentials. For `3`, stop until capacity/authorization is restored.
 For `5`, do not patch snapshot files or bypass validation; compare against the
 last verified snapshot and capture redacted diagnostic categories. Re-run only
 after the cause has been corrected and the policy gate remains valid.

@@ -27,17 +27,32 @@ test_empty_account_set_succeeds_without_provider_calls = (
 test_zero_instance_pool_returns_account_scoped_exhaustion = (
     account_routing.test_zero_instance_pool_returns_account_scoped_exhaustion
 )
-test_batches_are_bounded_and_stably_distributed = (
-    account_routing.test_batches_are_bounded_and_stably_distributed
+test_batches_are_bounded_and_start_with_first_source = (
+    account_routing.test_batches_are_bounded_and_start_with_first_source
 )
 test_person_and_company_batches_are_separate_and_stable = (
     account_routing.test_person_and_company_batches_are_separate_and_stable
+)
+test_non_batching_compatible_driver_forces_single_account_batches = (
+    account_routing.test_non_batching_compatible_driver_forces_single_account_batches
+)
+test_router_creates_one_instance_per_source_with_the_same_driver = (
+    account_routing.test_router_creates_one_instance_per_source_with_the_same_driver
+)
+test_router_rejects_unregistered_instance_spec = (
+    account_routing.test_router_rejects_unregistered_instance_spec
+)
+test_router_rejects_factory_instance_for_a_different_driver = (
+    account_routing.test_router_rejects_factory_instance_for_a_different_driver
 )
 test_disabled_instance_fails_over_once_for_the_run = (
     account_failover.test_disabled_instance_fails_over_once_for_the_run
 )
 test_transient_pre_acceptance_failure_tries_each_instance_once = (
     account_failover.test_transient_pre_acceptance_failure_tries_each_instance_once
+)
+test_retryable_failure_can_fall_back_to_another_provider_driver = (
+    account_failover.test_retryable_failure_can_fall_back_to_another_provider_driver
 )
 
 
@@ -77,12 +92,9 @@ test_health_is_fresh_for_each_route_call = (
 test_duplicate_post_ids_are_idempotent_within_a_result = (
     account_ownership.test_duplicate_post_ids_are_idempotent_within_a_result
 )
-test_equivalent_source_records_collapse_with_deterministic_skips = (
-    account_ownership.test_equivalent_source_records_collapse_with_deterministic_skips
+test_differing_canonical_post_payload_aborts_all_output = (
+    account_ownership.test_differing_canonical_post_payload_aborts_all_output
 )
-test_differing_source_payload_aborts_and_suppresses_all_output = (
-    account_ownership.test_differing_source_payload_aborts_and_suppresses_all_output
-)
-test_source_account_ownership_mismatch_aborts_without_output = (
-    account_ownership.test_source_account_ownership_mismatch_aborts_without_output
+test_post_account_ownership_mismatch_aborts_without_output = (
+    account_ownership.test_post_account_ownership_mismatch_aborts_without_output
 )

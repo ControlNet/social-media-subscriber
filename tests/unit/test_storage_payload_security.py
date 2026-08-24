@@ -1,66 +1,40 @@
 from __future__ import annotations
 
-import hashlib
 from typing import TYPE_CHECKING
 
-from pydantic import TypeAdapter
+import pytest
 
-from social_media_subscriber.providers.brightdata.models import JsonValue
-from social_media_subscriber.serialization.json import (
-    canonical_json_bytes,
-    canonical_json_value_bytes,
+from social_media_subscriber.storage.repository import (
+    SnapshotIntegrityError,
+    SnapshotRepository,
 )
-from social_media_subscriber.storage.layout import MANIFEST, snapshot_digest
-from social_media_subscriber.storage.repository import SnapshotRepository
-from social_media_subscriber.storage.snapshot import SnapshotManifest
 from tests.unit.test_storage_repository import storage_state
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-_JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 
-
-def _refresh_manifest_digest(root: Path) -> None:
-    non_manifest = {
-        path.relative_to(root): path.read_bytes()
-        for path in root.rglob("*")
-        if path.is_file() and path.relative_to(root) != MANIFEST
-    }
-    manifest = SnapshotManifest.model_validate_json((root / MANIFEST).read_bytes())
-    _ = (root / MANIFEST).write_bytes(
-        canonical_json_bytes(
-            manifest.model_copy(update={"digest": snapshot_digest(non_manifest)})
-        )
-    )
-
-
-def test_repository_preserves_rehashed_ordinary_source_metrics(tmp_path: Path) -> None:
+def test_repository_rejects_unknown_persisted_fields(tmp_path: Path) -> None:
     root = tmp_path / "dist"
     _ = SnapshotRepository(root).write(storage_state())
-    record = next(root.glob("source/brightdata/linkedin/posts/*.json"))
-    source = _JSON_OBJECT.validate_json(record.read_bytes())
-    payload = _JSON_OBJECT.validate_python(source["payload"])
-    ordinary: dict[str, JsonValue] = {
-        "request_count": 12,
-        "response_rate": 0.95,
-        "error_rate": 0.05,
-        "header_count": 4,
-        "cookie_count": 2,
-        "token_count": 8,
-        "bearer_count": 1,
-        "secret_count": 0,
-        "authentication_rate": 0.9,
-    }
-    payload.update(ordinary)
-    source["payload"] = payload
-    source["payload_sha256"] = hashlib.sha256(
-        canonical_json_value_bytes(payload)
-    ).hexdigest()
-    _ = record.write_bytes(canonical_json_value_bytes(source))
-    _refresh_manifest_digest(root)
+    record = next(root.glob("posts/linkedin/*.json"))
+    payload = record.read_text().replace(
+        '"type": "post"', '"schema_version": 2,\n  "type": "post"'
+    )
+    _ = record.write_text(payload)
+
+    with pytest.raises(SnapshotIntegrityError):
+        _ = SnapshotRepository(root).load_optional()
+
+
+def test_repository_round_trips_safe_metrics_inside_post_content(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "dist"
+    state = storage_state()
+    _ = SnapshotRepository(root).write(state)
 
     loaded = SnapshotRepository(root).load_optional()
 
     assert loaded is not None
-    assert loaded.source_records[0].payload.items() >= ordinary.items()
+    assert loaded.posts[0].content["num_likes"] == 1

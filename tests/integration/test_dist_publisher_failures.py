@@ -39,7 +39,7 @@ from tests.unit.test_storage_repository import tree_bytes
 
 if TYPE_CHECKING:
     from social_media_subscriber.storage.safe_tree import DirectoryTree
-    from social_media_subscriber.storage.snapshot import SnapshotState
+    from social_media_subscriber.storage.snapshot import SnapshotState, SnapshotSummary
 
 
 def test_absent_lease_fails_when_dist_appeared_before_publication(
@@ -142,14 +142,16 @@ def test_candidate_root_replacement_after_validation_is_rejected_before_git(
 
     class ReplacingRepository(SnapshotRepository):
         @override
-        def _load_tree(self, tree: DirectoryTree) -> SnapshotState:
+        def _load_tree(
+            self, tree: DirectoryTree
+        ) -> tuple[SnapshotState, SnapshotSummary]:
             nonlocal replaced
-            state = super()._load_tree(tree)
+            result = super()._load_tree(tree)
             if not replaced:
                 replaced = True
                 _ = candidate.rename(validated)
                 candidate.symlink_to(outside, target_is_directory=True)
-            return state
+            return result
 
     def guarded_read_bytes(path: Path) -> bytes:
         nonlocal external_read

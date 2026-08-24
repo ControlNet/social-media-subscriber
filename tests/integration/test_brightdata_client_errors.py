@@ -203,6 +203,7 @@ async def test_snapshot_poll_timeout_is_distinct_and_does_not_retrigger() -> Non
             "credential-canary",
             HttpClientConfig(base_url=base_url),
             sleeper=sleeper,
+            snapshot_timeout_seconds=300.0,
         )
         async with client:
             with pytest.raises(BrightDataError) as captured:

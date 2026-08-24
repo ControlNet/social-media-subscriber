@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from social_media_subscriber.serialization.json import JsonBoundaryModel
 
 
-def test_successful_v2_promotion_is_deterministic_and_cleans_temporary_paths(
+def test_successful_promotion_is_deterministic_and_cleans_temporary_paths(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "dist"
@@ -74,7 +74,7 @@ def test_runtime_encoding_failure_is_typed_and_preserves_prior_tree(
 
     # When / Then
     with pytest.raises(SnapshotIntegrityError):
-        _ = failing.write(SnapshotState((), (), ()))
+        _ = failing.write(SnapshotState((), ()))
     assert tree_bytes(root) == before
     assert good.load_optional() == storage_state()
 
@@ -106,7 +106,7 @@ def test_partial_write_failure_never_promotes_candidate(
     assert tree_bytes(root) == before
 
 
-def test_interrupted_v2_promotion_preserves_previous_bytes(
+def test_interrupted_promotion_preserves_previous_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Given
@@ -123,7 +123,7 @@ def test_interrupted_v2_promotion_preserves_previous_bytes(
         anchor: DirectoryAnchor, source: str, target: str
     ) -> None:
         if target == anchor.entry_name and ".previous." not in source:
-            message = "injected v2 candidate promotion interruption"
+            message = "injected candidate promotion interruption"
             raise OSError(message)
         original_rename(anchor, source, target)
 
@@ -131,7 +131,7 @@ def test_interrupted_v2_promotion_preserves_previous_bytes(
 
     # When
     with pytest.raises(SnapshotIntegrityError):
-        _ = repository.write(SnapshotState((), (), ()))
+        _ = repository.write(SnapshotState((), ()))
     after_bytes = tree_bytes(root)
 
     # Then
@@ -161,7 +161,7 @@ def test_backup_cleanup_failure_rolls_back_candidate(
     monkeypatch.setattr(shutil, "rmtree", fail_backup_cleanup)
 
     with pytest.raises(SnapshotIntegrityError):
-        _ = repository.write(SnapshotState((), (), ()))
+        _ = repository.write(SnapshotState((), ()))
 
     assert tree_bytes(root) == before
     assert repository.load_optional() == prior

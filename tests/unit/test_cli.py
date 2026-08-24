@@ -16,7 +16,7 @@ from social_media_subscriber.cli import create_app
 from social_media_subscriber.publishing.git import (
     Published,
 )
-from social_media_subscriber.storage.snapshot import SnapshotManifest
+from social_media_subscriber.storage.snapshot import SnapshotSummary
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -54,12 +54,11 @@ class FakeApplication:
         self.collect_calls.append(request)
         return self.collection_result
 
-    def verify(self, snapshot: Path) -> SnapshotManifest:
+    def verify(self, snapshot: Path) -> SnapshotSummary:
         _ = snapshot
-        return SnapshotManifest(
+        return SnapshotSummary(
             account_count=1,
             post_count=2,
-            source_record_count=2,
             digest="b" * 64,
         )
 
@@ -122,7 +121,7 @@ def test_collect_passes_complete_explicit_date_window() -> None:
         ],
         env={
             "ACCOUNTS": "https://www.linkedin.com/in/synthetic/",
-            "BRIGHT_DATA_API_KEYS": "canary-secret",
+            "SOURCES": "brightdata:canary-secret",
         },
     )
 

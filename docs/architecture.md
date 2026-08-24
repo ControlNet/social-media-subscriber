@@ -2,22 +2,23 @@
 
 ## Boundary model
 
-The system separates provider-specific evidence from canonical subscription
-data. This is intentional: a provider payload can change as metrics or fields
-evolve without silently changing the canonical account/post model.
+The system converts provider responses into one provider-neutral Platform Post
+boundary. Fixed cross-adapter fields carry identity and ownership; an open
+content object retains safe provider content without forcing every adapter into
+one provider's schema.
 
 ```text
-authorized public account locators + credential pool
+authorized public account locators + ordered source definitions
                 │
                 ▼
-Settings → strict input parser → explicit registry → credential-bound instances
+Settings → strict runtime parser → source composers → credential-bound instances
                 │                                      │
                 └──────── normal Account Posts Router ─┘
                               │ strict actor-URL ownership
                               ▼
                      Post Router + per-account windows
                               │
-          provider source records + canonical original Posts
+                   unified Platform Posts
                               │
                               ▼
                  deterministic merge → atomic snapshot tree
@@ -26,34 +27,29 @@ Settings → strict input parser → explicit registry → credential-bound inst
                  validate → immutable leased `dist` publication
 ```
 
-The only currently registered production driver is the Bright Data LinkedIn
-adapter. Its presence is explicit in bootstrap; no discovery mechanism creates
-arbitrary adapters or credential clients at runtime.
+The only currently supported production source ID is `brightdata`, which
+explicitly composes the Bright Data LinkedIn adapter. No discovery mechanism,
+module path, or environment-provided class name creates arbitrary adapters or
+credential clients at runtime.
 
 ## Canonical records and schemas
 
 The checked-in JSON Schemas are the public persistence contract:
 
-- [`schemas/account.schema.json`](../schemas/account.schema.json) defines a
-  canonical `Account`: `schema_version: 2`, canonical URL `id`, `platform`,
-  `kind`, the identical canonical URL `profile_url`, and `first_seen_at`.
-- [`schemas/post.schema.json`](../schemas/post.schema.json) defines a canonical
-  original `Post`: `schema_version: 2`, canonical `id`, provider post ID,
-  canonical URL owning `account_id`, canonical Post URL,
-  published/first-seen timestamps, text, fixed `kind: "original"`,
-  de-duplicated hashtags/links, and content hash.
-- [`schemas/brightdata-linkedin-post.schema.json`](../schemas/brightdata-linkedin-post.schema.json)
-  defines the `schema_version: 2` provenance record: fixed
-  `provider: "brightdata"` and dataset, provider post ID, canonical URL
-  account ownership, payload SHA-256, and the provider payload. It is evidence,
-  not the downstream canonical Post.
+- [`schemas/account.schema.json`](../schemas/account.schema.json) defines an
+  Account with `platform`, `kind`, canonical `profile_url`, and `first_seen_at`.
+  `profile_url` is the sole persisted identity; the runtime `id` property is an
+  alias used by routing and merge code.
+- [`schemas/post.schema.json`](../schemas/post.schema.json) defines a unified
+  Platform Post with `platform_post_id`, `account_profile_url`, canonical URL,
+  publication/first-seen timestamps, `type`, and `content`. The fixed boundary
+  fields reject unknown keys. `content` intentionally accepts recursive JSON so
+  adapters can retain text, media, documents, links, metrics, and future fields.
 
-All three record formats forbid unknown boundary fields. Legacy Account, Post,
-and source-record v1 records and snapshots are rejected; there is no dual-read
-or conversion path. The snapshot manifest retains its existing shape and
-`schema_version: 1`, and its digest algorithm is unchanged. The schema generator
-is `pixi run schemas`; `pixi run schemas-check` proves the checked-in files match
-the generator.
+There is no persisted format version, provider source-record format, or
+manifest format. The repository validates the exact current contract instead
+of maintaining compatibility readers. The schema generator is `pixi run
+schemas`; `pixi run schemas-check` proves the checked-in files match it.
 
 ## Account and post identity
 
@@ -65,9 +61,9 @@ percent-encoded slug variants, and non-person/company paths. It does not retain
 arbitrary user text downstream.
 
 The strict locator parser is the only Account canonicalization authority. For
-every persisted Account, `Account.id == Account.profile_url` and both values are
-the parser's canonical person/company URL. `Post.account_id` and the Bright Data
-source-record account_id must equal that same URL. Requests are routed directly
+every persisted Account, `profile_url` is the parser's canonical person/company
+URL. Runtime `Account.id` returns the same value. `Post.account_profile_url`
+must equal that URL. Requests are routed directly
 through the normal Posts route in kind-homogeneous batches (maximum 20); there
 is no Identity/Profile lookup route.
 
@@ -85,34 +81,47 @@ URL, and then requires that URL to equal the exact requested Account URL.
 `user_id` is optional provider payload data only and cannot establish ownership
 when actor URL evidence is absent.
 
-Canonical post identity is `linkedin:post:<provider-post-id>`. The provider
-source record is keyed by the same canonical post identity and includes the raw
-payload's hash. An equivalent repeated record is deduplicated; conflicting
-account ownership or payload hash is a schema/integrity abort, not a merge
-preference.
+Canonical runtime post identity is `linkedin:post:<platform-post-id>`. It is
+derived for filenames and merge checks but is not duplicated in JSON. An
+equivalent repeated record is deduplicated; conflicting account ownership or
+content is a schema/integrity abort, not a merge preference.
 
 ## Adapter registry, metadata, and credential instances
 
 An adapter driver declares immutable metadata at class definition time:
 platform, supported operations, supported account kinds, and whether it batches.
 `AdapterRegistry` is an explicit ordered tuple. It rejects missing/malformed
-metadata, duplicate driver classes, duplicate capability descriptors, empty or
-repeated operations/account kinds. A capability lookup returns only drivers that
-match `(platform, operation, account kind)` in declared order.
+metadata, duplicate driver classes, and empty or repeated operations/account
+kinds. Multiple drivers may declare the same capability; a lookup returns every
+driver matching `(platform, operation, account kind)`. Registry order remains
+deterministic capability metadata; runtime source order, not registry order,
+defines provider priority.
 
-`BRIGHT_DATA_API_KEYS` is parsed as newline-delimited secret material, empty
-lines removed, and duplicate strings removed while preserving order. Bootstrap
-creates exactly one opaque `AdapterInstance` for each parsed credential and
-assigns a run-local ordinal. Credentials never become record fields, output
-values, diagnostic strings, or persistent fingerprints.
+`SOURCES` is a newline-delimited ordered list. Every non-empty line is parsed by
+splitting only its first colon into `<source_id>:<api_token>`. Source IDs are
+case-normalized and resolved through a code-owned explicit allowlist; malformed
+or unsupported IDs reject the complete input before client creation. Exact
+`source_id + token` duplicates are removed while preserving first occurrence.
+The token may contain additional colons and remains secret material.
 
-The Router owns exactly one immutable instance tuple shared by every Posts
-batch. There is no identity resolution path and no second credential pool. For
-an eligible batch, instances are deterministically rotated. A retryable failure
-may move to the next healthy instance; quota exhaustion or invalid credentials
-disable only that instance for this run. Invalid/not-found accounts are
+Each source composer returns only the adapter instances that provider explicitly
+supports. Enabling a source never creates a Cartesian product with every known
+platform. One source line may produce multiple instances only when its code-owned
+composer explicitly declares those adapters. Instances receive one global
+run-local ordinal in source and composer order. Credentials never become record
+fields, output values, diagnostic strings, or persistent fingerprints.
+`build_runtime`, `compose_runtime`, and the collection runtime-builder hook are
+the extension points for additional providers.
+
+The Router owns exactly one immutable heterogeneous instance tuple shared by
+every Posts batch. Every eligible batch starts with the first compatible source
+in `SOURCES` order. A retryable failure may move to the next healthy source;
+quota exhaustion or invalid credentials disable only that instance for this
+run. Invalid/not-found accounts are
 account-scoped and do not rotate credentials. A schema or ownership corruption
-aborts the run and suppresses candidate posts/source records.
+aborts the run and suppresses candidate posts. If any instantiated fallback for
+a capability cannot batch, the Router uses single-account batches so every
+fallback remains valid.
 
 ## Per-account collection windows
 
@@ -120,17 +129,27 @@ Each accepted `AdapterPostRequest` has one canonical account and one inclusive
 UTC date range. Windows are calculated independently, not as a global provider
 filter:
 
-- A previously unseen account starts at `run_start_date - 7 days` and ends at
-  `run_start_date`.
-- A known account starts at that account's newest persisted `published_at` date
-  minus 3 days and ends at `run_start_date`.
+- An account absent from the previous snapshot's Account set starts at the
+  LinkedIn launch date, `2003-05-05`, and ends at `run_start_date`.
+- An account already present in the previous snapshot starts at
+  `run_start_date - 3 days` and ends at `run_start_date`. Because the range is
+  inclusive, this covers the run date and the preceding three UTC dates.
+- Account presence, not Post presence, determines the default. An Account that
+  previously produced zero Posts still uses the three-day window on its next
+  run.
 - A complete explicit `--start-date` and `--end-date` pair replaces both
   defaults for every account. One missing side or an inverted range is rejected
   before provider I/O.
 
-The overlap protects against late availability and changes around the last
-observed boundary. Identical duplicate account/window requests collapse;
-different windows for the same account fail before collection.
+The overlap protects against late publication and provider availability.
+Identical duplicate account/window requests collapse; different windows for
+the same account fail before collection. An Adapter must return the complete
+available result for its requested window or classify the attempt as a failure.
+The Bright Data client accepts a snapshot only after it reaches `ready`, then
+requires the download to be a valid complete JSON list with no embedded
+provider errors. Bright Data currently exposes no independently verifiable
+truncation marker, so the application cannot prove that the provider did not
+silently truncate an otherwise valid download.
 
 ## Snapshot storage and atomic candidate creation
 
@@ -140,18 +159,15 @@ records are deterministic JSON.
 ```text
 <snapshot-root>/
 ├── accounts/<encoded canonical Account ID>.json
-├── accounts.json                         # Account ID → record path index
-├── feed.json                             # canonical Post IDs in feed order
-├── posts/linkedin/<encoded canonical Post ID>.json
-├── source/brightdata/linkedin/posts/<encoded canonical Post ID>.json
-└── snapshot.json                         # counts + digest, written last
+├── accounts.json                         # profile_url → record path map
+└── posts/linkedin/<encoded runtime Post ID>.json
 ```
 
-`snapshot.json` contains `schema_version`, `account_count`, `post_count`,
-`source_record_count`, and a 64-character SHA-256 digest. The digest is computed
-over every non-manifest file in POSIX path order as `path UTF-8`, NUL byte, then
-the exact bytes. Verification reloads the complete tree and rejects inventory,
-index, schema, ownership, ordering, or digest inconsistencies.
+There are no derived feed, source-copy, or manifest files. Verification reloads
+the complete tree, regenerates the expected account map and record paths, and
+rejects inventory, index, schema, ownership, or byte inconsistencies. Counts and
+a SHA-256 digest of the complete tree are calculated in memory for CLI and CI
+comparison, but are not persisted into the collected dataset.
 
 A candidate is never assembled in the destination root. The repository writes,
 reloads, and validates a private sibling temporary tree, then promotes it
@@ -172,9 +188,9 @@ directory created by the workflow as a candidate-path placeholder. That
 exception does not apply to snapshot reads: an empty snapshot root remains an
 inventory integrity failure.
 
-A successful response with zero records, or with only non-original records,
-creates the requested URL Account while emitting zero canonical Posts and
-source records. A typed `NOT_FOUND` is an account-scoped failure instead: it
+A successful response with zero records creates the requested URL Account.
+Reply, repost, quote, media-only, and unknown provider post types are emitted as
+Platform Posts rather than discarded. A typed `NOT_FOUND` is an account-scoped failure instead: it
 does not create a newly requested Account, and a failed refresh preserves prior
 history. Ownership, schema, batch-coverage, duplicate-payload, and referential
 conflicts abort the whole candidate before promotion. The candidate and its

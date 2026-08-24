@@ -8,7 +8,6 @@ from pathlib import Path
 
 from social_media_subscriber.domain import (
     Account,
-    AccountId,
     AccountKind,
     Platform,
 )
@@ -34,18 +33,16 @@ def _git(cwd: Path, *arguments: str) -> str:
 
 def _snapshot(root: Path, account_suffix: str | None = None) -> None:
     if account_suffix is None:
-        state = SnapshotState((), (), ())
+        state = SnapshotState((), ())
     else:
         profile_url = f"https://www.linkedin.com/in/synthetic-{account_suffix}/"
         account = Account(
-            schema_version=2,
-            id=AccountId(profile_url),
             platform=Platform.LINKEDIN,
             kind=AccountKind.PERSON,
             profile_url=profile_url,
             first_seen_at=datetime(2026, 8, 20, 12, tzinfo=UTC),
         )
-        state = SnapshotState((account,), (), ())
+        state = SnapshotState((account,), ())
     _ = SnapshotRepository(root).write(state)
 
 

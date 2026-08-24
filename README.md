@@ -25,24 +25,22 @@ pixi run subscriber verify-snapshot --help
 pixi run subscriber publish-dist --help
 ```
 
-`collect` needs the `ACCOUNTS` and `BRIGHT_DATA_API_KEYS` environment variables
-and performs provider I/O. `verify-snapshot` is local and read-only.
+`collect` needs the multiline `ACCOUNTS` and `SOURCES` environment variables
+and performs provider I/O. Each non-empty `SOURCES` line has the form
+`<source_id>:<api_token>`; source order is failover priority. The currently
+supported source ID is `brightdata`. `verify-snapshot` is local and read-only.
 `publish-dist` mutates the selected Git remote and must be used only under the
 immutable lease described in the runbook; do not run it as a casual local test.
 
-## URL identity v2 boundary
+## Persisted data boundary
 
 Account identity is the exact canonical public LinkedIn person or company URL
-returned by the strict locator parser. The persisted invariant is
-`Account.id == Account.profile_url`; `Post.account_id` and the Bright Data
-source-record account_id use that same URL. A changed LinkedIn slug produces a
-different URL and therefore a distinct Account. Both URL-keyed histories may
-coexist.
-
-Account, Post, and Bright Data source records use `schema_version: 2`. Legacy
-v1 records and snapshots are rejected instead of being converted. No migration
-or compatibility reader is provided. Alias reconciliation and entity merging
-are not supported; those decisions belong to downstream consumers.
+returned by the strict locator parser. `profile_url` is the only persisted
+Account identity field. Runtime code exposes the same value as `Account.id` for
+routing and merge operations, but does not duplicate it in JSON. Each Post uses
+`account_profile_url` for ownership. A changed LinkedIn slug produces a distinct
+Account, so both URL-keyed histories may coexist. Alias reconciliation and
+entity merging belong in the consuming system.
 
 Every successful provider record must supply at least one actor field from
 `use_url, user_url, profile_url, and company_url`. The collector parses every
@@ -52,7 +50,8 @@ URL, and requires that owner to equal the requested Account URL. Provider
 ownership fallback.
 
 A successful response with zero records still persists the requested Account
-with no Posts or source records. A typed `NOT_FOUND` is different: it does not
+with no Posts. Reply, repost, quote, media-only, and provider-defined post types
+are retained rather than filtered. A typed `NOT_FOUND` is different: it does not
 create a new Account, and a failed refresh preserves existing history. For
 account-scoped and terminal provider failures, `failed_account_ids` contains
 canonical requested LinkedIn URLs. Integrity, ownership, schema, coverage, or
@@ -71,20 +70,25 @@ working directory. Its canonical tree is:
 ```text
 snapshot/
 ├── accounts/
-│   └── <canonical-account-id filename>.json
+│   └── <sha256(profile_url)>.json
 ├── accounts.json
-├── feed.json
-├── posts/linkedin/
-│   └── <canonical-post-id filename>.json
-├── source/brightdata/linkedin/posts/
-│   └── <canonical-post-id filename>.json
-└── snapshot.json
+└── posts/linkedin/
+    └── <sha256(platform post identity)>.json
 ```
 
-`snapshot.json` carries record counts and the SHA-256 digest of every
-non-manifest file. `pixi run subscriber verify-snapshot <snapshot>` validates
-the whole tree, generated indexes, record schemas, ownership, and digest before
-reporting its machine-readable result.
+`accounts.json` is a direct `profile_url` to account-record path map. Account
+records contain only `platform`, `kind`, `profile_url`, and `first_seen_at`. Post
+records contain fixed provider-neutral identity, ownership, URL, timestamp, and
+type fields plus an open `content` object. That object preserves safe text,
+images, videos, documents, links, metrics, and provider fields that are not yet
+known to this project. Transport, authentication, request, response, and error
+metadata are rejected before persistence.
+
+The collector deliberately does not emit a feed, provider source copy, or
+snapshot manifest. Feed ordering and other derived views belong to the backend
+compiler that consumes `dist`. `pixi run subscriber verify-snapshot <snapshot>`
+validates the exact file inventory, regenerated account index, record schemas,
+and ownership before reporting counts and a derived digest.
 
 The `dist` branch is an immutable snapshot history: every changed publication
 is a new root commit with no parent. It intentionally does not retain source
@@ -118,7 +122,7 @@ process status and `exit_code` together; do not scrape provider text.
 | Exit | Meaning | Operator action |
 | --- | --- | --- |
 | `0` | Success. Collection has a valid candidate, or verification/publishing completed. | Inspect `candidate_change` or publication `result`; `unchanged` is a normal outcome. |
-| `2` | Invalid CLI input, date window, configuration, or account input. No candidate exists. | Correct the local input or secret value; do not retry unchanged input. |
+| `2` | Invalid CLI input, date window, account locator, or source definition. No candidate exists. | Correct the local input or secret value; do not retry unchanged input. |
 | `3` | Provider pool exhausted before a candidate could be built. No candidate exists. | Pause, inspect authorized credential capacity and provider status, then retry only after remediation. |
 | `4` | Partial collection with a valid candidate (changed or unchanged). | Treat as an alert. The scheduled workflow verifies and publishes that candidate, then fails visibly so the account-level issue is investigated. |
 | `5` | Integrity, schema, merge, or storage abort. No candidate is promoted. | Contain the run, preserve redacted diagnostics, and investigate inputs/provider shape before retrying. |
@@ -135,6 +139,9 @@ GitHub Actions has two separate workflows:
   either provider secret missing exits successfully as disabled; a manual run
   with missing secrets fails preflight. Only the publication job has
   `contents: write`, and only after preflight succeeds.
+- By default, an Account absent from the previous snapshot is backfilled from
+  `2003-05-05`. An existing Account, including one with zero Posts, is collected
+  from the UTC run date minus three days through the run date.
 
 For secret setup, scheduling behavior, incident recovery, and the explicit
 operator-only live smoke procedure, use [docs/operations.md](docs/operations.md).

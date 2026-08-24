@@ -9,7 +9,6 @@ import anyio
 from pydantic_core import PydanticCustomError
 
 from social_media_subscriber.accounts.errors import AccountInputError
-from social_media_subscriber.accounts.input import load_account_input
 from social_media_subscriber.application.collection_phases import (
     CollectedPosts,
     PreparedCollection,
@@ -31,6 +30,7 @@ from social_media_subscriber.providers.brightdata.adapter_contracts import (
     BrightDataAdapterConfig,
 )
 from social_media_subscriber.providers.brightdata.client import BrightDataClient
+from social_media_subscriber.runtime_input import load_runtime_input
 from social_media_subscriber.storage.merge import SnapshotConflictError, merge_snapshot
 from social_media_subscriber.storage.repository import (
     SnapshotIntegrityError,
@@ -46,9 +46,13 @@ if TYPE_CHECKING:
     from social_media_subscriber.providers.brightdata.adapter_contracts import (
         BrightDataClientContract,
     )
+    from social_media_subscriber.runtime_input import RuntimeInput
     from social_media_subscriber.settings import Settings
 
 type ClientBuilder = Callable[[str], BrightDataClientContract]
+
+
+type RuntimeBuilder = Callable[[RuntimeInput, datetime], SubscriberRuntime]
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +78,7 @@ def _prepare(request: CollectionRequest) -> PreparedCollection | CollectionResul
     ):
         return aborted_result(CollectionExitCode.INPUT)
     try:
-        account_input = load_account_input(request.settings)
+        runtime_input = load_runtime_input(request.settings)
         run_started_at = canonical_utc(request.run_started_at)
         override = ExplicitWindow.parse(request.start_date, request.end_date)
         previous = SnapshotRepository(request.previous_snapshot_dir).load_optional()
@@ -82,7 +86,7 @@ def _prepare(request: CollectionRequest) -> PreparedCollection | CollectionResul
         return aborted_result(CollectionExitCode.INPUT)
     except SnapshotIntegrityError:
         return aborted_result(CollectionExitCode.INTEGRITY)
-    return PreparedCollection(account_input, previous, run_started_at, override)
+    return PreparedCollection(runtime_input, previous, run_started_at, override)
 
 
 async def _collect_with_runtime(
@@ -98,7 +102,7 @@ async def _collect_with_runtime(
             pass
     try:
         candidate = merge_snapshot(prepared.previous, post_phase.current)
-        manifest = SnapshotRepository(request.candidate_snapshot_dir).write(candidate)
+        summary = SnapshotRepository(request.candidate_snapshot_dir).write(candidate)
     except (SnapshotConflictError, SnapshotIntegrityError):
         return aborted_result(CollectionExitCode.INTEGRITY)
     exit_code = (
@@ -110,7 +114,7 @@ async def _collect_with_runtime(
     return CollectionResult(
         exit_code,
         CandidateChange.CHANGED if changed else CandidateChange.UNCHANGED,
-        manifest.digest,
+        summary.digest,
         post_phase.succeeded_count,
         post_phase.failed_count,
         post_phase.failed_ids,
@@ -120,6 +124,8 @@ async def _collect_with_runtime(
 async def collect_snapshot(
     request: CollectionRequest,
     client_builder: ClientBuilder = _build_client,
+    *,
+    runtime_builder: RuntimeBuilder | None = None,
 ) -> CollectionResult:
     """Build one validated complete candidate without publishing it."""
     prepared = _prepare(request)
@@ -128,10 +134,14 @@ async def collect_snapshot(
             return terminal
         case PreparedCollection():
             pass
-    runtime = bootstrap_runtime(
-        prepared.account_input,
-        BrightDataAdapterConfig(prepared.run_started_at),
-        client_builder=client_builder,
+    runtime = (
+        bootstrap_runtime(
+            prepared.runtime_input,
+            BrightDataAdapterConfig(prepared.run_started_at),
+            client_builder=client_builder,
+        )
+        if runtime_builder is None
+        else runtime_builder(prepared.runtime_input, prepared.run_started_at)
     )
     try:
         return await _collect_with_runtime(request, prepared, runtime)

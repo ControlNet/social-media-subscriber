@@ -15,9 +15,8 @@ NORMALIZED_IDENTITY_DOCS: Final = " ".join(ALL_IDENTITY_DOCS.replace("`", "").sp
 
 def test_url_identity_docs_define_the_exact_persisted_identity() -> None:
     required_contract = (
-        "Account.id == Account.profile_url",
-        "Post.account_id",
-        "Bright Data source-record account_id",
+        "profile_url is the only persisted Account identity",
+        "Post.account_profile_url",
         "distinct Account",
         "use_url, user_url, profile_url, and company_url",
         "every supplied actor URL",
@@ -27,11 +26,11 @@ def test_url_identity_docs_define_the_exact_persisted_identity() -> None:
         assert statement in NORMALIZED_IDENTITY_DOCS
 
 
-def test_url_identity_docs_define_v2_outcomes_and_atomicity() -> None:
+def test_persisted_data_docs_define_outcomes_and_atomicity() -> None:
     required_contract = (
-        "schema_version: 2",
-        "v1 records and snapshots are rejected",
         "successful response with zero records",
+        "Reply, repost, quote, media-only",
+        "does not contain a feed",
         "typed NOT_FOUND",
         "whole candidate",
         "prior snapshot remains byte-identical",
@@ -46,7 +45,6 @@ def test_url_identity_docs_define_v2_outcomes_and_atomicity() -> None:
 def test_url_identity_docs_reject_legacy_and_unauthorized_promises() -> None:
     required_boundaries = (
         "user_id is optional provider payload data only",
-        "No migration or compatibility reader is provided",
         "Alias reconciliation and entity merging are not supported",
         "does not authorize a live provider call",
         "does not authorize publication",
@@ -62,7 +60,7 @@ def test_url_identity_docs_reject_legacy_and_unauthorized_promises() -> None:
     stale_positive_claims = (
         "numeric platform_account_id, stable profile_url, sorted unique url_aliases",
         "Known aliases resolve locally",
-        "All three formats currently have schema_version: 1",
+        "schema_version",
     )
 
     for statement in required_boundaries:
@@ -71,11 +69,11 @@ def test_url_identity_docs_reject_legacy_and_unauthorized_promises() -> None:
         assert statement not in NORMALIZED_IDENTITY_DOCS
 
 
-def test_url_identity_docs_publish_copy_pastable_offline_pixi_checks() -> None:
+def test_persisted_data_docs_publish_copy_pastable_offline_pixi_checks() -> None:
     offline_commands = (
         (
             "pixi run test tests/unit/test_documentation_contract.py "
-            "-k url_identity_docs -q"
+            "-k persisted_data_docs -q"
         ),
         "pixi run schemas-check",
         "pixi run verify",
@@ -83,3 +81,17 @@ def test_url_identity_docs_publish_copy_pastable_offline_pixi_checks() -> None:
 
     for command in offline_commands:
         assert command in OPERATIONS
+
+
+def test_source_configuration_docs_define_ordered_allowlisted_composition() -> None:
+    required_contract = (
+        "ACCOUNTS and SOURCES",
+        "<source_id>:<api_token>",
+        "splits only the first colon",
+        "current allowlist contains only brightdata",
+        "Line order is failover priority",
+        "never creates a Cartesian product",
+    )
+
+    for statement in required_contract:
+        assert statement in NORMALIZED_IDENTITY_DOCS

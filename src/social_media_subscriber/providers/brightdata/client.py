@@ -59,10 +59,12 @@ class BrightDataClient:
         config: HttpClientConfig = _DEFAULT_HTTP_CONFIG,
         *,
         sleeper: Callable[[float], Awaitable[None]] = anyio.sleep,
+        snapshot_timeout_seconds: float = SNAPSHOT_TIMEOUT_SECONDS,
     ) -> None:
         """Create a client bound to exactly one API key."""
         self._http = create_async_http_client(api_key, config)
         self._sleeper = sleeper
+        self._snapshot_timeout_seconds = snapshot_timeout_seconds
 
     async def __aenter__(self) -> Self:
         """Open the owned connection pool."""
@@ -153,7 +155,7 @@ class BrightDataClient:
     async def _await_snapshot[ModelT](
         self, snapshot_id: BrightDataSnapshotId, item_type: type[ModelT]
     ) -> tuple[ModelT, ...]:
-        polls = int(SNAPSHOT_TIMEOUT_SECONDS / SNAPSHOT_POLL_SECONDS)
+        polls = int(self._snapshot_timeout_seconds / SNAPSHOT_POLL_SECONDS)
         for _poll in range(polls):
             await self._sleeper(SNAPSHOT_POLL_SECONDS)
             response = await self._snapshot_request(

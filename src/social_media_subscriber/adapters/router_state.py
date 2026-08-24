@@ -23,9 +23,6 @@ from social_media_subscriber.adapters.router_outcomes import (
     RouterRunStatus,
 )
 from social_media_subscriber.domain.post_merge import PostMergeConflictError, merge_post
-from social_media_subscriber.providers.brightdata.normalization_outcomes import (
-    SkippedPostCounts,
-)
 
 if TYPE_CHECKING:
     from social_media_subscriber.adapters.instance import (
@@ -34,11 +31,8 @@ if TYPE_CHECKING:
         AdapterInstance,
         AdapterInstanceOrdinal,
     )
-    from social_media_subscriber.domain.ids import AccountId, PlatformPostId, PostId
+    from social_media_subscriber.domain.ids import AccountId, PostId
     from social_media_subscriber.domain.post import Post
-    from social_media_subscriber.providers.brightdata.source_record import (
-        BrightDataLinkedInPostSourceRecord,
-    )
 
 
 @final
@@ -50,15 +44,11 @@ class RouterRunState:
         "health",
         "posts",
         "routed",
-        "skipped",
-        "source_records",
     )
 
     health: dict[AdapterInstanceOrdinal, InstanceHealthStatus]
     routed: dict[AccountId, AccountRouteOutcome]
     posts: dict[PostId, Post]
-    source_records: dict[PlatformPostId, BrightDataLinkedInPostSourceRecord]
-    skipped: SkippedPostCounts
     diagnostics: list[RouterDiagnostic]
 
     def __init__(self) -> None:
@@ -66,8 +56,6 @@ class RouterRunState:
         self.health = {}
         self.routed = {}
         self.posts = {}
-        self.source_records = {}
-        self.skipped = SkippedPostCounts()
         self.diagnostics = []
 
     @classmethod
@@ -91,11 +79,7 @@ class RouterRunState:
         """Accept a complete identity-consistent response or classify corruption."""
         expected = {account.id for account in batch.accounts}
         received = {outcome.account_id for outcome in outcomes}
-        if (
-            received != expected
-            or len(received) != len(outcomes)
-            or not self._sources_are_consistent(outcomes)
-        ):
+        if received != expected or len(received) != len(outcomes):
             self._abort_schema()
             return False
         try:
@@ -111,41 +95,7 @@ class RouterRunState:
             return False
         return True
 
-    def _sources_are_consistent(
-        self,
-        outcomes: tuple[AdapterAccountOutcome, ...],
-    ) -> bool:
-        pending = self.source_records.copy()
-        for outcome in outcomes:
-            match outcome:
-                case CollectedAccount(
-                    account_id=account_id,
-                    source_records=source_records,
-                ):
-                    for source in source_records:
-                        existing = pending.get(source.platform_post_id)
-                        if source.account_id != account_id or (
-                            existing is not None
-                            and (
-                                existing.account_id != source.account_id
-                                or existing.payload_sha256 != source.payload_sha256
-                            )
-                        ):
-                            return False
-                        pending[source.platform_post_id] = source
-                case RejectedAccount():
-                    pass
-        return True
-
     def _accept_collected(self, outcome: CollectedAccount) -> bool:
-        for source in outcome.source_records:
-            self.source_records[source.platform_post_id] = source
-        self.skipped = SkippedPostCounts(
-            replies=self.skipped.replies + outcome.skipped.replies,
-            reposts=self.skipped.reposts + outcome.skipped.reposts,
-            quotes=self.skipped.quotes + outcome.skipped.quotes,
-            unknown=self.skipped.unknown + outcome.skipped.unknown,
-        )
         post_ids: list[PostId] = []
         for post in outcome.posts:
             if post.account_id != outcome.account_id:
@@ -233,15 +183,6 @@ class RouterRunState:
                 if include_posts
                 else ()
             ),
-            source_records=(
-                tuple(
-                    self.source_records[key]
-                    for key in sorted(self.source_records, key=str)
-                )
-                if include_posts
-                else ()
-            ),
-            skipped=self.skipped if include_posts else SkippedPostCounts(),
             health=health,
             diagnostics=tuple(self.diagnostics),
         )

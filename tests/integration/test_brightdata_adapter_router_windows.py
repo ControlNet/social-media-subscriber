@@ -4,13 +4,15 @@ __test__ = False
 
 from tests.integration.test_brightdata_adapter_support import (
     _NOW,
-    AccountInput,
     AccountKind,
     AdapterPostRequest,
     AdapterRequestError,
     AdapterRequestErrorCategory,
     BrightDataAdapterConfig,
+    RuntimeInput,
     SecretStr,
+    SourceId,
+    SourceInput,
     SyntheticBrightDataClient,
     _account,
     bootstrap_runtime,
@@ -27,12 +29,17 @@ async def test_router_preserves_each_account_collection_window() -> None:
     company = _account(AccountKind.COMPANY, "company")
     client = SyntheticBrightDataClient()
     runtime = bootstrap_runtime(
-        AccountInput(
+        RuntimeInput(
             locators=(
                 parse_linkedin_locator(person.profile_url),
                 parse_linkedin_locator(company.profile_url),
             ),
-            bright_data_api_keys=(SecretStr("synthetic-one"),),
+            sources=(
+                SourceInput(
+                    source_id=SourceId.BRIGHTDATA,
+                    credential=SecretStr("synthetic-one"),
+                ),
+            ),
         ),
         BrightDataAdapterConfig(_NOW),
         client_builder=lambda _credential: client,
@@ -60,9 +67,14 @@ async def test_conflicting_duplicate_collection_windows_fail_before_provider_io(
     account = _account(AccountKind.PERSON, "person")
     client = SyntheticBrightDataClient()
     runtime = bootstrap_runtime(
-        AccountInput(
+        RuntimeInput(
             locators=(parse_linkedin_locator(account.profile_url),),
-            bright_data_api_keys=(SecretStr("synthetic-one"),),
+            sources=(
+                SourceInput(
+                    source_id=SourceId.BRIGHTDATA,
+                    credential=SecretStr("synthetic-one"),
+                ),
+            ),
         ),
         BrightDataAdapterConfig(_NOW),
         client_builder=lambda _credential: client,
@@ -87,9 +99,14 @@ async def test_equivalent_duplicate_collection_windows_deduplicate() -> None:
     account = _account(AccountKind.PERSON, "person")
     client = SyntheticBrightDataClient()
     runtime = bootstrap_runtime(
-        AccountInput(
+        RuntimeInput(
             locators=(parse_linkedin_locator(account.profile_url),),
-            bright_data_api_keys=(SecretStr("synthetic-one"),),
+            sources=(
+                SourceInput(
+                    source_id=SourceId.BRIGHTDATA,
+                    credential=SecretStr("synthetic-one"),
+                ),
+            ),
         ),
         BrightDataAdapterConfig(_NOW),
         client_builder=lambda _credential: client,

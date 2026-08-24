@@ -20,8 +20,6 @@ _COMPANY_URL: Final = "https://www.linkedin.com/company/synthetic-labs/"
 def _account(*, kind: AccountKind = AccountKind.PERSON) -> Account:
     profile_url = _PERSON_URL if kind is AccountKind.PERSON else _COMPANY_URL
     return Account(
-        schema_version=2,
-        id=AccountId(profile_url),
         platform=Platform.LINKEDIN,
         kind=kind,
         profile_url=profile_url,
@@ -30,29 +28,12 @@ def _account(*, kind: AccountKind = AccountKind.PERSON) -> Account:
 
 
 @pytest.mark.parametrize("kind", tuple(AccountKind))
-def test_account_canonical_url_identity_is_the_profile_url(kind: AccountKind) -> None:
-    # Given / When
+def test_account_uses_profile_url_as_its_runtime_identity(kind: AccountKind) -> None:
     account = _account(kind=kind)
 
-    # Then
     assert account.id == account.profile_url
     _ = assert_type(account.id, AccountId)
-
-
-@pytest.mark.parametrize("kind", tuple(AccountKind))
-def test_account_round_trip_preserves_schema_v2_url_identity(kind: AccountKind) -> None:
-    # Given
-    account = _account(kind=kind)
-
-    # When
-    restored = Account.model_validate_json(account.model_dump_json())
-
-    # Then
-    assert restored == account
-    assert restored.schema_version == 2
-    assert set(restored.model_dump()) == {
-        "schema_version",
-        "id",
+    assert set(account.model_dump()) == {
         "platform",
         "kind",
         "profile_url",
@@ -67,23 +48,15 @@ def test_account_round_trip_preserves_schema_v2_url_identity(kind: AccountKind) 
         "https://www.linkedin.com/in/synthetic-ada",
         "https://www.linkedin.com/in/synthetic-ada/?tracking=synthetic",
         "https://www.linkedin.com/in/synthetic-ada/#about",
-        "https://www.linkedin.com/in/synthetic-ada?tracking=synthetic/",
-        "https://www.linkedin.com/in/synthetic-ada#about/",
         "https://www.linkedin.com/in/synthetic%2eada/",
     ],
 )
-def test_account_rejects_noncanonical_url_identity(noncanonical_url: str) -> None:
-    # Given
+def test_account_rejects_noncanonical_profile_url(noncanonical_url: str) -> None:
     values = _account().model_dump()
-    values["id"] = noncanonical_url
     values["profile_url"] = noncanonical_url
 
-    # When
-    with pytest.raises(ValidationError) as captured:
+    with pytest.raises(ValidationError):
         _ = Account.model_validate(values)
-
-    # Then
-    assert captured.value.error_count() >= 1
 
 
 @pytest.mark.parametrize(
@@ -100,11 +73,9 @@ def test_account_rejects_noncanonical_url_identity(noncanonical_url: str) -> Non
 def test_account_rejects_invalid_boundary_values(
     field: str, value: str | datetime
 ) -> None:
-    # Given
     values = _account().model_dump()
     values[field] = value
 
-    # When / Then
     with pytest.raises(ValidationError):
         _ = Account.model_validate(values)
 
@@ -119,92 +90,27 @@ def test_account_rejects_invalid_boundary_values(
 def test_account_rejects_wrong_kind_url_identity(
     kind: AccountKind, profile_url: str
 ) -> None:
-    # Given
     values = _account().model_dump()
-    values["id"] = profile_url
     values["kind"] = kind
     values["profile_url"] = profile_url
 
-    # When
     with pytest.raises(ValidationError) as captured:
         _ = Account.model_validate(values)
 
-    # Then
     assert captured.value.errors(include_input=False)[0]["type"] == (
         "account_kind_url_mismatch"
     )
 
 
-def test_account_rejects_mismatched_canonical_profile_url() -> None:
-    # Given
-    values = _account().model_dump()
-    values["profile_url"] = "https://www.linkedin.com/in/synthetic-grace/"
-
-    # When
-    with pytest.raises(ValidationError) as captured:
-        _ = Account.model_validate(values)
-
-    # Then
-    assert captured.value.errors(include_input=False)[0]["type"] == (
-        "account_id_mismatch"
-    )
-
-
 @pytest.mark.parametrize(
-    "legacy_updates",
-    [
-        {"id": "linkedin:person:12345"},
-        {"platform_account_id": "12345"},
-        {"url_aliases": (_PERSON_URL,)},
-        {"schema_version": 1},
-    ],
+    "obsolete_field",
+    ["id", "schema_version", "platform_account_id", "url_aliases"],
 )
-def test_account_rejects_legacy_numeric_or_alias_identity(
-    legacy_updates: dict[str, str | int | tuple[str, ...]],
+def test_account_rejects_obsolete_persisted_identity_fields(
+    obsolete_field: str,
 ) -> None:
-    # Given
     values = _account().model_dump()
-    values.update(legacy_updates)
+    values[obsolete_field] = "obsolete"
 
-    # When
-    with pytest.raises(ValidationError) as captured:
+    with pytest.raises(ValidationError):
         _ = Account.model_validate(values)
-
-    # Then
-    assert captured.value.error_count() >= 1
-
-
-def test_account_requires_explicit_schema_version() -> None:
-    # Given
-    values = _account().model_dump()
-    del values["schema_version"]
-
-    # When / Then
-    with pytest.raises(ValidationError) as captured:
-        _ = Account.model_validate(values)
-    assert captured.value.errors(include_input=False)[0]["loc"] == ("schema_version",)
-
-
-def test_account_boundary_error_representations_redact_invalid_account_id() -> None:
-    # Given
-    canary = "invalid-canonical-account-id-canary-82d1"
-    values = _account().model_dump()
-    values["id"] = canary
-
-    # When
-    with pytest.raises(ValidationError) as captured:
-        _ = Account.model_validate(values)
-
-    # Then
-    error = captured.value
-    public_representations = (
-        str(error),
-        repr(error),
-        error.json(),
-        repr(error.errors()),
-        repr(error.args),
-    )
-    assert all(
-        canary not in representation for representation in public_representations
-    )
-    assert error.errors(include_input=False)[0]["loc"] == ("id",)

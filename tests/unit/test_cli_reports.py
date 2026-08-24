@@ -18,12 +18,12 @@ def test_collect_reads_secrets_from_environment_and_emits_one_json_report(
 ) -> None:
     # Given
     monkeypatch.delenv("ACCOUNTS", raising=False)
-    monkeypatch.delenv("BRIGHT_DATA_API_KEYS", raising=False)
+    monkeypatch.delenv("SOURCES", raising=False)
     runner = CliRunner()
     application = FakeApplication()
     environment = {
         "ACCOUNTS": "https://www.linkedin.com/in/synthetic/",
-        "BRIGHT_DATA_API_KEYS": "canary-secret",
+        "SOURCES": "brightdata:canary-secret",
     }
 
     # When
@@ -53,7 +53,7 @@ def test_collect_rejects_missing_or_blank_secrets_before_application_call(
 ) -> None:
     # Given
     monkeypatch.delenv("ACCOUNTS", raising=False)
-    monkeypatch.delenv("BRIGHT_DATA_API_KEYS", raising=False)
+    monkeypatch.delenv("SOURCES", raising=False)
     runner = CliRunner()
     application = FakeApplication()
 
@@ -66,7 +66,7 @@ def test_collect_rejects_missing_or_blank_secrets_before_application_call(
     blank = runner.invoke(
         create_app(application),
         ["collect", "--previous-snapshot", "prior", "--output", "candidate"],
-        env={"ACCOUNTS": " ", "BRIGHT_DATA_API_KEYS": "\n"},
+        env={"ACCOUNTS": " ", "SOURCES": "\n"},
     )
 
     # Then
@@ -82,7 +82,7 @@ def test_collect_rejects_malformed_one_sided_and_inverted_dates() -> None:
     application = FakeApplication()
     environment = {
         "ACCOUNTS": "https://www.linkedin.com/in/synthetic/",
-        "BRIGHT_DATA_API_KEYS": "canary-secret",
+        "SOURCES": "brightdata:canary-secret",
     }
     base = ["collect", "--previous-snapshot", "prior", "--output", "candidate"]
 
@@ -165,7 +165,7 @@ def test_collect_preserves_application_exit_contract(
         ["collect", "--previous-snapshot", "prior", "--output", "candidate"],
         env={
             "ACCOUNTS": "https://www.linkedin.com/in/synthetic/",
-            "BRIGHT_DATA_API_KEYS": "canary-secret",
+            "SOURCES": "brightdata:canary-secret",
         },
     )
 
@@ -194,7 +194,7 @@ def test_collect_reports_canonical_failed_account_urls_with_exact_keys() -> None
         ["collect", "--previous-snapshot", "prior", "--output", "candidate"],
         env={
             "ACCOUNTS": failed_url,
-            "BRIGHT_DATA_API_KEYS": "canary-secret",
+            "SOURCES": "brightdata:canary-secret",
         },
     )
 

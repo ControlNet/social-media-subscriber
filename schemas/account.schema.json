@@ -11,16 +11,11 @@
     }
   },
   "additionalProperties": false,
-  "description": "Versioned provider-neutral Account record persisted at the boundary.",
+  "description": "Provider-neutral Account identified by its canonical profile URL.",
   "properties": {
     "first_seen_at": {
       "format": "date-time",
       "title": "First Seen At",
-      "type": "string"
-    },
-    "id": {
-      "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/$",
-      "title": "Id",
       "type": "string"
     },
     "kind": {
@@ -35,16 +30,9 @@
       "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/$",
       "title": "Profile Url",
       "type": "string"
-    },
-    "schema_version": {
-      "const": 2,
-      "title": "Schema Version",
-      "type": "integer"
     }
   },
   "required": [
-    "schema_version",
-    "id",
     "platform",
     "kind",
     "profile_url",

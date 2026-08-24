@@ -6,15 +6,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, override
 
-from social_media_subscriber.domain.ids import AccountId, PostId, post_id_for
 from social_media_subscriber.storage.snapshot import SnapshotState
 
 if TYPE_CHECKING:
     from social_media_subscriber.domain.account import Account
+    from social_media_subscriber.domain.ids import AccountId, PostId
     from social_media_subscriber.domain.post import Post
-    from social_media_subscriber.providers.brightdata.source_record import (
-        BrightDataLinkedInPostSourceRecord,
-    )
 
 
 class SnapshotConflictCategory(StrEnum):
@@ -24,9 +21,6 @@ class SnapshotConflictCategory(StrEnum):
     POST = "post"
     POST_OWNERSHIP = "post ownership"
     POST_ACCOUNT = "post account"
-    SOURCE = "source"
-    SOURCE_OWNERSHIP = "source ownership"
-    SOURCE_ACCOUNT = "source account"
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,56 +83,16 @@ def _merge_posts(
     return tuple(sorted(merged.values(), key=lambda post: post.id))
 
 
-def _merge_sources(
-    previous: tuple[BrightDataLinkedInPostSourceRecord, ...],
-    current: tuple[BrightDataLinkedInPostSourceRecord, ...],
-) -> tuple[BrightDataLinkedInPostSourceRecord, ...]:
-    merged = {post_id_for(record.platform_post_id): record for record in previous}
-    candidates: dict[PostId, BrightDataLinkedInPostSourceRecord] = {}
-    for candidate in current:
-        candidate_id = post_id_for(candidate.platform_post_id)
-        duplicate = candidates.setdefault(candidate_id, candidate)
-        if (
-            duplicate.payload_sha256 != candidate.payload_sha256
-            or duplicate.account_id != candidate.account_id
-        ):
-            raise SnapshotConflictError(SnapshotConflictCategory.SOURCE, candidate_id)
-    for candidate_id, candidate in candidates.items():
-        existing = merged.get(candidate_id)
-        if existing is not None and existing.account_id != candidate.account_id:
-            raise SnapshotConflictError(
-                SnapshotConflictCategory.SOURCE_OWNERSHIP, candidate_id
-            )
-        merged[candidate_id] = candidate
-    return tuple(
-        sorted(merged.values(), key=lambda record: post_id_for(record.platform_post_id))
-    )
-
-
 def merge_snapshot(
     previous: SnapshotState | None,
     current: SnapshotState,
 ) -> SnapshotState:
     """Merge a partial successful run without deleting absent prior records."""
-    baseline = previous or SnapshotState((), (), ())
+    baseline = previous or SnapshotState((), ())
     merged_accounts = _merge_accounts(baseline.accounts, current.accounts)
     merged_posts = _merge_posts(baseline.posts, current.posts)
-    merged_sources = _merge_sources(baseline.source_records, current.source_records)
     known_accounts = {account.id for account in merged_accounts}
-    post_owners = {post.id: post.account_id for post in merged_posts}
     for post in merged_posts:
         if post.account_id not in known_accounts:
             raise SnapshotConflictError(SnapshotConflictCategory.POST_ACCOUNT, post.id)
-    for source in merged_sources:
-        if source.account_id not in known_accounts:
-            raise SnapshotConflictError(
-                SnapshotConflictCategory.SOURCE_ACCOUNT,
-                post_id_for(source.platform_post_id),
-            )
-        source_post_id = post_id_for(source.platform_post_id)
-        canonical_owner = post_owners.get(source_post_id)
-        if canonical_owner is not None and canonical_owner != source.account_id:
-            raise SnapshotConflictError(
-                SnapshotConflictCategory.SOURCE_OWNERSHIP, source_post_id
-            )
-    return SnapshotState(merged_accounts, merged_posts, merged_sources)
+    return SnapshotState(merged_accounts, merged_posts)

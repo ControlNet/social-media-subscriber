@@ -31,7 +31,11 @@ COMPANY_URL = "https://www.linkedin.com/company/synthetic-company/"
 def settings(*urls: str, keys: str = "synthetic-key") -> Settings:
     return Settings(
         accounts=SecretStr("\n".join(urls)),
-        bright_data_api_keys=SecretStr(keys),
+        sources=SecretStr(
+            "\n".join(
+                f"brightdata:{key.strip()}" for key in keys.splitlines() if key.strip()
+            )
+        ),
     )
 
 

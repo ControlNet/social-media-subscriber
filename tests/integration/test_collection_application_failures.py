@@ -54,9 +54,40 @@ async def test_success_without_original_posts_persists_url_account(
     assert result.failed_account_ids == ()
     assert state is not None
     assert tuple(account.profile_url for account in state.accounts) == (PERSON_URL,)
+    if posts:
+        assert len(state.posts) == 1
+        assert state.posts[0].type == "repost"
+    else:
+        assert state.posts == ()
+    assert client.calls == [("person_posts", ((date(2003, 5, 5), date(2026, 8, 20)),))]
+
+
+@pytest.mark.anyio
+async def test_existing_account_without_posts_uses_incremental_window(
+    tmp_path: Path,
+) -> None:
+    first_client = ApplicationClient(person_posts=())
+    _ = await run(request(tmp_path, settings(PERSON_URL)), (first_client,))
+    _ = shutil.copytree(tmp_path / "candidate", tmp_path / "previous")
+    second_client = ApplicationClient(person_posts=())
+
+    result = await run(
+        request(tmp_path, settings(PERSON_URL), paths=("previous", "second")),
+        (second_client,),
+    )
+
+    state = SnapshotRepository(tmp_path / "second").load_optional()
+    assert result.exit_code is CollectionExitCode.SUCCESS
+    assert result.candidate_change is CandidateChange.UNCHANGED
+    assert state is not None
+    assert tuple(account.profile_url for account in state.accounts) == (PERSON_URL,)
     assert state.posts == ()
-    assert state.source_records == ()
-    assert client.calls == [("person_posts", ((date(2026, 8, 13), date(2026, 8, 20)),))]
+    assert first_client.calls == [
+        ("person_posts", ((date(2003, 5, 5), date(2026, 8, 20)),))
+    ]
+    assert second_client.calls == [
+        ("person_posts", ((date(2026, 8, 17), date(2026, 8, 20)),))
+    ]
 
 
 @pytest.mark.anyio
@@ -77,7 +108,7 @@ async def test_typed_failure_does_not_create_new_url_account(
     assert result.failed_accounts == 1
     assert result.failed_account_ids == (PERSON_URL,)
     assert state is not None
-    assert state.accounts == state.posts == state.source_records == ()
+    assert state.accounts == state.posts == ()
 
 
 @pytest.mark.anyio

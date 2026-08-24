@@ -9,7 +9,6 @@ dependencies = [
     "httpx2[brotli,http2,zstd]>=2,<3",
     "pydantic>=2.12,<3",
     "pydantic-settings>=2.10,<3",
-    "rich>=14,<15",
     "structlog>=25,<26",
     "typer>=0.16,<1",
 ]

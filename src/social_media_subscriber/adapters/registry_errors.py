@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, override
 
 if TYPE_CHECKING:
-    from social_media_subscriber.adapters.metadata import AdapterMetadata
     from social_media_subscriber.adapters.metadata_errors import MetadataViolation
 
 
@@ -52,21 +51,4 @@ class DuplicateAdapterDriverError(Exception):
         return (
             f"adapter driver {self.driver_name!r} is repeated at positions "
             f"{self.first_index} and {self.duplicate_index}"
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class DuplicateAdapterDescriptorError(Exception):
-    """Raised when different drivers declare the same descriptor."""
-
-    first_driver_name: str
-    duplicate_driver_name: str
-    metadata: AdapterMetadata
-
-    @override
-    def __str__(self) -> str:
-        """Return an actionable duplicate-driver diagnostic."""
-        return (
-            f"adapter drivers {self.first_driver_name!r} and "
-            f"{self.duplicate_driver_name!r} declare the same capability metadata"
         )

@@ -1,29 +1,15 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
+
+from pydantic import TypeAdapter
 
 from social_media_subscriber.domain.ids import record_filename
 from social_media_subscriber.providers.brightdata.constants import (
     LINKEDIN_POSTS_DATASET,
 )
-from social_media_subscriber.providers.brightdata.source_record import (
-    BrightDataLinkedInPostSourceRecord,
-)
-from social_media_subscriber.serialization.json import read_json
-from social_media_subscriber.storage.layout import (
-    ACCOUNTS_INDEX,
-    FEED_INDEX,
-    MANIFEST,
-    snapshot_digest,
-)
+from social_media_subscriber.storage.layout import ACCOUNTS_INDEX
 from social_media_subscriber.storage.repository import SnapshotRepository
-from social_media_subscriber.storage.snapshot import (
-    AccountsIndex,
-    FeedIndex,
-    SnapshotManifest,
-    SnapshotState,
-)
 from tests.e2e.brightdata_server import (
     ACTIVE_VALUE,
     CHANGED_PERSON_URL,
@@ -33,38 +19,37 @@ from tests.e2e.brightdata_server import (
     FakeBrightDataServer,
     PersonPostScenario,
 )
-from tests.e2e.brightdata_server_fixtures import PERSON_FEED_IDS
+from tests.e2e.brightdata_server_fixtures import PERSON_POST_IDS
 from tests.e2e.pipeline_harness import invoke_collect, report, tree
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
+
+    from social_media_subscriber.storage.snapshot import SnapshotState, SnapshotSummary
 
 
 def assert_snapshot_metadata(
     root: Path,
     *,
     account_urls: Sequence[str],
-    feed_ids: tuple[str, ...],
-) -> tuple[SnapshotState, SnapshotManifest]:
-    state = SnapshotRepository(root).load_optional()
-    assert state is not None
-    accounts_index = read_json(root / ACCOUNTS_INDEX, AccountsIndex)
-    feed_index = read_json(root / FEED_INDEX, FeedIndex)
-    manifest = read_json(root / MANIFEST, SnapshotManifest)
+    post_ids: tuple[str, ...],
+) -> tuple[SnapshotState, SnapshotSummary]:
+    validated = SnapshotRepository(root).read_optional()
+    assert validated is not None
+    state = validated.state
+    summary = validated.summary
+    accounts_index = TypeAdapter(dict[str, str]).validate_json(
+        (root / ACCOUNTS_INDEX).read_bytes()
+    )
     expected_accounts = {
         str(account.id): f"accounts/{record_filename(account.id)}"
         for account in state.accounts
     }
     assert tuple(account.id for account in state.accounts) == tuple(account_urls)
-    assert accounts_index.accounts == expected_accounts
-    assert feed_index.posts == feed_ids
-    non_manifest = {
-        Path(relative): payload
-        for relative, payload in tree(root).items()
-        if relative != MANIFEST.as_posix()
-    }
-    assert manifest.digest == snapshot_digest(non_manifest)
-    return state, manifest
+    assert accounts_index == expected_accounts
+    assert {post.id for post in state.posts} == set(post_ids)
+    return state, summary
 
 
 def assert_posts_only_requests(server: FakeBrightDataServer) -> None:
@@ -84,21 +69,23 @@ def assert_unknown_profile_failover(tmp_path: Path) -> None:
 
     assert not server.thread_alive
     assert result.exit_code == 0
-    manifest = read_json(candidate / "snapshot.json", SnapshotManifest)
+    validated = SnapshotRepository(candidate).read_optional()
+    assert validated is not None
+    state = validated.state
+    summary = validated.summary
     assert report(result) == {
         "candidate_change": "changed",
         "command": "collect",
-        "digest": manifest.digest,
+        "digest": summary.digest,
         "exit_code": 0,
         "failed_account_ids": [],
         "failed_accounts": 0,
         "succeeded_accounts": 1,
     }
     assert (
-        manifest.account_count,
-        manifest.post_count,
-        manifest.source_record_count,
-    ) == (1, 3, 3)
+        summary.account_count,
+        summary.post_count,
+    ) == (1, 4)
     requests = server.scenario.requests
     assert [item.endpoint for item in requests] == [
         "trigger",
@@ -129,37 +116,21 @@ def assert_unknown_profile_failover(tmp_path: Path) -> None:
         for entry in request.body
     } == {("2026-08-17T00:00:00.000Z", "2026-08-20T23:59:59.999Z")}
     snapshot_tree = tree(candidate)
-    source = {
-        path: payload
-        for path, payload in snapshot_tree.items()
-        if path.startswith("source/")
-    }
-    canonical = {
-        path: payload
-        for path, payload in snapshot_tree.items()
-        if not path.startswith("source/")
-    }
-    assert len(source) == 3
     assert len(list((candidate / "accounts").glob("*.json"))) == 1
-    assert len(list((candidate / "posts/linkedin").glob("*.json"))) == 3
-    source_records = [
-        read_json(path, BrightDataLinkedInPostSourceRecord)
-        for path in (candidate / "source").rglob("*.json")
-    ]
-    assert all(record.account_id == PERSON_URL for record in source_records)
-    assert all(
-        record.payload.get("profile_url") == PERSON_URL for record in source_records
+    assert len(list((candidate / "posts/linkedin").glob("*.json"))) == 4
+    assert all(post.account_id == PERSON_URL for post in state.posts)
+    assert any(
+        post.content.get("unknown_nested") == {"future": [True, None, {"n": 3}]}
+        for post in state.posts
     )
     assert any(
-        record.payload.get("unknown_nested") == {"future": [True, None, {"n": 3}]}
-        for record in source_records
+        post.content.get("future_field") == {"preserved": True} for post in state.posts
     )
-    assert any(
-        record.payload.get("future_field") == {"preserved": True}
-        for record in source_records
-    )
-    assert any(MEDIA_CANARY.encode() in item for item in source.values())
-    assert all(MEDIA_CANARY.encode() not in item for item in canonical.values())
+    assert any(post.type == "repost" for post in state.posts)
+    assert any(MEDIA_CANARY.encode() in item for item in snapshot_tree.values())
+    assert not (candidate / "source").exists()
+    assert not (candidate / "feed.json").exists()
+    assert not (candidate / "snapshot.json").exists()
     assert (
         len([line for line in result.output.splitlines() if line.startswith("{")]) == 1
     )
@@ -188,10 +159,10 @@ def assert_changed_slug_creates_distinct_url_account(
         )
 
     assert result.exit_code == 0
-    state, manifest = assert_snapshot_metadata(
+    state, summary = assert_snapshot_metadata(
         renamed,
         account_urls=(CHANGED_PERSON_URL, PERSON_URL),
-        feed_ids=PERSON_FEED_IDS,
+        post_ids=PERSON_POST_IDS,
     )
     assert all(account.id == account.profile_url for account in state.accounts)
     assert_posts_only_requests(initial_server)
@@ -201,7 +172,7 @@ def assert_changed_slug_creates_distinct_url_account(
         "progress",
         "download",
     ]
-    assert report(result)["digest"] == manifest.digest
+    assert report(result)["digest"] == summary.digest
     return tuple(str(account.id) for account in state.accounts)
 
 
@@ -218,20 +189,24 @@ def assert_empty_candidate(tmp_path: Path, person_result: PersonPostScenario) ->
             credentials=ACTIVE_VALUE,
         )
 
-    manifest = read_json(candidate / "snapshot.json", SnapshotManifest)
+    validated = SnapshotRepository(candidate).read_optional()
+    assert validated is not None
+    summary = validated.summary
     assert result.exit_code == 0
     assert report(result)["failed_accounts"] == 0
     assert report(result)["succeeded_accounts"] == 1
     assert (
-        manifest.account_count,
-        manifest.post_count,
-        manifest.source_record_count,
-    ) == (1, 0, 0)
-    state = SnapshotRepository(candidate).load_optional()
-    assert state is not None
+        summary.account_count,
+        summary.post_count,
+    ) == (1, 0 if person_result is PersonPostScenario.ZERO else 1)
+    state = validated.state
     assert tuple(account.id for account in state.accounts) == (PERSON_URL,)
-    assert not list((candidate / "posts/linkedin").glob("*.json"))
-    assert not list((candidate / "source").rglob("*.json"))
+    if person_result is PersonPostScenario.ZERO:
+        assert state.posts == ()
+    else:
+        assert len(state.posts) == 1
+        assert state.posts[0].type == "repost"
+    assert not (candidate / "source").exists()
     assert_posts_only_requests(server)
     assert server.scenario.trigger_calls == 1
 

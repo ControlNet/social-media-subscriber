@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
     from social_media_subscriber.application.results import CollectionResult
     from social_media_subscriber.publishing.git import PublishResult
-    from social_media_subscriber.storage.snapshot import SnapshotManifest
+    from social_media_subscriber.storage.snapshot import SnapshotSummary
     from tests.e2e.git_harness import CliResult
 
 _RUNNER: Final = CliRunner()
@@ -62,7 +62,7 @@ class E2eApplication:
 
         return anyio.run(collect_snapshot, request, build_client)
 
-    def verify(self, snapshot: Path) -> SnapshotManifest:
+    def verify(self, snapshot: Path) -> SnapshotSummary:
         return self.delegate.verify(snapshot)
 
     def publish(self, command: PublicationCommand) -> PublishResult:
@@ -96,7 +96,11 @@ def invoke_collect(
         ],
         env={
             "ACCOUNTS": accounts,
-            "BRIGHT_DATA_API_KEYS": credentials,
+            "SOURCES": "\n".join(
+                f"brightdata:{credential.strip()}"
+                for credential in credentials.splitlines()
+                if credential.strip()
+            ),
         },
         catch_exceptions=False,
     )

@@ -45,14 +45,11 @@ def test_write_rejects_symlink_output_root_before_mutation(tmp_path: Path) -> No
 @pytest.mark.parametrize(
     "snapshot_path",
     [
-        "snapshot.json",
         "accounts.json",
-        "feed.json",
         "accounts/*.json",
         "posts/linkedin/*.json",
-        "source/brightdata/linkedin/posts/*.json",
     ],
-    ids=("manifest", "accounts-index", "feed-index", "account", "post", "source"),
+    ids=("accounts-index", "account", "post"),
 )
 def test_load_rejects_snapshot_file_symlinks_without_following_them(
     tmp_path: Path,

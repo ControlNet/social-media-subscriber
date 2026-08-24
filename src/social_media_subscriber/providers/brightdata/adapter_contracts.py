@@ -14,13 +14,7 @@ if TYPE_CHECKING:
     from social_media_subscriber.providers.brightdata.models import (
         BrightDataPost,
     )
-    from social_media_subscriber.providers.brightdata.normalization_outcomes import (
-        SkippedPostCounts,
-    )
     from social_media_subscriber.providers.brightdata.requests import PostDiscoveryInput
-    from social_media_subscriber.providers.brightdata.source_record import (
-        BrightDataLinkedInPostSourceRecord,
-    )
 
 
 class BrightDataClientContract(Protocol):
@@ -52,12 +46,10 @@ class BrightDataAdapterConfig:
 
 @dataclass(frozen=True, slots=True)
 class CollectedAccountPosts:
-    """Complete source and canonical normalization result for one Account."""
+    """Complete canonical normalization result for one Account."""
 
     account_id: AccountId
-    source_records: tuple[BrightDataLinkedInPostSourceRecord, ...]
     posts: tuple[Post, ...]
-    skipped: SkippedPostCounts
 
 
 @dataclass(frozen=True, slots=True)

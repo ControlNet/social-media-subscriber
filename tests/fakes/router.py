@@ -17,13 +17,9 @@ from social_media_subscriber.adapters.instance import (
     CollectedAccount,
 )
 from social_media_subscriber.domain.account import Account
-from social_media_subscriber.domain.ids import (
-    AccountId,
-    PlatformPostId,
-    post_id_for,
-)
+from social_media_subscriber.domain.ids import AccountId, PlatformPostId
 from social_media_subscriber.domain.platform import AccountKind, Platform
-from social_media_subscriber.domain.post import Post, PostKind, StablePostContent
+from social_media_subscriber.domain.post import Post
 
 if TYPE_CHECKING:
     from pydantic import SecretStr
@@ -43,6 +39,26 @@ class DeclaredFakeDriver:
     supports_batch=True,
 )
 class FakeDriver(DeclaredFakeDriver):
+    pass
+
+
+@adapter(
+    platform=Platform.LINKEDIN,
+    operations=(AdapterOperation.COLLECT_ACCOUNT_POSTS,),
+    account_kinds=(AccountKind.PERSON, AccountKind.COMPANY),
+    supports_batch=True,
+)
+class FallbackFakeDriver(DeclaredFakeDriver):
+    pass
+
+
+@adapter(
+    platform=Platform.LINKEDIN,
+    operations=(AdapterOperation.COLLECT_ACCOUNT_POSTS,),
+    account_kinds=(AccountKind.PERSON, AccountKind.COMPANY),
+    supports_batch=False,
+)
+class NonBatchFakeDriver(DeclaredFakeDriver):
     pass
 
 
@@ -103,8 +119,10 @@ class ScriptedInstance:
 @dataclass(slots=True)
 class ScriptedFactory:
     scripts: tuple[tuple[FakeStep, ...], ...]
+    driver_class: type[AdapterDriver] = FakeDriver
     calls: list[RouterCall] = field(default_factory=list)
     created_ordinals: list[AdapterInstanceOrdinal] = field(default_factory=list)
+    instances: list[ScriptedInstance] = field(default_factory=list)
 
     def create(
         self,
@@ -112,22 +130,23 @@ class ScriptedFactory:
         ordinal: AdapterInstanceOrdinal,
     ) -> AdapterInstance:
         _ = credential
+        script_index = len(self.created_ordinals)
         self.created_ordinals.append(ordinal)
-        script = self.scripts[ordinal] if ordinal < len(self.scripts) else ()
-        return ScriptedInstance(
-            FakeDriver,
+        script = self.scripts[script_index] if script_index < len(self.scripts) else ()
+        instance = ScriptedInstance(
+            self.driver_class,
             ordinal,
             list(script),
             self.calls,
         )
+        self.instances.append(instance)
+        return instance
 
 
 def make_account(kind: AccountKind, number: int) -> Account:
     path = "in" if kind is AccountKind.PERSON else "company"
     profile_url = f"https://www.linkedin.com/{path}/synthetic-{number}/"
     return Account(
-        schema_version=2,
-        id=AccountId(profile_url),
         platform=Platform.LINKEDIN,
         kind=kind,
         profile_url=profile_url,
@@ -137,18 +156,12 @@ def make_account(kind: AccountKind, number: int) -> Account:
 
 def make_post(account_id: AccountId, number: int) -> Post:
     platform_post_id = PlatformPostId(f"activity-{number}")
-    return Post.from_stable(
-        StablePostContent(
-            schema_version=2,
-            id=post_id_for(platform_post_id),
-            platform_post_id=platform_post_id,
-            account_id=account_id,
-            canonical_url=f"https://www.linkedin.com/posts/activity-{number}",
-            published_at=datetime(2026, 8, 20, tzinfo=UTC),
-            text=f"post {number}",
-            kind=PostKind.ORIGINAL,
-            hashtags=(),
-            links=(),
-        ),
+    return Post(
+        platform_post_id=platform_post_id,
+        account_profile_url=account_id,
+        canonical_url=f"https://www.linkedin.com/posts/activity-{number}",
+        published_at=datetime(2026, 8, 20, tzinfo=UTC),
+        type="post",
+        content={"text": f"post {number}", "hashtags": [], "links": []},
         first_seen_at=datetime(2026, 8, 20, tzinfo=UTC),
     )

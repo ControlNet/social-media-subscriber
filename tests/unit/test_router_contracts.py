@@ -5,7 +5,6 @@ __test__ = False
 from social_media_subscriber.adapters import (
     AdapterOperation,
     AdapterRegistry,
-    ResolvedAdapterDrivers,
     adapter,
 )
 from social_media_subscriber.adapters import instance as instance_contract
@@ -43,5 +42,4 @@ def test_registry_resolution_preserves_declared_candidate_order() -> None:
         account_kind=AccountKind.PERSON,
     )
 
-    assert isinstance(result, ResolvedAdapterDrivers)
-    assert result.driver_classes == (SecondFakeDriver, FakeDriver)
+    assert result == (SecondFakeDriver, FakeDriver)

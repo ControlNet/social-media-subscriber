@@ -19,8 +19,8 @@ PERSON_POST_IDS: Final = (
     "linkedin:post:urn:li:activity:1001",
     "linkedin:post:urn:li:activity:1002",
     "linkedin:post:urn:li:activity:1003",
+    "linkedin:post:urn:li:activity:1004",
 )
-PERSON_FEED_IDS: Final = tuple(reversed(PERSON_POST_IDS))
 type FakeJson = dict[str, str] | list[dict[str, str | int | object]]
 
 
@@ -81,7 +81,7 @@ def person_repost(actor_url: str) -> dict[str, str | int | object]:
         "url": "https://www.linkedin.com/posts/synthetic-ada_example-1004/",
         "user_id": "synthetic-provider-person",
         "profile_url": actor_url,
-        "post_text": "Synthetic repost retained only as source",
+        "post_text": "Synthetic repost retained as a platform post",
     }
 
 

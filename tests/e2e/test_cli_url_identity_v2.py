@@ -21,7 +21,7 @@ from tests.e2e.brightdata_server import (
     FakeBrightDataServer,
     PersonPostScenario,
 )
-from tests.e2e.brightdata_server_fixtures import PERSON_FEED_IDS
+from tests.e2e.brightdata_server_fixtures import PERSON_POST_IDS
 from tests.e2e.pipeline_harness import (
     NOT_FOUND_PERSON_URL,
     invoke_collect,
@@ -61,7 +61,7 @@ def test_cli_success_collects_person_and_company_over_loopback(tmp_path: Path) -
     state, manifest = assert_snapshot_metadata(
         tmp_path / "candidate",
         account_urls=(COMPANY_URL, PERSON_URL),
-        feed_ids=(*PERSON_FEED_IDS, "linkedin:post:urn:li:activity:2001"),
+        post_ids=(*PERSON_POST_IDS, "linkedin:post:urn:li:activity:2001"),
     )
     assert result.exit_code == 0
     assert report(result) == {
@@ -73,10 +73,8 @@ def test_cli_success_collects_person_and_company_over_loopback(tmp_path: Path) -
         "failed_accounts": 0,
         "succeeded_accounts": 2,
     }
-    assert len(state.posts) == len(state.source_records) == 4
-    assert all(account.schema_version == 2 for account in state.accounts)
-    assert all(post.schema_version == 2 for post in state.posts)
-    assert all(source.schema_version == 2 for source in state.source_records)
+    assert len(state.posts) == 5
+    assert {post.type for post in state.posts} == {"post", "repost"}
     assert [request.discovery for request in server.scenario.requests] == [
         "profile_url",
         None,
@@ -93,7 +91,7 @@ def test_cli_success_collects_person_and_company_over_loopback(tmp_path: Path) -
     [PersonPostScenario.ZERO, PersonPostScenario.NONORIGINAL_ONLY],
     ids=["zero", "non_original"],
 )
-def test_cli_zero_or_non_original_persists_url_only(
+def test_cli_zero_or_non_original_persists_all_available_records(
     tmp_path: Path,
     person_result: PersonPostScenario,
 ) -> None:
@@ -111,8 +109,11 @@ def test_cli_zero_or_non_original_persists_url_only(
     assert state is not None
     assert result.exit_code == 0
     assert tuple(str(account.id) for account in state.accounts) == (PERSON_URL,)
-    assert state.accounts[0].schema_version == 2
-    assert state.posts == state.source_records == ()
+    if person_result is PersonPostScenario.ZERO:
+        assert state.posts == ()
+    else:
+        assert len(state.posts) == 1
+        assert state.posts[0].type == "repost"
     assert report(result)["failed_account_ids"] == []
     assert not server.thread_alive
 
@@ -222,7 +223,7 @@ def test_contained_driver_emits_exactly_one_json_line(
         ALL_PROXY=_DEAD_PROXY,
         NO_PROXY="127.0.0.1,localhost",
         ACCOUNTS="",
-        BRIGHT_DATA_API_KEYS="",
+        SOURCES="",
     )
     command = [
         sys.executable,

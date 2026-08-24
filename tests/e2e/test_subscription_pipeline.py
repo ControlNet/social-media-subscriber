@@ -11,7 +11,7 @@ from tests.e2e.brightdata_server import (
     FakeBrightDataServer,
     PersonPostScenario,
 )
-from tests.e2e.brightdata_server_fixtures import PERSON_FEED_IDS
+from tests.e2e.brightdata_server_fixtures import PERSON_POST_IDS
 from tests.e2e.failure_scenarios import (
     assert_accepted_snapshot_and_ownership_failures_do_not_leak,
     assert_invalid_schema_aborts_without_candidate_or_leak,
@@ -56,7 +56,7 @@ def test_exact_rediscovery_preserves_first_seen_and_is_byte_identical(
             credentials=ACTIVE_VALUE,
         )
     baseline_state, _ = assert_snapshot_metadata(
-        baseline, account_urls=(PERSON_URL,), feed_ids=()
+        baseline, account_urls=(PERSON_URL,), post_ids=()
     )
     with FakeBrightDataServer() as refresh_server:
         refresh = invoke_collect(
@@ -68,7 +68,7 @@ def test_exact_rediscovery_preserves_first_seen_and_is_byte_identical(
     refreshed_state, refreshed_manifest = assert_snapshot_metadata(
         refreshed,
         account_urls=(PERSON_URL,),
-        feed_ids=PERSON_FEED_IDS,
+        post_ids=PERSON_POST_IDS,
     )
     with FakeBrightDataServer() as repeated_server:
         rediscovered = invoke_collect(
@@ -80,13 +80,13 @@ def test_exact_rediscovery_preserves_first_seen_and_is_byte_identical(
     repeated_state, repeated_manifest = assert_snapshot_metadata(
         repeated,
         account_urls=(PERSON_URL,),
-        feed_ids=PERSON_FEED_IDS,
+        post_ids=PERSON_POST_IDS,
     )
 
     baseline_first_seen = baseline_state.accounts[0].first_seen_at
     assert initial.exit_code == refresh.exit_code == rediscovered.exit_code == 0
     assert len(refreshed_state.accounts) == len(repeated_state.accounts) == 1
-    assert len(refreshed_state.posts) == len(repeated_state.posts) == 3
+    assert len(refreshed_state.posts) == len(repeated_state.posts) == 4
     assert refreshed_state.accounts[0].first_seen_at == baseline_first_seen
     assert repeated_state.accounts[0].first_seen_at == baseline_first_seen
     assert report(rediscovered) == {
@@ -132,7 +132,7 @@ def test_failed_refresh_preserves_history_and_previous_bytes(tmp_path: Path) -> 
     baseline_state, baseline_manifest = assert_snapshot_metadata(
         baseline,
         account_urls=(PERSON_URL,),
-        feed_ids=PERSON_FEED_IDS,
+        post_ids=PERSON_POST_IDS,
     )
     before = tree(baseline)
     failed_server = FakeBrightDataServer()
@@ -148,7 +148,7 @@ def test_failed_refresh_preserves_history_and_previous_bytes(tmp_path: Path) -> 
     candidate_state, candidate_manifest = assert_snapshot_metadata(
         candidate,
         account_urls=(PERSON_URL,),
-        feed_ids=PERSON_FEED_IDS,
+        post_ids=PERSON_POST_IDS,
     )
 
     assert initial.exit_code == 0
@@ -182,23 +182,15 @@ def test_failed_refresh_preserves_history_and_previous_bytes(tmp_path: Path) -> 
     [PersonPostScenario.ZERO, PersonPostScenario.NONORIGINAL_ONLY],
     ids=["zero_records", "nonoriginal_only"],
 )
-def test_posts_first_zero_or_nonoriginal_writes_valid_empty_candidate(
+def test_posts_first_zero_or_nonoriginal_writes_valid_candidate(
     tmp_path: Path,
     person_result: PersonPostScenario,
 ) -> None:
     assert_empty_candidate(tmp_path, person_result)
 
 
-@pytest.mark.parametrize(
-    "person_result",
-    [PersonPostScenario.ZERO, PersonPostScenario.NONORIGINAL_ONLY],
-    ids=["zero_records", "nonoriginal_only"],
-)
-def test_posts_first_zero_or_nonoriginal_adds_distinct_url_account(
-    tmp_path: Path,
-    person_result: PersonPostScenario,
-) -> None:
-    assert_empty_result_adds_distinct_url_account(tmp_path, person_result)
+def test_posts_first_zero_posts_adds_distinct_url_account(tmp_path: Path) -> None:
+    assert_empty_result_adds_distinct_url_account(tmp_path, PersonPostScenario.ZERO)
 
 
 def test_publish_is_idempotent_metric_only_and_stale_safe(tmp_path: Path) -> None:

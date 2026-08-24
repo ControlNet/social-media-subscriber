@@ -106,7 +106,7 @@ class AdvancingRunner:
         competitor = self.remote.parent / "competitor"
         competitor.mkdir()
         snapshot = competitor / "snapshot"
-        _ = SnapshotRepository(snapshot).write(SnapshotState((), (), ()))
+        _ = SnapshotRepository(snapshot).write(SnapshotState((), ()))
         _ = _git(competitor, "init", "--quiet")
         _ = _git(competitor, "add", "snapshot")
         _ = _git(
@@ -159,7 +159,7 @@ def test_publish_materializes_exact_baseline_and_preserves_unchanged_sha(
 ) -> None:
     # Given
     snapshot = tmp_path / "snapshot"
-    _ = SnapshotRepository(snapshot).write(SnapshotState((), (), ()))
+    _ = SnapshotRepository(snapshot).write(SnapshotState((), ()))
     arguments = [
         "publish-dist",
         "--snapshot",
@@ -195,7 +195,7 @@ def test_publish_stale_precheck_exits_six_without_source_mutation(
 ) -> None:
     # Given
     snapshot = tmp_path / "snapshot"
-    _ = SnapshotRepository(snapshot).write(SnapshotState((), (), ()))
+    _ = SnapshotRepository(snapshot).write(SnapshotState((), ()))
     before = tuple(contained_cli.source.iterdir())
 
     # When
@@ -257,7 +257,7 @@ def test_post_precheck_race_exits_six_without_force_fallback(
 ) -> None:
     # Given
     snapshot = tmp_path / "snapshot"
-    _ = SnapshotRepository(snapshot).write(SnapshotState((), (), ()))
+    _ = SnapshotRepository(snapshot).write(SnapshotState((), ()))
     runner = AdvancingRunner(contained_cli.remote)
 
     # When

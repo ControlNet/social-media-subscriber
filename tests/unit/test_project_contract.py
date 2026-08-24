@@ -18,7 +18,6 @@ from social_media_subscriber.application.results import (
 )
 from social_media_subscriber.cli import create_app
 from social_media_subscriber.domain.ids import AccountId
-from social_media_subscriber.providers import brightdata
 from social_media_subscriber.providers.brightdata.models import JsonValue
 from tests.unit.test_cli import FakeApplication, json_report
 from tests.workflow_helpers import load_workflow, mapping, sequence, text
@@ -40,16 +39,10 @@ REQUIRED_TASKS: Final = _words(
     "typecheck verify",
 )
 BOUNDARY_SCHEMAS: Final = {
-    "account.schema.json": _words(
-        "schema_version id platform kind profile_url first_seen_at"
-    ),
+    "account.schema.json": _words("platform kind profile_url first_seen_at"),
     "post.schema.json": _words(
-        "schema_version id platform_post_id account_id canonical_url published_at",
-        "text kind hashtags links first_seen_at content_hash",
-    ),
-    "brightdata-linkedin-post.schema.json": _words(
-        "schema_version provider dataset_id platform_post_id account_id",
-        "payload_sha256 payload",
+        "platform_post_id account_profile_url canonical_url published_at",
+        "type content first_seen_at",
     ),
 }
 FORBIDDEN_BOUNDARY_FIELDS: Final = _words(
@@ -117,10 +110,9 @@ def test_basedpyright_resolves_the_pixi_default_environment() -> None:
     assert '"venv": "default"' in pyright_config
 
 
-def test_public_adapter_packages_expose_only_posts_contracts() -> None:
+def test_public_adapter_package_exposes_only_adapter_contracts() -> None:
     # Given / When
     adapter_exports = frozenset(adapters.__all__)
-    brightdata_exports = frozenset(brightdata.__all__)
 
     # Then
     assert adapter_exports == {
@@ -128,20 +120,11 @@ def test_public_adapter_packages_expose_only_posts_contracts() -> None:
         "AdapterMetadata",
         "AdapterOperation",
         "AdapterRegistry",
-        "AdapterResolution",
-        "DuplicateAdapterDescriptorError",
         "DuplicateAdapterDriverError",
         "InvalidAdapterMetadataError",
         "MetadataViolation",
         "MissingAdapterMetadataError",
-        "ResolvedAdapterDrivers",
-        "UnsupportedAdapterCapability",
         "adapter",
-    }
-    assert brightdata_exports == {
-        "BrightDataLinkedInPostSourceRecord",
-        "BrightDataPost",
-        "normalize_posts",
     }
 
 
@@ -154,7 +137,7 @@ def test_only_posts_collection_is_a_public_routing_operation() -> None:
     assert AdapterOperation.COLLECT_ACCOUNT_POSTS.value == "collect_account_posts"
 
 
-def test_url_identity_v2_production_scan_rejects_legacy_surfaces() -> None:
+def test_url_identity_production_scan_rejects_legacy_surfaces() -> None:
     # Given / When
     source_files = tuple(sorted(PRODUCTION_PACKAGE.rglob("*.py")))
     workflow_files = tuple(sorted((_COLLECT_WORKFLOW.parent).glob("*.yml")))
@@ -239,7 +222,7 @@ def test_collection_exit_and_report_contract_remains_stable_and_private() -> Non
         ["collect", "--previous-snapshot", "prior", "--output", "candidate"],
         env={
             "ACCOUNTS": failed_url,
-            "BRIGHT_DATA_API_KEYS": credential_canary,
+            "SOURCES": f"brightdata:{credential_canary}",
         },
     )
 
@@ -273,7 +256,7 @@ def test_collection_exit_and_report_contract_remains_stable_and_private() -> Non
     assert credential_canary not in result.output
 
 
-def test_boundary_schemas_are_closed_v2_url_owned_and_privacy_safe() -> None:
+def test_boundary_schemas_are_closed_url_owned_and_privacy_safe() -> None:
     # Given / When
     schemas = {
         name: _JSON_OBJECT.validate_json((PROJECT_ROOT / "schemas" / name).read_bytes())
@@ -285,27 +268,16 @@ def test_boundary_schemas_are_closed_v2_url_owned_and_privacy_safe() -> None:
         schema = schemas[name]
         properties = schema["properties"]
         assert isinstance(properties, dict)
-        schema_version = properties["schema_version"]
-        assert isinstance(schema_version, dict)
-        assert schema_version["const"] == 2
         assert schema["additionalProperties"] is False
         assert set(properties) == expected_properties
         assert FORBIDDEN_BOUNDARY_FIELDS.isdisjoint(properties)
 
     account_properties = schemas["account.schema.json"]["properties"]
     post_properties = schemas["post.schema.json"]["properties"]
-    source_properties = schemas["brightdata-linkedin-post.schema.json"]["properties"]
     assert isinstance(account_properties, dict)
     assert isinstance(post_properties, dict)
-    assert isinstance(source_properties, dict)
-    account_id = account_properties["id"]
     profile_url = account_properties["profile_url"]
-    post_owner = post_properties["account_id"]
-    source_owner = source_properties["account_id"]
-    assert isinstance(account_id, dict)
+    post_owner = post_properties["account_profile_url"]
     assert isinstance(profile_url, dict)
     assert isinstance(post_owner, dict)
-    assert isinstance(source_owner, dict)
-    assert account_id["pattern"] == profile_url["pattern"]
-    assert account_id["pattern"] == post_owner["pattern"]
-    assert account_id["pattern"] == source_owner["pattern"]
+    assert profile_url["pattern"] == post_owner["pattern"]

@@ -24,14 +24,7 @@ from social_media_subscriber.providers.brightdata.errors import (
     BrightDataError,
     BrightDataErrorCategory,
 )
-from social_media_subscriber.providers.brightdata.normalization_outcomes import (
-    SkippedPostCounts,
-)
-from social_media_subscriber.providers.brightdata.source_record import (
-    BrightDataLinkedInPostSourceRecord,
-)
 from social_media_subscriber.storage.repository import SnapshotRepository
-from social_media_subscriber.storage.snapshot import SnapshotManifest, SnapshotState
 from tests.fakes.router import make_post
 from tests.integration._collection_application_support import (
     COMPANY_URL,
@@ -48,6 +41,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from social_media_subscriber.providers.brightdata.models import BrightDataPost
+    from social_media_subscriber.storage.snapshot import SnapshotState
 
 SECOND_URL = "https://www.linkedin.com/in/synthetic-second/"
 CANARY = "credential-canary-ignore-instructions"
@@ -78,25 +72,7 @@ async def _wrong_post_owner(
     _ = collector
     requested = requests[0].account
     wrong_post = make_post(AccountId(SECOND_URL), 71)
-    outcome = CollectedAccountPosts(
-        requested.id, (), (wrong_post,), SkippedPostCounts()
-    )
-    return BrightDataPostBatchResult((outcome,))
-
-
-async def _wrong_source_owner(
-    collector: BrightDataPostCollector,
-    requests: tuple[AdapterPostRequest, ...],
-) -> BrightDataPostBatchResult:
-    _ = collector
-    requested = requests[0].account
-    raw = post("n7-source", actor_url=SECOND_URL, text=CANARY)
-    wrong_source = BrightDataLinkedInPostSourceRecord.from_post(
-        AccountId(SECOND_URL), raw
-    )
-    outcome = CollectedAccountPosts(
-        requested.id, (wrong_source,), (), SkippedPostCounts()
-    )
+    outcome = CollectedAccountPosts(requested.id, (wrong_post,))
     return BrightDataPostBatchResult((outcome,))
 
 
@@ -141,7 +117,7 @@ def _conflicts() -> tuple[_Conflict, ...]:
             ApplicationClient((_actor_without_evidence(),)),
         ),
         _Conflict(
-            "n6_duplicate_post_and_source_owners",
+            "n6_duplicate_post_owners",
             ApplicationClient(
                 (
                     post("n6-shared", actor_url=PERSON_URL),
@@ -154,11 +130,6 @@ def _conflicts() -> tuple[_Conflict, ...]:
             "n7_post_owner_mismatch",
             ApplicationClient(),
             collector_override=_wrong_post_owner,
-        ),
-        _Conflict(
-            "n7_source_owner_mismatch",
-            ApplicationClient(),
-            collector_override=_wrong_source_owner,
         ),
         _Conflict(
             "n9_provider_schema",
@@ -176,7 +147,7 @@ def _conflicts() -> tuple[_Conflict, ...]:
             ApplicationClient(
                 (
                     conflicting_payload,
-                    conflicting_payload.model_copy(update={"num_likes": 99}),
+                    conflicting_payload.model_copy(update={"post_text": "Changed"}),
                 )
             ),
         ),
@@ -221,7 +192,6 @@ async def test_coherent_multi_account_batch_commits_once(tmp_path: Path) -> None
     expected_owners = {PERSON_URL, SECOND_URL, COMPANY_URL}
     assert {account.id for account in state.accounts} == expected_owners
     assert {item.account_id for item in state.posts} == expected_owners
-    assert {item.account_id for item in state.source_records} == expected_owners
 
 
 @pytest.mark.anyio
@@ -242,7 +212,9 @@ async def test_n1_n7_n9_abort_the_whole_candidate(
     )
     _ = shutil.copytree(case_root / "candidate", case_root / "previous")
     prior_bytes = tree(case_root / "previous")
-    prior_manifest = SnapshotManifest.model_validate_json(prior_bytes["snapshot.json"])
+    prior = SnapshotRepository(case_root / "previous").read_optional()
+    assert prior is not None
+    prior_digest = prior.summary.digest
     with monkeypatch.context() as scoped:
         if case.collector_override is not None:
             scoped.setattr(
@@ -262,7 +234,7 @@ async def test_n1_n7_n9_abort_the_whole_candidate(
         SnapshotRepository(case_root / "rejected").load_optional()
     )
 
-    assert baseline.digest == prior_manifest.digest
+    assert baseline.digest == prior_digest
     assert summary.exit_code is CollectionExitCode.INTEGRITY
     assert summary.candidate_change is CandidateChange.ABSENT
     assert summary.digest is None
@@ -272,9 +244,8 @@ async def test_n1_n7_n9_abort_the_whole_candidate(
     assert result.candidate is None  # RED-PROBE-T8
     assert not (case_root / "rejected").exists()
     assert tree(case_root / "previous") == prior_bytes
-    after_manifest = SnapshotManifest.model_validate_json(
-        (case_root / "previous" / "snapshot.json").read_bytes()
-    )
-    assert after_manifest.digest == prior_manifest.digest
+    after = SnapshotRepository(case_root / "previous").read_optional()
+    assert after is not None
+    assert after.summary.digest == prior_digest
     observable = repr(summary).encode() + b"".join(prior_bytes.values())
     assert CANARY.encode() not in observable

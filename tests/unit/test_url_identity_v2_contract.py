@@ -30,7 +30,6 @@ from social_media_subscriber.application.results import (
 )
 from social_media_subscriber.cli import create_app
 from social_media_subscriber.domain import Account, AccountKind, Platform
-from social_media_subscriber.domain.ids import AccountId
 from social_media_subscriber.providers.brightdata.adapter_error_mapping import (
     map_provider_error,
 )
@@ -40,7 +39,7 @@ from social_media_subscriber.providers.brightdata.errors import (
 )
 from social_media_subscriber.publishing.git import Published, PublishResult
 from social_media_subscriber.storage.layout import snapshot_digest
-from social_media_subscriber.storage.snapshot import SnapshotManifest
+from social_media_subscriber.storage.snapshot import SnapshotSummary
 
 if TYPE_CHECKING:
     from social_media_subscriber.application.collect import CollectionRequest
@@ -59,12 +58,11 @@ class _SyntheticCliApplication:
         _ = request
         return self.result
 
-    def verify(self, snapshot: Path) -> SnapshotManifest:
+    def verify(self, snapshot: Path) -> SnapshotSummary:
         _ = snapshot
-        return SnapshotManifest(
+        return SnapshotSummary(
             account_count=0,
             post_count=0,
-            source_record_count=0,
             digest="0" * 64,
         )
 
@@ -75,8 +73,6 @@ class _SyntheticCliApplication:
 
 def _synthetic_account() -> Account:
     return Account(
-        schema_version=2,
-        id=AccountId(_SYNTHETIC_PERSON_URL),
         platform=Platform.LINKEDIN,
         kind=AccountKind.PERSON,
         profile_url=_SYNTHETIC_PERSON_URL,
@@ -84,15 +80,13 @@ def _synthetic_account() -> Account:
     )
 
 
-def test_account_contract_uses_only_schema_v2_canonical_url_identity() -> None:
+def test_account_contract_uses_only_canonical_profile_url_identity() -> None:
     # Given / When
     account = _synthetic_account()
     public_record = account.model_dump(mode="json")
 
     # Then
     assert public_record == {
-        "schema_version": 2,
-        "id": _SYNTHETIC_PERSON_URL,
         "platform": "linkedin",
         "kind": "person",
         "profile_url": _SYNTHETIC_PERSON_URL,
@@ -180,26 +174,16 @@ def test_digest_is_stable_for_sorted_paths_and_exact_file_bytes() -> None:
     assert digest == "e9264f740fba63e9b283e65c6f88b345b2e32761c1db2d639f356496b853678b"
 
 
-def test_manifest_exposes_the_current_versioned_count_and_digest_keys() -> None:
+def test_summary_exposes_derived_counts_and_digest_without_persistence() -> None:
     # Given
-    manifest = SnapshotManifest(
+    summary = SnapshotSummary(
         account_count=1,
         post_count=2,
-        source_record_count=3,
         digest="a" * 64,
     )
 
-    # When
-    public_manifest = manifest.model_dump()
-
     # Then
-    assert public_manifest == {
-        "schema_version": 1,
-        "account_count": 1,
-        "post_count": 2,
-        "source_record_count": 3,
-        "digest": "a" * 64,
-    }
+    assert summary == SnapshotSummary(1, 2, "a" * 64)
 
 
 @pytest.mark.parametrize(
@@ -294,7 +278,7 @@ def test_report_keys_are_exact_for_a_successful_collect_command() -> None:
         ["collect", "--previous-snapshot", "prior", "--output", "candidate"],
         env={
             "ACCOUNTS": _SYNTHETIC_PERSON_URL,
-            "BRIGHT_DATA_API_KEYS": "synthetic-test-credential",
+            "SOURCES": "brightdata:synthetic-test-credential",
         },
     )
     report_lines = [line for line in result.output.splitlines() if line.startswith("{")]

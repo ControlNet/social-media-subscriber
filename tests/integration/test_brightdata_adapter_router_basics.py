@@ -4,13 +4,13 @@ __test__ = False
 
 from tests.integration.test_brightdata_adapter_support import (
     _NOW,
-    AccountInput,
     AccountKind,
-    AccountRouteFailed,
-    AccountRouteFailureCategory,
     AdapterPostRequest,
     BrightDataAdapterConfig,
+    RuntimeInput,
     SecretStr,
+    SourceId,
+    SourceInput,
     SyntheticBrightDataClient,
     _account,
     _post,
@@ -22,41 +22,18 @@ from tests.integration.test_brightdata_adapter_support import (
 
 
 @pytest.mark.anyio
-async def test_empty_bootstrap_pool_reports_exhaustion_without_client_creation() -> (
-    None
-):
+async def test_empty_source_set_is_rejected_before_client_creation() -> None:
     account = _account(AccountKind.PERSON, "person")
-    account_input = AccountInput(
-        locators=(parse_linkedin_locator(account.profile_url),),
-        bright_data_api_keys=(),
-    )
-    clients: list[SyntheticBrightDataClient] = []
 
-    def client_builder(_credential: str) -> SyntheticBrightDataClient:
-        client = SyntheticBrightDataClient()
-        clients.append(client)
-        return client
-
-    runtime = bootstrap_runtime(
-        account_input,
-        BrightDataAdapterConfig(_NOW),
-        client_builder=client_builder,
-    )
-
-    result = await runtime.router.route(
-        (AdapterPostRequest(account, date(2026, 8, 13), date(2026, 8, 20)),)
-    )
-
-    assert result.accounts == (
-        AccountRouteFailed(account.id, AccountRouteFailureCategory.POOL_EXHAUSTED),
-    )
-    assert clients == []
+    with pytest.raises(ValueError):
+        _ = RuntimeInput(
+            locators=(parse_linkedin_locator(account.profile_url),),
+            sources=(),
+        )
 
 
 @pytest.mark.anyio
-async def test_public_runtime_preserves_source_records_and_skips_through_router() -> (
-    None
-):
+async def test_public_runtime_preserves_all_post_types_through_router() -> None:
     account = _account(AccountKind.PERSON, "person")
     client = SyntheticBrightDataClient(
         person_posts=(
@@ -65,9 +42,14 @@ async def test_public_runtime_preserves_source_records_and_skips_through_router(
         )
     )
     runtime = bootstrap_runtime(
-        AccountInput(
+        RuntimeInput(
             locators=(parse_linkedin_locator(account.profile_url),),
-            bright_data_api_keys=(SecretStr("synthetic-one"),),
+            sources=(
+                SourceInput(
+                    source_id=SourceId.BRIGHTDATA,
+                    credential=SecretStr("synthetic-one"),
+                ),
+            ),
         ),
         BrightDataAdapterConfig(_NOW),
         client_builder=lambda _credential: client,
@@ -77,8 +59,6 @@ async def test_public_runtime_preserves_source_records_and_skips_through_router(
         (AdapterPostRequest(account, date(2026, 8, 13), date(2026, 8, 20)),)
     )
 
-    assert len(result.posts) == 1
-    assert [record.platform_post_id for record in result.source_records] == [
-        "original",
-    ]
-    assert result.skipped.replies == 1
+    assert len(result.posts) == 2
+    assert {post.platform_post_id for post in result.posts} == {"original", "reply"}
+    assert {post.type for post in result.posts} == {"post", "reply"}

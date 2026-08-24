@@ -10,12 +10,6 @@ if TYPE_CHECKING:
     from social_media_subscriber.adapters.instance import AdapterInstanceOrdinal
     from social_media_subscriber.domain.ids import AccountId, PostId
     from social_media_subscriber.domain.post import Post
-    from social_media_subscriber.providers.brightdata.normalization_outcomes import (
-        SkippedPostCounts,
-    )
-    from social_media_subscriber.providers.brightdata.source_record import (
-        BrightDataLinkedInPostSourceRecord,
-    )
 
 
 @unique
@@ -108,7 +102,5 @@ class RouterResult:
     aggregate: RouterAggregate
     accounts: tuple[AccountRouteOutcome, ...]
     posts: tuple[Post, ...]
-    source_records: tuple[BrightDataLinkedInPostSourceRecord, ...]
-    skipped: SkippedPostCounts
     health: tuple[InstanceHealth, ...]
     diagnostics: tuple[RouterDiagnostic, ...]

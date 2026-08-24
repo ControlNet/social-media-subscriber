@@ -30,16 +30,16 @@ from social_media_subscriber.storage.snapshot import SnapshotState
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from social_media_subscriber.accounts.input import AccountInput
     from social_media_subscriber.adapters.router_outcomes import RouterResult
     from social_media_subscriber.bootstrap import SubscriberRuntime
+    from social_media_subscriber.runtime_input import RuntimeInput
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedCollection:
     """Validated inputs shared by both collection phases."""
 
-    account_input: AccountInput
+    runtime_input: RuntimeInput
     previous: SnapshotState | None
     run_started_at: datetime
     override: ExplicitWindow
@@ -83,11 +83,9 @@ def _requested_accounts(prepared: PreparedCollection) -> tuple[Account, ...]:
         for account in (() if prepared.previous is None else prepared.previous.accounts)
     }
     requested: dict[AccountId, Account] = {}
-    for locator in prepared.account_input.locators:
+    for locator in prepared.runtime_input.locators:
         account_id = AccountId(locator.canonical_url)
         requested[account_id] = previous_by_id.get(account_id) or Account(
-            schema_version=2,
-            id=account_id,
             platform=Platform.LINKEDIN,
             kind=locator.kind,
             profile_url=locator.canonical_url,
@@ -119,7 +117,7 @@ async def collect_posts(
         WindowContext(prepared.run_started_at, prepared.override),
     )
     if not requests:
-        return CollectedPosts(SnapshotState((), (), ()), 0, 0, (), 0)
+        return CollectedPosts(SnapshotState((), ()), 0, 0, (), 0)
     result = await runtime.router.route(requests)
     match result.aggregate.status:
         case RouterRunStatus.ABORTED:
@@ -132,7 +130,7 @@ async def collect_posts(
     if not succeeded and failed and len(failed) == pool_exhausted:
         return _provider_failure(failed)
     return CollectedPosts(
-        SnapshotState(successful_accounts, result.posts, result.source_records),
+        SnapshotState(successful_accounts, result.posts),
         len(succeeded),
         len(failed),
         failed,

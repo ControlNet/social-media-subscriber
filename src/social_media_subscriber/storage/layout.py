@@ -11,10 +11,7 @@ if TYPE_CHECKING:
 
 ACCOUNTS_DIRECTORY: Final = Path("accounts")
 POSTS_DIRECTORY: Final = Path("posts/linkedin")
-SOURCE_DIRECTORY: Final = Path("source/brightdata/linkedin/posts")
 ACCOUNTS_INDEX: Final = Path("accounts.json")
-FEED_INDEX: Final = Path("feed.json")
-MANIFEST: Final = Path("snapshot.json")
 
 
 def snapshot_digest(files: Mapping[Path, bytes]) -> str:

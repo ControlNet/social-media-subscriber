@@ -100,8 +100,6 @@ class BrightDataLinkedInAdapter(_DeclaredAdapter):
                 CollectedAccount(
                     item.account_id,
                     item.posts,
-                    item.source_records,
-                    item.skipped,
                 )
                 for item in result.accounts
             )

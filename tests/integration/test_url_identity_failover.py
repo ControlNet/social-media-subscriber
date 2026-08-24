@@ -220,7 +220,7 @@ async def test_schema_and_ownership_corruption_abort_without_rotation(
 
 
 @pytest.mark.anyio
-async def test_batches_are_kind_separated_bounded_and_distributed_exactly() -> None:
+async def test_batches_are_kind_separated_bounded_and_start_with_first_source() -> None:
     people = tuple(make_account(AccountKind.PERSON, number) for number in range(1, 23))
     companies = tuple(
         make_account(AccountKind.COMPANY, number) for number in range(101, 103)
@@ -243,7 +243,7 @@ async def test_batches_are_kind_separated_bounded_and_distributed_exactly() -> N
     )
     assert observed == (
         ("instance-a", AccountKind.PERSON, person_ids[:20]),
-        ("instance-b", AccountKind.PERSON, person_ids[20:]),
+        ("instance-a", AccountKind.PERSON, person_ids[20:]),
         ("instance-a", AccountKind.COMPANY, company_ids),
     )
     assert result.aggregate.status is RouterRunStatus.SUCCESS

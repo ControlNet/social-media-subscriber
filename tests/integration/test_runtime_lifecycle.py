@@ -10,23 +10,33 @@ import httpx2
 import pytest
 from pydantic import SecretStr
 
-from social_media_subscriber.accounts.input import AccountInput
 from social_media_subscriber.accounts.locator import parse_linkedin_locator
+from social_media_subscriber.adapters.instance import AdapterInstanceSpec
+from social_media_subscriber.adapters.registry import AdapterRegistry
 from social_media_subscriber.application.collect import (
     CollectionRequest,
     collect_snapshot,
 )
 from social_media_subscriber.application.results import CollectionExitCode
-from social_media_subscriber.bootstrap import bootstrap_runtime
+from social_media_subscriber.bootstrap import bootstrap_runtime, build_runtime
 from social_media_subscriber.providers.brightdata import client as client_module
 from social_media_subscriber.providers.brightdata.adapter_contracts import (
     BrightDataAdapterConfig,
 )
 from social_media_subscriber.providers.http import HttpClientConfig
+from social_media_subscriber.runtime_input import (
+    RuntimeInput,
+    SourceId,
+    SourceInput,
+    load_runtime_input,
+)
 from social_media_subscriber.settings import Settings
+from tests.fakes.router import FakeDriver, ScriptedFactory
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from social_media_subscriber.bootstrap import SubscriberRuntime
 
 
 _PERSON_URL = "https://www.linkedin.com/in/lifecycle-person/"
@@ -77,7 +87,13 @@ def _request(
     return CollectionRequest(
         settings=Settings(
             accounts=SecretStr(_PERSON_URL),
-            bright_data_api_keys=SecretStr(keys),
+            sources=SecretStr(
+                "\n".join(
+                    f"brightdata:{key.strip()}"
+                    for key in keys.splitlines()
+                    if key.strip()
+                )
+            ),
         ),
         previous_snapshot_dir=root / "previous",
         candidate_snapshot_dir=root / "candidate",
@@ -134,12 +150,17 @@ async def test_runtime_close_is_idempotent_for_every_unique_credential(
         transport_factory.create,
     )
     runtime = bootstrap_runtime(
-        AccountInput(
+        RuntimeInput(
             locators=(parse_linkedin_locator(_PERSON_URL),),
-            bright_data_api_keys=(
-                SecretStr("lifecycle-first"),
-                SecretStr("lifecycle-first"),
-                SecretStr("lifecycle-second"),
+            sources=(
+                SourceInput(
+                    source_id=SourceId.BRIGHTDATA,
+                    credential=SecretStr("lifecycle-first"),
+                ),
+                SourceInput(
+                    source_id=SourceId.BRIGHTDATA,
+                    credential=SecretStr("lifecycle-second"),
+                ),
             ),
         ),
         BrightDataAdapterConfig(_RUN_STARTED_AT),
@@ -152,6 +173,49 @@ async def test_runtime_close_is_idempotent_for_every_unique_credential(
     # Then
     assert len(transport_factory.clients) == 2
     assert all(client.is_closed for client in transport_factory.clients)
+    assert [client.close_calls for client in transport_factory.clients] == [1, 1]
+
+
+@pytest.mark.anyio
+async def test_bootstrap_preserves_source_order_after_exact_line_deduplication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    transport_factory = _TrackingHttpFactory(_success_handler)
+    monkeypatch.setattr(
+        client_module,
+        "create_async_http_client",
+        transport_factory.create,
+    )
+    source_lines = (
+        "brightdata:lifecycle-first",
+        "brightdata:lifecycle-first",
+        "brightdata:lifecycle-second",
+    )
+    runtime_input = load_runtime_input(
+        Settings(
+            accounts=SecretStr(_PERSON_URL),
+            sources=SecretStr("\n".join(source_lines)),
+        )
+    )
+    created_credentials: list[str] = []
+
+    def client_builder(credential: str) -> client_module.BrightDataClient:
+        created_credentials.append(credential)
+        return client_module.BrightDataClient(credential)
+
+    # When
+    runtime = bootstrap_runtime(
+        runtime_input,
+        BrightDataAdapterConfig(_RUN_STARTED_AT),
+        client_builder=client_builder,
+    )
+    await runtime.aclose()
+
+    # Then
+    assert len(runtime_input.sources) == 2
+    assert created_credentials == ["lifecycle-first", "lifecycle-second"]
+    assert len(transport_factory.clients) == 2
     assert [client.close_calls for client in transport_factory.clients] == [1, 1]
 
 
@@ -185,6 +249,46 @@ async def test_production_collection_closes_transport_once_on_success(
     assert all(client.is_closed for client in transport_factory.clients)
     assert [client.close_calls for client in transport_factory.clients] == [1, 1]
     assert requests
+
+
+@pytest.mark.anyio
+async def test_collection_accepts_and_closes_provider_neutral_runtime(
+    tmp_path: Path,
+) -> None:
+    # Given
+    factory = ScriptedFactory(((),))
+    observed_inputs: list[tuple[RuntimeInput, datetime]] = []
+
+    def runtime_builder(
+        runtime_input: RuntimeInput,
+        run_started_at: datetime,
+    ) -> SubscriberRuntime:
+        observed_inputs.append((runtime_input, run_started_at))
+        return build_runtime(
+            AdapterRegistry((FakeDriver,)),
+            (
+                AdapterInstanceSpec(
+                    FakeDriver,
+                    factory,
+                    SecretStr("alternate-provider-key"),
+                ),
+            ),
+        )
+
+    # When
+    result = await collect_snapshot(
+        _request(tmp_path),
+        runtime_builder=runtime_builder,
+    )
+
+    # Then
+    assert result.exit_code is CollectionExitCode.SUCCESS
+    assert observed_inputs[0][1] == _RUN_STARTED_AT
+    assert tuple(
+        locator.canonical_url for locator in observed_inputs[0][0].locators
+    ) == (_PERSON_URL,)
+    assert factory.created_ordinals == [0]
+    assert factory.instances[0].close_calls == 1
 
 
 @pytest.mark.anyio

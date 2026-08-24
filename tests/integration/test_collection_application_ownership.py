@@ -54,10 +54,6 @@ async def test_changed_slug_creates_distinct_url_accounts(tmp_path: Path) -> Non
         sorted((PERSON_URL, renamed_url))
     )
     assert {item.account_id for item in state.posts} == {PERSON_URL, renamed_url}
-    assert {item.account_id for item in state.source_records} == {
-        PERSON_URL,
-        renamed_url,
-    }
 
 
 def _adversarial_records(requested_url: str) -> tuple[tuple[BrightDataPost, ...], ...]:

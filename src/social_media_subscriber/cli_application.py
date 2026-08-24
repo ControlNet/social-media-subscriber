@@ -34,7 +34,7 @@ from social_media_subscriber.storage.repository import (
 
 if TYPE_CHECKING:
     from social_media_subscriber.application.results import CollectionResult
-    from social_media_subscriber.storage.snapshot import SnapshotManifest
+    from social_media_subscriber.storage.snapshot import SnapshotSummary
 
 DIST_BRANCH = "dist"
 _DIST_REF = "refs/heads/dist"
@@ -59,8 +59,8 @@ class CliApplication(Protocol):
         """Build a complete candidate and return its safe terminal result."""
         ...
 
-    def verify(self, snapshot: Path) -> SnapshotManifest:
-        """Validate a snapshot and return its public manifest."""
+    def verify(self, snapshot: Path) -> SnapshotSummary:
+        """Validate a snapshot and return its derived summary."""
         ...
 
     def publish(self, command: PublicationCommand) -> PublishResult:
@@ -78,12 +78,12 @@ class DefaultCliApplication:
         """Run collection through AnyIO at the synchronous CLI boundary."""
         return anyio.run(collect_snapshot, request)
 
-    def verify(self, snapshot: Path) -> SnapshotManifest:
-        """Load the complete tree before returning its manifest."""
+    def verify(self, snapshot: Path) -> SnapshotSummary:
+        """Load the complete tree before returning its derived summary."""
         validated = SnapshotRepository(snapshot).read_optional()
         if validated is None:
             raise SnapshotIntegrityError(SnapshotIntegrityCategory.INVENTORY)
-        return validated.manifest
+        return validated.summary
 
     def publish(self, command: PublicationCommand) -> PublishResult:
         """Precheck and materialize the exact lease before publication."""

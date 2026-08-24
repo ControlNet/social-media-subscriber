@@ -34,13 +34,13 @@ jobs:
         id: gate
         env:
           HAS_ACCOUNTS: ${{ secrets.ACCOUNTS != '' }}
-          HAS_BRIGHT_DATA_API_KEYS: ${{ secrets.BRIGHT_DATA_API_KEYS != '' }}
+          HAS_SOURCES: ${{ secrets.SOURCES != '' }}
         run: |
           set -euo pipefail
-          if [[ "$HAS_ACCOUNTS" == "true" && "$HAS_BRIGHT_DATA_API_KEYS" == "true" ]]; then
+          if [[ "$HAS_ACCOUNTS" == "true" && "$HAS_SOURCES" == "true" ]]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "Manual collection requires ACCOUNTS and BRIGHT_DATA_API_KEYS" >&2
+            echo "Manual collection requires ACCOUNTS and SOURCES" >&2
             exit 1
           else
             echo "Collection disabled: provider credentials are not configured"
@@ -56,7 +56,7 @@ jobs:
       contents: write
     env:
       ACCOUNTS: ${{ secrets.ACCOUNTS }}
-      BRIGHT_DATA_API_KEYS: ${{ secrets.BRIGHT_DATA_API_KEYS }}
+      SOURCES: ${{ secrets.SOURCES }}
       GITHUB_TOKEN: ${{ github.token }}
       START_DATE: ${{ inputs.start_date }}
       END_DATE: ${{ inputs.end_date }}

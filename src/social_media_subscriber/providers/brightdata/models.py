@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Annotated, ClassVar, Final, Self, assert_never
-from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
+from typing import Annotated, ClassVar, Final, Self
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import (
     BaseModel,
@@ -51,12 +51,6 @@ _LINKEDIN_HOST: Final = re.compile(
 )
 _UNSAFE_URL: Final = re.compile(
     r"(?:[\x00-\x1f\x7f\\]|%(?:[01][0-9a-f]|7f|2f|5c|2e))", re.IGNORECASE
-)
-_SENSITIVE_QUERY_KEYS: Final = frozenset(
-    {"access_token", "api_key", "auth", "key", "password", "signature", "token"}
-)
-_TRACKING_QUERY_KEYS: Final = frozenset(
-    {"lipi", "midtoken", "ref", "trk", "trackingid"}
 )
 
 
@@ -157,13 +151,6 @@ class BrightDataSnapshotProgress(_BrightDataModel):
     status: str = Field(min_length=1)
 
 
-class BrightDataIncludeErrorRecord(_BrightDataModel):
-    """Typed include-errors record kept outside successful source persistence."""
-
-    error: JsonValue
-    input: JsonValue = None
-
-
 def canonical_post_url(value: str) -> str:
     """Return a query-free canonical LinkedIn Post URL or a safe typed failure."""
     try:
@@ -188,74 +175,3 @@ def canonical_post_url(value: str) -> str:
             BrightDataNormalizationErrorCategory.POST_URL
         )
     return urlunsplit(("https", "www.linkedin.com", parsed.path, "", ""))
-
-
-def _approved_link(value: str) -> str | None:
-    try:
-        parsed = urlsplit(value)
-        hostname = parsed.hostname
-        port = parsed.port
-    except ValueError:
-        return None
-    query = parse_qsl(parsed.query, keep_blank_values=True)
-    query_keys = frozenset(key.casefold() for key, _value in query)
-    decoded_path = unquote(parsed.path).casefold()
-    is_linkedin_media_path = (
-        hostname is not None
-        and _LINKEDIN_HOST.fullmatch(hostname.casefold()) is not None
-        and (decoded_path == "/media" or decoded_path.startswith("/media/"))
-    )
-    if (
-        _UNSAFE_URL.search(value) is not None
-        or parsed.scheme.casefold() != "https"
-        or hostname is None
-        or parsed.username is not None
-        or parsed.password is not None
-        or port not in {None, 443}
-        or query_keys & _SENSITIVE_QUERY_KEYS
-        or is_linkedin_media_path
-        or hostname.casefold() == "licdn.com"
-        or hostname.casefold().endswith(".licdn.com")
-        or hostname.casefold() == "media.linkedin.com"
-        or hostname.casefold().endswith(".media.linkedin.com")
-    ):
-        return None
-    retained = sorted(
-        (key, query_value)
-        for key, query_value in query
-        if key.casefold() not in _TRACKING_QUERY_KEYS
-        and not key.casefold().startswith("utm_")
-    )
-    return urlunsplit(
-        ("https", hostname.casefold(), parsed.path, urlencode(retained), "")
-    )
-
-
-def _link_candidates(value: JsonValue) -> tuple[str, ...]:
-    match value:
-        case str() as link:
-            return (link,)
-        case list() as values:
-            return tuple(link for item in values for link in _link_candidates(item))
-        case dict() as mapping:
-            match mapping.get("url"):
-                case str() as link:
-                    return (link,)
-                case bool() | int() | float() | list() | dict() | None:
-                    return ()
-        case bool() | int() | float() | None:
-            return ()
-    assert_never(value)
-
-
-def canonical_links(post: BrightDataPost) -> tuple[str, ...]:
-    """Filter, normalize, deduplicate, and sort canonical public links."""
-    return tuple(
-        sorted(
-            {
-                approved
-                for candidate in _link_candidates(post.embedded_links)
-                if (approved := _approved_link(candidate)) is not None
-            }
-        )
-    )

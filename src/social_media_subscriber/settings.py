@@ -17,4 +17,4 @@ class Settings(BaseSettings):
     )
 
     accounts: SecretStr
-    bright_data_api_keys: SecretStr
+    sources: SecretStr

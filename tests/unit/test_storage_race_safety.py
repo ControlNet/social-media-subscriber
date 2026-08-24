@@ -75,7 +75,7 @@ def test_root_symlink_replacement_after_validation_is_not_followed_or_removed(
 
     repository = _PostValidationReplacingRepository(root, replace_after_validation)
     with pytest.raises(SnapshotIntegrityError) as raised:
-        _ = repository.write(SnapshotState((), (), ()))
+        _ = repository.write(SnapshotState((), ()))
 
     assert raised.value.reason is SnapshotIntegrityCategory.UNSAFE_PATH
     assert root.is_symlink()
@@ -100,7 +100,7 @@ def test_root_directory_replacement_after_validation_is_not_overwritten(
 
     repository = _PostValidationReplacingRepository(root, replace_after_validation)
     with pytest.raises(SnapshotIntegrityError) as raised:
-        _ = repository.write(SnapshotState((), (), ()))
+        _ = repository.write(SnapshotState((), ()))
 
     assert raised.value.reason is SnapshotIntegrityCategory.UNSAFE_PATH
     assert tree_bytes(root) == {"marker.txt": b"replacement"}
@@ -136,7 +136,7 @@ def test_candidate_replacement_before_promotion_is_not_deleted(
     monkeypatch.setattr(safe_promotion, "promote_directory", replace_candidate)
 
     with pytest.raises(SnapshotIntegrityError) as raised:
-        _ = repository.write(SnapshotState((), (), ()))
+        _ = repository.write(SnapshotState((), ()))
 
     assert raised.value.reason is SnapshotIntegrityCategory.UNSAFE_PATH
     assert tree_bytes(root) == before
@@ -164,7 +164,7 @@ def test_root_occupant_after_backup_is_not_overwritten(
     monkeypatch.setattr(DirectoryAnchor, "rename", occupy_root_after_backup)
 
     with pytest.raises(SnapshotIntegrityError) as raised:
-        _ = repository.write(SnapshotState((), (), ()))
+        _ = repository.write(SnapshotState((), ()))
 
     assert raised.value.reason is SnapshotIntegrityCategory.UNSAFE_PATH
     assert tree_bytes(root) == {"marker.txt": b"replacement"}

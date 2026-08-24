@@ -13,9 +13,13 @@ from social_media_subscriber.accounts.errors import (
     AccountInputErrorCategory,
     AccountInputField,
 )
-from social_media_subscriber.accounts.input import AccountInput, load_account_input
 from social_media_subscriber.accounts.locator import parse_linkedin_locator
 from social_media_subscriber.domain.platform import AccountKind, Platform
+from social_media_subscriber.runtime_input import (
+    RuntimeInput,
+    SourceId,
+    load_runtime_input,
+)
 from social_media_subscriber.settings import Settings
 
 if TYPE_CHECKING:
@@ -27,14 +31,14 @@ def test_settings_load_multiline_secrets_from_environment(
 ) -> None:
     # Given
     monkeypatch.setenv("ACCOUNTS", "https://linkedin.com/in/Ada")
-    monkeypatch.setenv("BRIGHT_DATA_API_KEYS", "synthetic-key")
+    monkeypatch.setenv("SOURCES", "brightdata:synthetic-key")
 
     # When
     settings = Settings.model_validate({})
 
     # Then
     assert isinstance(settings.accounts, SecretStr)
-    assert isinstance(settings.bright_data_api_keys, SecretStr)
+    assert isinstance(settings.sources, SecretStr)
     assert "Ada" not in repr(settings)
     assert "synthetic-key" not in repr(settings)
 
@@ -43,7 +47,7 @@ def test_settings_are_frozen() -> None:
     # Given
     settings = Settings(
         accounts=SecretStr("https://linkedin.com/in/Ada"),
-        bright_data_api_keys=SecretStr("synthetic-key"),
+        sources=SecretStr("brightdata:synthetic-key"),
     )
 
     # When / Then
@@ -194,79 +198,114 @@ def test_locator_preserves_segment_spelling_when_generated_slug_is_valid(
     assert locator.canonical_url == f"https://www.linkedin.com/in/{segment}/"
 
 
-def test_account_input_normalizes_deduplicates_and_preserves_first_seen_order() -> None:
+def test_runtime_input_normalizes_deduplicates_and_preserves_source_order() -> None:
     # Given
     account_lines = (
         "\r\n  https://linkedin.com/in/Ada?trk=one  \r\n",
         "https://de.linkedin.com/in/Ada/#fragment\r\n",
         "https://linkedin.com/company/OpenAI\r\n\r\n",
     )
-    key_lines = (
-        "\r\n  synthetic-key-one  \r\nsynthetic-key-one\r\n",
-        " synthetic-key-two \r\n",
+    source_lines = (
+        "\r\n  BrightData:synthetic-key-one  \r\n",
+        "brightdata:synthetic-key-one\r\n",
+        " brightdata:synthetic:key-two \r\n",
     )
     settings = Settings(
         accounts=SecretStr("".join(account_lines)),
-        bright_data_api_keys=SecretStr("".join(key_lines)),
+        sources=SecretStr("".join(source_lines)),
     )
 
     # When
-    account_input = load_account_input(settings)
+    runtime_input = load_runtime_input(settings)
 
     # Then
-    assert tuple(locator.canonical_url for locator in account_input.locators) == (
+    assert tuple(locator.canonical_url for locator in runtime_input.locators) == (
         "https://www.linkedin.com/in/Ada/",
         "https://www.linkedin.com/company/OpenAI/",
     )
+    assert tuple(source.source_id for source in runtime_input.sources) == (
+        SourceId.BRIGHTDATA,
+        SourceId.BRIGHTDATA,
+    )
     assert tuple(
-        key.get_secret_value() for key in account_input.bright_data_api_keys
-    ) == ("synthetic-key-one", "synthetic-key-two")
+        source.credential.get_secret_value() for source in runtime_input.sources
+    ) == ("synthetic-key-one", "synthetic:key-two")
 
 
 @pytest.mark.parametrize(
-    ("accounts", "keys", "category", "field"),
+    ("accounts", "sources", "category", "field"),
     [
         (
             " \r\n\n ",
-            "synthetic-key",
+            "brightdata:synthetic-key",
             AccountInputErrorCategory.EMPTY_ACCOUNTS,
             AccountInputField.ACCOUNTS,
         ),
         (
             "https://linkedin.com/in/Ada",
             " \r\n\n ",
-            AccountInputErrorCategory.EMPTY_BRIGHT_DATA_API_KEYS,
-            AccountInputField.BRIGHT_DATA_API_KEYS,
+            AccountInputErrorCategory.EMPTY_SOURCES,
+            AccountInputField.SOURCES,
         ),
     ],
 )
-def test_account_input_is_rejected_when_required_set_is_empty(
+def test_runtime_input_is_rejected_when_required_set_is_empty(
     accounts: str,
-    keys: str,
+    sources: str,
     category: AccountInputErrorCategory,
     field: AccountInputField,
 ) -> None:
     # Given
     settings = Settings(
         accounts=SecretStr(accounts),
-        bright_data_api_keys=SecretStr(keys),
+        sources=SecretStr(sources),
     )
 
     # When
     with pytest.raises(AccountInputError) as caught:
-        _ = load_account_input(settings)
+        _ = load_runtime_input(settings)
 
     # Then
     assert caught.value.category is category
     assert caught.value.field is field
     assert accounts not in str(caught.value)
-    assert keys not in str(caught.value)
+    assert sources not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("raw_source", "category"),
+    [
+        ("missing-separator", AccountInputErrorCategory.INVALID_SOURCE),
+        (":credential", AccountInputErrorCategory.INVALID_SOURCE),
+        ("brightdata:", AccountInputErrorCategory.INVALID_SOURCE),
+        ("unknown:credential", AccountInputErrorCategory.UNSUPPORTED_SOURCE),
+    ],
+)
+def test_source_line_is_rejected_atomically_without_exposing_credential(
+    raw_source: str,
+    category: AccountInputErrorCategory,
+) -> None:
+    # Given
+    settings = Settings(
+        accounts=SecretStr("https://linkedin.com/in/Ada"),
+        sources=SecretStr(raw_source),
+    )
+
+    # When
+    with pytest.raises(AccountInputError) as caught:
+        _ = load_runtime_input(settings)
+
+    # Then
+    assert caught.value.category is category
+    assert caught.value.field is AccountInputField.SOURCES
+    assert raw_source not in str(caught.value)
+    assert raw_source not in repr(caught.value)
 
 
 def test_whole_input_is_rejected_before_factory_when_one_line_is_invalid() -> None:
     # Given
     canary_url = "https://linkedin.com.evil/in/private-canary"
-    canary_key = "synthetic-private-key-canary"
+    canary_source = "brightdata:synthetic-private-key-canary"
     settings = Settings(
         accounts=SecretStr(
             "".join(
@@ -276,16 +315,16 @@ def test_whole_input_is_rejected_before_factory_when_one_line_is_invalid() -> No
                 )
             )
         ),
-        bright_data_api_keys=SecretStr(canary_key),
+        sources=SecretStr(canary_source),
     )
     factory_calls = 0
 
-    def factory(_: AccountInput) -> None:
+    def factory(_: RuntimeInput) -> None:
         nonlocal factory_calls
         factory_calls += 1
 
-    def construct(factory_callable: Callable[[AccountInput], None]) -> None:
-        factory_callable(load_account_input(settings))
+    def construct(factory_callable: Callable[[RuntimeInput], None]) -> None:
+        factory_callable(load_runtime_input(settings))
 
     # When
     with pytest.raises(AccountInputError) as caught:
@@ -294,9 +333,9 @@ def test_whole_input_is_rejected_before_factory_when_one_line_is_invalid() -> No
     # Then
     assert factory_calls == 0
     assert canary_url not in str(caught.value)
-    assert canary_key not in str(caught.value)
+    assert canary_source not in str(caught.value)
     assert canary_url not in repr(caught.value)
-    assert canary_key not in repr(caught.value)
+    assert canary_source not in repr(caught.value)
 
 
 def test_invalid_input_does_not_reach_logs_or_exception_text(
@@ -304,32 +343,32 @@ def test_invalid_input_does_not_reach_logs_or_exception_text(
 ) -> None:
     # Given
     canary_url = "https://linkedin.com/in/canary%2Fprivate"
-    canary_key = "synthetic-private-key-canary"
+    canary_source = "brightdata:synthetic-private-key-canary"
     settings = Settings(
         accounts=SecretStr(canary_url),
-        bright_data_api_keys=SecretStr(canary_key),
+        sources=SecretStr(canary_source),
     )
 
     # When
     with caplog.at_level(logging.DEBUG), pytest.raises(AccountInputError) as caught:
-        _ = load_account_input(settings)
+        _ = load_runtime_input(settings)
 
     # Then
     assert canary_url not in caplog.text
-    assert canary_key not in caplog.text
+    assert canary_source not in caplog.text
     assert canary_url not in str(caught.value)
-    assert canary_key not in str(caught.value)
+    assert canary_source not in str(caught.value)
     assert canary_url not in repr(caught.value)
-    assert canary_key not in repr(caught.value)
+    assert canary_source not in repr(caught.value)
 
 
-def test_singular_bright_data_token_is_not_a_supported_setting(
+def test_legacy_bright_data_keys_are_not_a_supported_setting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given
     monkeypatch.setenv("ACCOUNTS", "https://linkedin.com/in/Ada")
-    monkeypatch.setenv("BRIGHT_DATA_API_TOKEN", "synthetic-token")
-    monkeypatch.delenv("BRIGHT_DATA_API_KEYS", raising=False)
+    monkeypatch.setenv("BRIGHT_DATA_API_KEYS", "synthetic-token")
+    monkeypatch.delenv("SOURCES", raising=False)
 
     # When / Then
     with pytest.raises(ValidationError):

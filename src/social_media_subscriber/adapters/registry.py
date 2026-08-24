@@ -9,7 +9,6 @@ from social_media_subscriber.adapters.metadata import AdapterMetadata
 from social_media_subscriber.adapters.metadata_errors import MetadataViolation
 from social_media_subscriber.adapters.operations import AdapterOperation
 from social_media_subscriber.adapters.registry_errors import (
-    DuplicateAdapterDescriptorError,
     DuplicateAdapterDriverError,
     InvalidAdapterMetadataError,
     MissingAdapterMetadataError,
@@ -18,25 +17,6 @@ from social_media_subscriber.domain.platform import AccountKind, Platform
 
 if TYPE_CHECKING:
     from social_media_subscriber.adapters.protocol import AdapterDriver
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedAdapterDrivers:
-    """Ordered driver classes matching one requested capability."""
-
-    driver_classes: tuple[type[AdapterDriver], ...]
-
-
-@dataclass(frozen=True, slots=True)
-class UnsupportedAdapterCapability:
-    """Typed outcome for a capability absent from the explicit registry."""
-
-    platform: Platform
-    operation: AdapterOperation
-    account_kind: AccountKind
-
-
-type AdapterResolution = ResolvedAdapterDrivers | UnsupportedAdapterCapability
 
 
 def _find_metadata_violation(metadata: AdapterMetadata) -> MetadataViolation | None:
@@ -94,8 +74,6 @@ class AdapterRegistry:
     def __post_init__(self) -> None:
         """Reject invalid entries before the registry becomes observable."""
         seen_drivers: dict[type[AdapterDriver], int] = {}
-        seen_descriptors: dict[AdapterMetadata, tuple[str, AdapterMetadata]] = {}
-
         for index, driver_class in enumerate(self.driver_classes):
             first_index = seen_drivers.get(driver_class)
             if first_index is not None:
@@ -125,17 +103,7 @@ class AdapterRegistry:
                     violation=violation,
                 )
 
-            duplicate_descriptor = seen_descriptors.get(metadata)
-            if duplicate_descriptor is not None:
-                first_driver_name, first_metadata = duplicate_descriptor
-                raise DuplicateAdapterDescriptorError(
-                    first_driver_name=first_driver_name,
-                    duplicate_driver_name=driver_class.__name__,
-                    metadata=first_metadata,
-                )
-
             seen_drivers[driver_class] = index
-            seen_descriptors[metadata] = (driver_class.__name__, metadata)
 
     def resolve(
         self,
@@ -143,19 +111,12 @@ class AdapterRegistry:
         platform: Platform,
         operation: AdapterOperation,
         account_kind: AccountKind,
-    ) -> AdapterResolution:
+    ) -> tuple[type[AdapterDriver], ...]:
         """Resolve matching drivers in the registry's declared order."""
-        matches = tuple(
+        return tuple(
             driver_class
             for driver_class in self.driver_classes
             if driver_class.adapter_metadata.platform is platform
             and operation in driver_class.adapter_metadata.operations
             and account_kind in driver_class.adapter_metadata.account_kinds
-        )
-        if matches:
-            return ResolvedAdapterDrivers(driver_classes=matches)
-        return UnsupportedAdapterCapability(
-            platform=platform,
-            operation=operation,
-            account_kind=account_kind,
         )

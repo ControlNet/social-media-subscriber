@@ -1,21 +1,13 @@
-"""Frozen canonical Post boundary and stable-content hashing."""
+"""Canonical platform Post boundary and deterministic merge identity."""
 
 import hashlib
 import json
 import re
-from dataclasses import dataclass, replace
 from datetime import datetime
-from enum import StrEnum
-from typing import ClassVar, Final, Literal, Self
-from urllib.parse import parse_qsl, urlsplit
+from typing import ClassVar, Final
+from urllib.parse import urlsplit
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    field_validator,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_core import PydanticCustomError
 
 from social_media_subscriber.domain.ids import (
@@ -24,34 +16,19 @@ from social_media_subscriber.domain.ids import (
     ContentHash,
     PlatformPostId,
     PostId,
-    is_canonical_account_id,
     post_id_for,
 )
 from social_media_subscriber.domain.time import canonical_utc
+from social_media_subscriber.serialization.json import JsonValue
 
-_SENSITIVE_QUERY_KEYS = frozenset(
-    {"access_token", "api_key", "auth", "key", "password", "signature", "token"}
-)
 _UNSAFE_URL_PATTERN = re.compile(
     r"(?:[\x00-\x1f\x7f\\]|%(?:[01][0-9a-f]|7f|2f|5c|2e))",
     re.IGNORECASE,
 )
 _POST_URL_ERROR_CODE: Final = "canonical_post_url"
 _POST_URL_ERROR_MESSAGE: Final = "value must be a canonical public LinkedIn post URL"
-_LINK_ERROR_CODE: Final = "approved_public_link"
-_LINK_ERROR_MESSAGE: Final = "value must be an approved public HTTPS link"
-_POST_ID_ERROR_CODE: Final = "post_id_mismatch"
-_POST_ID_ERROR_MESSAGE: Final = "post id does not match platform post id"
-_CONTENT_HASH_ERROR_CODE: Final = "content_hash_mismatch"
-_CONTENT_HASH_ERROR_MESSAGE: Final = "content hash does not match stable post fields"
-_ACCOUNT_ID_ERROR_CODE: Final = "canonical_account_id"
-_ACCOUNT_ID_ERROR_MESSAGE: Final = "value must be a canonical LinkedIn Account ID"
-
-
-class PostKind(StrEnum):
-    """Canonical Post variants supported in schema version two."""
-
-    ORIGINAL = "original"
+_POST_TYPE_ERROR_CODE: Final = "post_type"
+_POST_TYPE_ERROR_MESSAGE: Final = "post type must not be empty"
 
 
 def _canonical_post_url(value: str) -> str:
@@ -74,145 +51,59 @@ def _canonical_post_url(value: str) -> str:
         or any(segment in {".", ".."} for segment in parsed.path.split("/"))
         or not parsed.path.startswith(("/posts/", "/feed/update/"))
     ):
-        raise PydanticCustomError(
-            _POST_URL_ERROR_CODE,
-            _POST_URL_ERROR_MESSAGE,
-        )
+        raise PydanticCustomError(_POST_URL_ERROR_CODE, _POST_URL_ERROR_MESSAGE)
     return value
-
-
-def _approved_link(value: str) -> str:
-    try:
-        parsed = urlsplit(value)
-        port = parsed.port
-    except ValueError:
-        port = -1
-        parsed = urlsplit("")
-    query_keys = frozenset(key.casefold() for key, _value in parse_qsl(parsed.query))
-    if (
-        _UNSAFE_URL_PATTERN.search(value) is not None
-        or parsed.scheme != "https"
-        or parsed.hostname is None
-        or parsed.username is not None
-        or parsed.password is not None
-        or port is not None
-        or parsed.fragment
-        or any(segment in {".", ".."} for segment in parsed.path.split("/"))
-        or query_keys & _SENSITIVE_QUERY_KEYS
-    ):
-        raise PydanticCustomError(
-            _LINK_ERROR_CODE,
-            _LINK_ERROR_MESSAGE,
-        )
-    return value
-
-
-@dataclass(frozen=True, slots=True)
-class StablePostContent:
-    """Fields whose canonical values determine a Post content hash."""
-
-    schema_version: Literal[2]
-    id: PostId
-    platform_post_id: PlatformPostId
-    account_id: AccountId
-    canonical_url: str
-    published_at: datetime
-    text: str | None
-    kind: Literal[PostKind.ORIGINAL]
-    hashtags: tuple[str, ...]
-    links: tuple[str, ...]
-
-    def normalized(self) -> Self:
-        """Return the deterministic representation used by the boundary model."""
-        if not is_canonical_account_id(self.account_id):
-            raise PydanticCustomError(
-                _ACCOUNT_ID_ERROR_CODE,
-                _ACCOUNT_ID_ERROR_MESSAGE,
-            )
-        normalized_text = None
-        if self.text is not None:
-            candidate = self.text.replace("\r\n", "\n").replace("\r", "\n").strip()
-            normalized_text = candidate or None
-        return replace(
-            self,
-            canonical_url=_canonical_post_url(self.canonical_url),
-            published_at=canonical_utc(self.published_at),
-            text=normalized_text,
-            hashtags=tuple(sorted(set(self.hashtags))),
-            links=tuple(sorted({_approved_link(value) for value in self.links})),
-        )
-
-
-def content_hash_for(content: StablePostContent) -> ContentHash:
-    """Hash only normalized stable content, excluding discovery time."""
-    normalized = content.normalized()
-    fields = {
-        "account_id": normalized.account_id,
-        "canonical_url": normalized.canonical_url,
-        "hashtags": normalized.hashtags,
-        "id": normalized.id,
-        "kind": normalized.kind,
-        "links": normalized.links,
-        "platform_post_id": normalized.platform_post_id,
-        "published_at": normalized.published_at.isoformat().replace("+00:00", "Z"),
-        "schema_version": normalized.schema_version,
-        "text": normalized.text,
-    }
-    encoded = json.dumps(
-        fields,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
-    return ContentHash(hashlib.sha256(encoded).hexdigest())
 
 
 class Post(BaseModel):
-    """Versioned provider-neutral original Post persisted at the boundary."""
+    """Provider-neutral platform Post with open-ended content."""
 
     model_config: ClassVar[ConfigDict] = ConfigDict(
         extra="forbid",
         frozen=True,
         hide_input_in_errors=True,
+        strict=True,
         validate_default=True,
     )
 
-    schema_version: Literal[2]
-    id: PostId = Field(pattern=r"^linkedin:post:.+$")
     platform_post_id: PlatformPostId = Field(min_length=1)
-    account_id: CanonicalAccountId
+    account_profile_url: CanonicalAccountId
     canonical_url: str
     published_at: datetime
-    text: str | None
-    kind: Literal[PostKind.ORIGINAL]
-    hashtags: tuple[str, ...] = Field(json_schema_extra={"uniqueItems": True})
-    links: tuple[str, ...] = Field(json_schema_extra={"uniqueItems": True})
+    type: str = Field(min_length=1)
+    content: dict[str, JsonValue]
     first_seen_at: datetime
-    content_hash: ContentHash = Field(pattern=r"^[0-9a-f]{64}$")
 
-    @classmethod
-    def from_stable(cls, content: StablePostContent, first_seen_at: datetime) -> Self:
-        """Construct a canonical Post and compute its stable content hash."""
-        normalized = content.normalized()
-        return cls(
-            schema_version=normalized.schema_version,
-            id=normalized.id,
-            platform_post_id=normalized.platform_post_id,
-            account_id=normalized.account_id,
-            canonical_url=normalized.canonical_url,
-            published_at=normalized.published_at,
-            text=normalized.text,
-            kind=normalized.kind,
-            hashtags=normalized.hashtags,
-            links=normalized.links,
-            first_seen_at=first_seen_at,
-            content_hash=content_hash_for(normalized),
-        )
+    @property
+    def id(self) -> PostId:
+        """Return the namespaced Post identity without persisting it."""
+        return post_id_for(self.platform_post_id)
+
+    @property
+    def account_id(self) -> AccountId:
+        """Return the Account URL identity used by internal ownership checks."""
+        return AccountId(self.account_profile_url)
+
+    @property
+    def content_hash(self) -> ContentHash:
+        """Return the stable merge hash without persisting a duplicate field."""
+        fields = {
+            "account_profile_url": self.account_profile_url,
+            "canonical_url": self.canonical_url,
+            "text": self.content.get("text"),
+            "platform_post_id": self.platform_post_id,
+            "published_at": self.published_at.isoformat().replace("+00:00", "Z"),
+            "type": self.type,
+        }
+        encoded = json.dumps(
+            fields, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+        return ContentHash(hashlib.sha256(encoded).hexdigest())
 
     @field_validator("canonical_url")
     @classmethod
     def validate_canonical_url(cls, value: str) -> str:
-        """Reject unsafe or non-canonical public post URLs."""
+        """Reject unsafe or non-canonical public Post URLs."""
         return _canonical_post_url(value)
 
     @field_validator("published_at", "first_seen_at")
@@ -221,50 +112,11 @@ class Post(BaseModel):
         """Require canonical UTC publication and discovery timestamps."""
         return canonical_utc(value)
 
-    @field_validator("text")
+    @field_validator("type")
     @classmethod
-    def normalize_text(cls, value: str | None) -> str | None:
-        """Normalize newlines and surrounding whitespace without inventing text."""
-        if value is None:
-            return None
-        normalized = value.replace("\r\n", "\n").replace("\r", "\n").strip()
-        return normalized or None
-
-    @field_validator("hashtags")
-    @classmethod
-    def normalize_hashtags(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        """Deduplicate and sort canonical hashtags."""
-        return tuple(sorted(set(values)))
-
-    @field_validator("links")
-    @classmethod
-    def normalize_links(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        """Validate, deduplicate, and sort approved public links."""
-        return tuple(sorted({_approved_link(value) for value in values}))
-
-    @model_validator(mode="after")
-    def validate_identity_and_hash(self) -> Self:
-        """Require identity and hash fields to match canonical stable content."""
-        if self.id != post_id_for(self.platform_post_id):
-            raise PydanticCustomError(
-                _POST_ID_ERROR_CODE,
-                _POST_ID_ERROR_MESSAGE,
-            )
-        stable = StablePostContent(
-            schema_version=self.schema_version,
-            id=self.id,
-            platform_post_id=self.platform_post_id,
-            account_id=self.account_id,
-            canonical_url=self.canonical_url,
-            published_at=self.published_at,
-            text=self.text,
-            kind=self.kind,
-            hashtags=self.hashtags,
-            links=self.links,
-        )
-        if self.content_hash != content_hash_for(stable):
-            raise PydanticCustomError(
-                _CONTENT_HASH_ERROR_CODE,
-                _CONTENT_HASH_ERROR_MESSAGE,
-            )
-        return self
+    def normalize_type(cls, value: str) -> str:
+        """Normalize the platform post type without closing future variants."""
+        normalized = value.strip()
+        if not normalized:
+            raise PydanticCustomError(_POST_TYPE_ERROR_CODE, _POST_TYPE_ERROR_MESSAGE)
+        return normalized

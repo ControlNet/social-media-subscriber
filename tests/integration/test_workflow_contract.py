@@ -11,10 +11,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from social_media_subscriber.providers.brightdata.models import JsonValue
-from social_media_subscriber.serialization.json import canonical_json_bytes
-from social_media_subscriber.storage.layout import MANIFEST, snapshot_digest
 from social_media_subscriber.storage.repository import SnapshotRepository
-from social_media_subscriber.storage.snapshot import SnapshotManifest
 from tests.e2e.brightdata_server import FakeBrightDataServer
 from tests.e2e.pipeline_harness import invoke_collect
 from tests.unit.test_storage_repository import storage_state
@@ -40,7 +37,7 @@ def _run_preflight(
     event_name: str,
     *,
     has_accounts: bool,
-    has_keys: bool,
+    has_sources: bool,
 ) -> subprocess.CompletedProcess[str]:
     assert _BASH is not None
     workflow = load_workflow(_COLLECT_PATH)
@@ -56,7 +53,7 @@ def _run_preflight(
         env={
             "GITHUB_OUTPUT": str(output),
             "HAS_ACCOUNTS": str(has_accounts).lower(),
-            "HAS_BRIGHT_DATA_API_KEYS": str(has_keys).lower(),
+            "HAS_SOURCES": str(has_sources).lower(),
         },
     )
 
@@ -127,7 +124,7 @@ def test_collection_gates_secrets_and_scopes_write_to_publication_job() -> None:
     assert "exit 1" in preflight_source
     assert "enabled=false" in preflight_source
     assert "secrets.ACCOUNTS" in _COLLECT_PATH.read_text()
-    assert "secrets.BRIGHT_DATA_API_KEYS" in _COLLECT_PATH.read_text()
+    assert "secrets.SOURCES" in _COLLECT_PATH.read_text()
     assert "pull_request" not in mapping(workflow["on"])
 
 
@@ -144,12 +141,12 @@ def test_preflight_event_outcomes(
     scenario: tuple[str, bool, bool, int, str | None],
 ) -> None:
     # Given / When
-    event_name, has_accounts, has_keys, exit_code, output = scenario
+    event_name, has_accounts, has_sources, exit_code, output = scenario
     result = _run_preflight(
         tmp_path,
         event_name,
         has_accounts=has_accounts,
-        has_keys=has_keys,
+        has_sources=has_sources,
     )
     output_path = tmp_path / "github-output"
     actual_output = output_path.read_text() if output_path.exists() else None
@@ -244,7 +241,7 @@ def test_collection_preserves_observed_lease_and_terminal_status_contract() -> N
     assert "exit 4" in commands
 
 
-def test_legacy_v1_incompatible_baseline_fails_before_provider_io(
+def test_obsolete_account_record_fails_before_provider_io(
     tmp_path: Path,
 ) -> None:
     # Given
@@ -262,17 +259,6 @@ def test_legacy_v1_incompatible_baseline_fails_before_provider_io(
         }
     )
     _ = record.write_bytes(_JSON_OBJECT.dump_json(payload))
-    non_manifest = {
-        path.relative_to(previous): path.read_bytes()
-        for path in previous.rglob("*")
-        if path.is_file() and path.relative_to(previous) != MANIFEST
-    }
-    manifest = SnapshotManifest.model_validate_json((previous / MANIFEST).read_bytes())
-    _ = (previous / MANIFEST).write_bytes(
-        canonical_json_bytes(
-            manifest.model_copy(update={"digest": snapshot_digest(non_manifest)})
-        )
-    )
     server = FakeBrightDataServer()
 
     # When

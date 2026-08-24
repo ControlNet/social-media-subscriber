@@ -49,12 +49,8 @@ def assert_metric_publication_is_idempotent_and_stale_safe(tmp_path: Path) -> No
         for path in first_tree | changed_tree
         if first_tree.get(path) != changed_tree.get(path)
     }
-    assert "snapshot.json" in changed_paths
-    changed_source_paths = {
-        path for path in changed_paths if path.startswith("source/")
-    }
-    assert len(changed_paths) == 2
-    assert len(changed_source_paths) == 1
+    assert len(changed_paths) == 1
+    assert next(iter(changed_paths)).startswith("posts/linkedin/")
     assert git(remote, "rev-list", "--max-parents=0", "refs/heads/dist") == changed_sha
     assert git(remote, "rev-list", "--parents", "-n", "1", changed_sha) == changed_sha
 

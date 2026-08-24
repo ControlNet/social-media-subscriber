@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
-from social_media_subscriber.domain.ids import (
-    PlatformPostId,
-    post_id_for,
-)
-from social_media_subscriber.domain.post import Post, PostKind, StablePostContent
+from social_media_subscriber.domain.ids import PlatformPostId
+from social_media_subscriber.domain.post import Post
 from social_media_subscriber.providers.brightdata.actor_ownership import (
     validate_actor_ownership,
 )
 from social_media_subscriber.providers.brightdata.models import (
-    canonical_links,
+    JsonValue,
     canonical_post_url,
 )
 from social_media_subscriber.providers.brightdata.normalization_errors import (
@@ -24,27 +20,51 @@ from social_media_subscriber.providers.brightdata.normalization_errors import (
 )
 from social_media_subscriber.providers.brightdata.normalization_outcomes import (
     BrightDataNormalizationResult,
-    SkippedPostCounts,
 )
-from social_media_subscriber.providers.brightdata.source_record import (
-    BrightDataLinkedInPostSourceRecord,
-)
+from social_media_subscriber.serialization.json import canonical_json_bytes
 
 if TYPE_CHECKING:
     from social_media_subscriber.domain.account import Account
     from social_media_subscriber.providers.brightdata.models import BrightDataPost
 
+_IDENTITY_FIELDS: Final = frozenset(
+    {
+        "id",
+        "date_posted",
+        "post_type",
+        "url",
+        "user_id",
+        "use_url",
+        "user_url",
+        "profile_url",
+        "company_url",
+        "post_text",
+    }
+)
+_NON_POST_FIELDS: Final = frozenset(
+    {
+        "discovery_input",
+        "input",
+        "more_articles_by_user",
+        "more_relevant_posts",
+        "timestamp",
+    }
+)
 
-def _increment_skip(counts: SkippedPostCounts, post_type: str) -> SkippedPostCounts:
-    match post_type.casefold():
-        case "reply" | "comment":
-            return replace(counts, replies=counts.replies + 1)
-        case "repost" | "reshare":
-            return replace(counts, reposts=counts.reposts + 1)
-        case "quote" | "quote_post":
-            return replace(counts, quotes=counts.quotes + 1)
-        case _unknown:
-            return replace(counts, unknown=counts.unknown + 1)
+
+def _canonical_content(source_post: BrightDataPost) -> dict[str, JsonValue]:
+    """Keep every safe content field while normalizing common query fields."""
+    payload = source_post.payload
+    content: dict[str, JsonValue] = {
+        key: value
+        for key, value in payload.items()
+        if key not in _IDENTITY_FIELDS and key not in _NON_POST_FIELDS
+    }
+    if "post_text" in payload:
+        content["text"] = source_post.post_text
+    if "embedded_links" in content:
+        content["links"] = content.pop("embedded_links")
+    return content
 
 
 def _canonical_post(
@@ -52,21 +72,15 @@ def _canonical_post(
     source_post: BrightDataPost,
     first_seen_at: datetime,
 ) -> Post:
-    platform_post_id = PlatformPostId(source_post.id)
-    published_at = datetime.fromisoformat(source_post.date_posted).astimezone(UTC)
-    stable = StablePostContent(
-        schema_version=2,
-        id=post_id_for(platform_post_id),
-        platform_post_id=platform_post_id,
-        account_id=account.id,
+    return Post(
+        platform_post_id=PlatformPostId(source_post.id),
+        account_profile_url=account.id,
         canonical_url=canonical_post_url(source_post.url),
-        published_at=published_at,
-        text=source_post.post_text,
-        kind=PostKind.ORIGINAL,
-        hashtags=source_post.hashtags or (),
-        links=canonical_links(source_post),
+        published_at=datetime.fromisoformat(source_post.date_posted).astimezone(UTC),
+        type=source_post.post_type.casefold(),
+        content=_canonical_content(source_post),
+        first_seen_at=first_seen_at,
     )
-    return Post.from_stable(stable, first_seen_at)
 
 
 def normalize_posts(
@@ -74,32 +88,20 @@ def normalize_posts(
     records: tuple[BrightDataPost, ...],
     first_seen_at: datetime,
 ) -> BrightDataNormalizationResult:
-    """Normalize a complete in-memory batch without performing I/O or hydration."""
-    by_id: dict[str, BrightDataPost] = {}
+    """Normalize every complete safe record without discarding post variants."""
+    by_id: dict[str, Post] = {}
     for record in records:
         validate_actor_ownership(account, record)
+        candidate = _canonical_post(account, record, first_seen_at)
         existing = by_id.get(record.id)
-        if existing is not None and existing.payload != record.payload:
+        if existing is not None and existing.content_hash != candidate.content_hash:
             raise BrightDataNormalizationError(
                 BrightDataNormalizationErrorCategory.DUPLICATE
             )
-        by_id[record.id] = record
-
-    posts: list[Post] = []
-    sources: list[BrightDataLinkedInPostSourceRecord] = []
-    skipped = SkippedPostCounts()
-    for platform_post_id in sorted(by_id):
-        record = by_id[platform_post_id]
-        match record.post_type.casefold():
-            case "post":
-                posts.append(_canonical_post(account, record, first_seen_at))
-                sources.append(
-                    BrightDataLinkedInPostSourceRecord.from_post(account.id, record)
-                )
-            case _non_original:
-                skipped = _increment_skip(skipped, record.post_type)
+        if existing is None or canonical_json_bytes(candidate) < canonical_json_bytes(
+            existing
+        ):
+            by_id[record.id] = candidate
     return BrightDataNormalizationResult(
-        source_records=tuple(sources),
-        posts=tuple(posts),
-        skipped=skipped,
+        posts=tuple(by_id[platform_post_id] for platform_post_id in sorted(by_id))
     )

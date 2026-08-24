@@ -83,9 +83,7 @@ class BrightDataPostCollector:
             outcomes.append(
                 CollectedAccountPosts(
                     request.account.id,
-                    normalized.source_records,
                     normalized.posts,
-                    normalized.skipped,
                 )
             )
         return BrightDataPostBatchResult(tuple(outcomes))

@@ -52,7 +52,7 @@ def assert_accepted_snapshot_and_ownership_failures_do_not_leak(tmp_path: Path) 
     assert owned.exit_code == 4
     assert conflict.exit_code == 5
     assert malformed.exit_code == 2
-    assert (tmp_path / "accepted/snapshot.json").is_file()
+    assert (tmp_path / "accepted/accounts.json").is_file()
     assert not (tmp_path / "ownership").exists()
     assert accepted.scenario.trigger_calls == 1
     assert accepted.scenario.progress_calls == 1

@@ -9,9 +9,6 @@ from pydantic import BaseModel, TypeAdapter
 
 from social_media_subscriber.domain.account import Account
 from social_media_subscriber.domain.post import Post
-from social_media_subscriber.providers.brightdata.source_record import (
-    BrightDataLinkedInPostSourceRecord,
-)
 from social_media_subscriber.serialization.json import (
     JsonValue,
     canonical_json_value_bytes,
@@ -19,7 +16,6 @@ from social_media_subscriber.serialization.json import (
 
 _SCHEMA_MODELS: Final[tuple[tuple[str, type[BaseModel]], ...]] = (
     ("account.schema.json", Account),
-    ("brightdata-linkedin-post.schema.json", BrightDataLinkedInPostSourceRecord),
     ("post.schema.json", Post),
 )
 _JSON_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)

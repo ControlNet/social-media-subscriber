@@ -7,7 +7,6 @@ __all__ = (
     "_NOW",
     "AcceptedSnapshotBatchFailure",
     "Account",
-    "AccountInput",
     "AccountKind",
     "AccountRouteFailed",
     "AccountRouteFailureCategory",
@@ -29,12 +28,14 @@ __all__ = (
     "InvalidCredentialBatchFailure",
     "Platform",
     "QuotaBatchFailure",
-    "ResolvedAdapterDrivers",
     "RetryableBatchFailure",
     "RouterDiagnosticCategory",
     "RouterRunStatus",
+    "RuntimeInput",
     "SchemaBatchFailure",
     "SecretStr",
+    "SourceId",
+    "SourceInput",
     "SyntheticBrightDataClient",
     "_account",
     "_post",
@@ -51,9 +52,8 @@ from datetime import UTC, date, datetime
 import pytest
 from pydantic import SecretStr
 
-from social_media_subscriber.accounts.input import AccountInput
 from social_media_subscriber.accounts.locator import parse_linkedin_locator
-from social_media_subscriber.adapters import AdapterOperation, ResolvedAdapterDrivers
+from social_media_subscriber.adapters import AdapterOperation
 from social_media_subscriber.adapters.instance import (
     AcceptedSnapshotBatchFailure,
     AdapterBatch,
@@ -77,7 +77,6 @@ from social_media_subscriber.adapters.router_outcomes import (
 )
 from social_media_subscriber.bootstrap import bootstrap_runtime
 from social_media_subscriber.domain.account import Account
-from social_media_subscriber.domain.ids import AccountId
 from social_media_subscriber.domain.platform import AccountKind, Platform
 from social_media_subscriber.providers.brightdata.adapter import (
     BrightDataLinkedInAdapter,
@@ -91,6 +90,7 @@ from social_media_subscriber.providers.brightdata.errors import (
     BrightDataErrorCategory,
 )
 from social_media_subscriber.providers.brightdata.models import BrightDataPost
+from social_media_subscriber.runtime_input import RuntimeInput, SourceId, SourceInput
 from tests.fakes.brightdata_adapter import SyntheticBrightDataClient
 
 _NOW = datetime(2026, 8, 20, tzinfo=UTC)
@@ -100,8 +100,6 @@ def _account(kind: AccountKind, slug: str) -> Account:
     path = "in" if kind is AccountKind.PERSON else "company"
     profile_url = f"https://www.linkedin.com/{path}/{slug}/"
     return Account(
-        schema_version=2,
-        id=AccountId(profile_url),
         platform=Platform.LINKEDIN,
         kind=kind,
         profile_url=profile_url,

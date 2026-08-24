@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum, unique
 from typing import TYPE_CHECKING, NewType, Protocol, override
-
-from social_media_subscriber.providers.brightdata.normalization_outcomes import (
-    SkippedPostCounts,
-)
 
 if TYPE_CHECKING:
     from datetime import date
@@ -19,9 +15,6 @@ if TYPE_CHECKING:
     from social_media_subscriber.domain.account import Account
     from social_media_subscriber.domain.ids import AccountId
     from social_media_subscriber.domain.post import Post
-    from social_media_subscriber.providers.brightdata.source_record import (
-        BrightDataLinkedInPostSourceRecord,
-    )
 
 AdapterInstanceOrdinal = NewType("AdapterInstanceOrdinal", int)
 
@@ -81,12 +74,10 @@ class AdapterBatch:
 
 @dataclass(frozen=True, slots=True)
 class CollectedAccount:
-    """Complete source and canonical post result for one Account."""
+    """Complete canonical post result for one Account."""
 
     account_id: AccountId
     posts: tuple[Post, ...]
-    source_records: tuple[BrightDataLinkedInPostSourceRecord, ...] = ()
-    skipped: SkippedPostCounts = field(default_factory=SkippedPostCounts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,3 +158,12 @@ class AdapterInstanceFactory(Protocol):
     ) -> AdapterInstance:
         """Bind a credential without exposing or fingerprinting it."""
         ...
+
+
+@dataclass(frozen=True, slots=True)
+class AdapterInstanceSpec:
+    """One ordered credential-bound instance to construct."""
+
+    driver_class: type[AdapterDriver]
+    factory: AdapterInstanceFactory
+    credential: SecretStr

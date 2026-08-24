@@ -3,9 +3,11 @@ from __future__ import annotations
 __test__ = False
 
 import pytest
+from pydantic import SecretStr
 
 from social_media_subscriber.adapters.instance import (
     AccountRejectionCategory,
+    AdapterInstanceSpec,
     BatchCompleted,
     CollectedAccount,
     InvalidCredentialBatchFailure,
@@ -14,6 +16,8 @@ from social_media_subscriber.adapters.instance import (
     RetryableBatchFailure,
     SchemaBatchFailure,
 )
+from social_media_subscriber.adapters.registry import AdapterRegistry
+from social_media_subscriber.adapters.router import Router
 from social_media_subscriber.adapters.router_outcomes import (
     AccountRouteFailed,
     AccountRouteFailureCategory,
@@ -23,7 +27,13 @@ from social_media_subscriber.adapters.router_outcomes import (
     RouterRunStatus,
 )
 from social_media_subscriber.domain.platform import AccountKind
-from tests.fakes.router import CompleteBatch, make_account
+from tests.fakes.router import (
+    CompleteBatch,
+    FakeDriver,
+    FallbackFakeDriver,
+    ScriptedFactory,
+    make_account,
+)
 from tests.unit.test_router_support import build_post_requests, build_router
 
 
@@ -78,6 +88,35 @@ async def test_transient_pre_acceptance_failure_tries_each_instance_once() -> No
     assert result.accounts == (
         AccountRouteFailed(account.id, AccountRouteFailureCategory.POOL_EXHAUSTED),
     )
+
+
+@pytest.mark.anyio
+async def test_retryable_failure_can_fall_back_to_another_provider_driver() -> None:
+    # Given
+    account = make_account(AccountKind.PERSON, 1)
+    primary = ScriptedFactory(((RetryableBatchFailure(),),), FakeDriver)
+    fallback = ScriptedFactory(((CompleteBatch(),),), FallbackFakeDriver)
+    router = Router(
+        AdapterRegistry((FallbackFakeDriver, FakeDriver)),
+        (
+            AdapterInstanceSpec(FakeDriver, primary, SecretStr("shared-provider-key")),
+            AdapterInstanceSpec(
+                FallbackFakeDriver,
+                fallback,
+                SecretStr("shared-provider-key"),
+            ),
+        ),
+    )
+
+    # When
+    result = await router.route(build_post_requests((account,)))
+
+    # Then
+    assert [call.ordinal for call in primary.calls] == [0]
+    assert [call.ordinal for call in fallback.calls] == [1]
+    assert primary.created_ordinals == [0]
+    assert fallback.created_ordinals == [1]
+    assert result.aggregate.status is RouterRunStatus.SUCCESS
 
 
 @pytest.mark.anyio

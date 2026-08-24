@@ -11,18 +11,12 @@ from social_media_subscriber.adapters.metadata import AdapterMetadata, adapter
 from social_media_subscriber.adapters.metadata_errors import MetadataViolation
 from social_media_subscriber.adapters.operations import AdapterOperation
 from social_media_subscriber.adapters.protocol import AdapterDriver
-from social_media_subscriber.adapters.registry import (
-    AdapterRegistry,
-    ResolvedAdapterDrivers,
-    UnsupportedAdapterCapability,
-)
+from social_media_subscriber.adapters.registry import AdapterRegistry
 from social_media_subscriber.adapters.registry_errors import (
-    DuplicateAdapterDescriptorError,
     DuplicateAdapterDriverError,
     InvalidAdapterMetadataError,
     MissingAdapterMetadataError,
 )
-from social_media_subscriber.bootstrap import EXPLICIT_ADAPTER_REGISTRY
 from social_media_subscriber.domain.platform import AccountKind, Platform
 from social_media_subscriber.providers.brightdata.adapter import (
     BrightDataLinkedInAdapter,
@@ -63,12 +57,11 @@ def test_registry_preserves_explicit_order_when_resolving_capability() -> None:
     )
 
     # Then
-    assert isinstance(result, ResolvedAdapterDrivers)
-    assert result.driver_classes == (SecondDriver, FirstDriver)
+    assert result == (SecondDriver, FirstDriver)
     assert registry.driver_classes == (SecondDriver, FirstDriver)
 
 
-def test_registry_returns_typed_outcome_for_unsupported_capability() -> None:
+def test_registry_returns_empty_tuple_for_unsupported_capability() -> None:
     # Given
     @adapter(
         platform=Platform.LINKEDIN,
@@ -89,19 +82,17 @@ def test_registry_returns_typed_outcome_for_unsupported_capability() -> None:
     )
 
     # Then
-    assert isinstance(result, UnsupportedAdapterCapability)
-    assert result.platform is Platform.LINKEDIN
-    assert result.operation is AdapterOperation.COLLECT_ACCOUNT_POSTS
-    assert result.account_kind is AccountKind.COMPANY
+    assert result == ()
 
 
 def test_production_registry_exposes_only_posts_for_supported_kinds() -> None:
     # Given
     metadata = BrightDataLinkedInAdapter.adapter_metadata
+    registry = AdapterRegistry((BrightDataLinkedInAdapter,))
 
     # When
     resolutions = tuple(
-        EXPLICIT_ADAPTER_REGISTRY.resolve(
+        registry.resolve(
             platform=Platform.LINKEDIN,
             operation=AdapterOperation.COLLECT_ACCOUNT_POSTS,
             account_kind=account_kind,
@@ -110,14 +101,13 @@ def test_production_registry_exposes_only_posts_for_supported_kinds() -> None:
     )
 
     # Then
-    assert EXPLICIT_ADAPTER_REGISTRY.driver_classes == (BrightDataLinkedInAdapter,)
+    assert registry.driver_classes == (BrightDataLinkedInAdapter,)
     assert metadata.operations == (AdapterOperation.COLLECT_ACCOUNT_POSTS,)
     assert metadata.account_kinds == (AccountKind.PERSON, AccountKind.COMPANY)
     assert metadata.supports_batch is True
-    assert all(
-        isinstance(resolution, ResolvedAdapterDrivers)
-        and resolution.driver_classes == (BrightDataLinkedInAdapter,)
-        for resolution in resolutions
+    assert resolutions == (
+        (BrightDataLinkedInAdapter,),
+        (BrightDataLinkedInAdapter,),
     )
 
 
@@ -159,7 +149,7 @@ def test_registry_rejects_repeated_driver_identity() -> None:
     assert captured.value.duplicate_index == 1
 
 
-def test_registry_rejects_duplicate_capability_descriptor() -> None:
+def test_registry_allows_multiple_drivers_for_the_same_capability() -> None:
     # Given
     @adapter(
         platform=Platform.LINKEDIN,
@@ -179,14 +169,17 @@ def test_registry_rejects_duplicate_capability_descriptor() -> None:
     class DuplicateDescriptorDriver(_DeclaredAdapterDriver):
         pass
 
+    registry = AdapterRegistry((FirstDriver, DuplicateDescriptorDriver))
+
     # When
-    with pytest.raises(DuplicateAdapterDescriptorError) as captured:
-        _ = AdapterRegistry((FirstDriver, DuplicateDescriptorDriver))
+    result = registry.resolve(
+        platform=Platform.LINKEDIN,
+        operation=AdapterOperation.COLLECT_ACCOUNT_POSTS,
+        account_kind=AccountKind.PERSON,
+    )
 
     # Then
-    assert captured.value.first_driver_name == "FirstDriver"
-    assert captured.value.duplicate_driver_name == "DuplicateDescriptorDriver"
-    assert captured.value.metadata is FirstDriver.adapter_metadata
+    assert result == (FirstDriver, DuplicateDescriptorDriver)
 
 
 @pytest.mark.parametrize(

@@ -1,51 +1,60 @@
 {
+  "$defs": {
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
   "additionalProperties": false,
-  "description": "Versioned provider-neutral original Post persisted at the boundary.",
+  "description": "Provider-neutral platform Post with open-ended content.",
   "properties": {
-    "account_id": {
+    "account_profile_url": {
       "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/$",
-      "title": "Account Id",
+      "title": "Account Profile Url",
       "type": "string"
     },
     "canonical_url": {
       "title": "Canonical Url",
       "type": "string"
     },
-    "content_hash": {
-      "pattern": "^[0-9a-f]{64}$",
-      "title": "Content Hash",
-      "type": "string"
+    "content": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Content",
+      "type": "object"
     },
     "first_seen_at": {
       "format": "date-time",
       "title": "First Seen At",
       "type": "string"
-    },
-    "hashtags": {
-      "items": {
-        "type": "string"
-      },
-      "title": "Hashtags",
-      "type": "array",
-      "uniqueItems": true
-    },
-    "id": {
-      "pattern": "^linkedin:post:.+$",
-      "title": "Id",
-      "type": "string"
-    },
-    "kind": {
-      "const": "original",
-      "title": "Kind",
-      "type": "string"
-    },
-    "links": {
-      "items": {
-        "type": "string"
-      },
-      "title": "Links",
-      "type": "array",
-      "uniqueItems": true
     },
     "platform_post_id": {
       "minLength": 1,
@@ -57,36 +66,20 @@
       "title": "Published At",
       "type": "string"
     },
-    "schema_version": {
-      "const": 2,
-      "title": "Schema Version",
-      "type": "integer"
-    },
-    "text": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "title": "Text"
+    "type": {
+      "minLength": 1,
+      "title": "Type",
+      "type": "string"
     }
   },
   "required": [
-    "schema_version",
-    "id",
     "platform_post_id",
-    "account_id",
+    "account_profile_url",
     "canonical_url",
     "published_at",
-    "text",
-    "kind",
-    "hashtags",
-    "links",
-    "first_seen_at",
-    "content_hash"
+    "type",
+    "content",
+    "first_seen_at"
   ],
   "title": "Post",
   "type": "object"

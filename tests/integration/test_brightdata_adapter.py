@@ -7,8 +7,8 @@ from tests.integration import test_brightdata_adapter_router_windows as router_w
 test_adapter_declares_only_normal_posts_operation = (
     collection.test_adapter_declares_only_normal_posts_operation
 )
-test_collection_preserves_sources_and_counts_nonoriginals = (
-    collection.test_collection_preserves_sources_and_counts_nonoriginals
+test_collection_preserves_all_safe_platform_posts = (
+    collection.test_collection_preserves_all_safe_platform_posts
 )
 test_mixed_returned_account_aborts_without_partial_batch = (
     collection.test_mixed_returned_account_aborts_without_partial_batch
@@ -22,11 +22,11 @@ test_adapter_collect_returns_complete_router_outcome = (
 test_schema_failure_maps_to_abort_without_diagnostics_canaries = (
     collection.test_schema_failure_maps_to_abort_without_diagnostics_canaries
 )
-test_empty_bootstrap_pool_reports_exhaustion_without_client_creation = (
-    router_basics.test_empty_bootstrap_pool_reports_exhaustion_without_client_creation
+test_empty_source_set_is_rejected_before_client_creation = (
+    router_basics.test_empty_source_set_is_rejected_before_client_creation
 )
-test_public_runtime_preserves_source_records_and_skips_through_router = (
-    router_basics.test_public_runtime_preserves_source_records_and_skips_through_router
+test_public_runtime_preserves_all_post_types_through_router = (
+    router_basics.test_public_runtime_preserves_all_post_types_through_router
 )
 test_router_preserves_each_account_collection_window = (
     router_windows.test_router_preserves_each_account_collection_window
