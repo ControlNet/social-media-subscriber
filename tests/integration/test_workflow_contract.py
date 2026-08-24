@@ -71,14 +71,36 @@ def test_ci_is_read_only_immutable_and_secret_free() -> None:
         _CHECKOUT,
         _SETUP_PIXI,
     ]
-    setup = next(step for step in steps if step.get("uses") == _SETUP_PIXI)
-    assert mapping(setup["with"])["locked"] is True
     commands = "\n".join(text(step["run"]) for step in steps if "run" in step)
     assert "pixi install --locked" in commands
     assert "pixi run verify" in commands
     assert "secrets." not in source
     assert "BRIGHT_DATA" not in source
     assert "ACCOUNTS" not in source
+
+
+@pytest.mark.parametrize(
+    ("path", "job_name"),
+    [
+        (_CI_PATH, "verify"),
+        (_COLLECT_PATH, "publication"),
+    ],
+)
+def test_setup_pixi_defers_to_explicit_locked_install(
+    path: Path,
+    job_name: str,
+) -> None:
+    # Given / When
+    steps = _steps(load_workflow(path), job_name)
+    setup = next(step for step in steps if step.get("uses") == _SETUP_PIXI)
+    setup_options = mapping(setup["with"])
+    commands = "\n".join(text(step["run"]) for step in steps if "run" in step)
+
+    # Then
+    assert setup_options["run-install"] is False
+    assert setup_options["cache"] is False
+    assert "locked" not in setup_options
+    assert "pixi install --locked" in commands
 
 
 def test_collection_has_exact_triggers_inputs_and_non_cancelling_lock() -> None:

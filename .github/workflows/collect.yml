@@ -70,7 +70,6 @@ jobs:
         with:
           pixi-version: v0.59.0
           run-install: false
-          locked: true
           cache: false
       - name: Install locked environment
         run: pixi install --locked
