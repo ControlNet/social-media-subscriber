@@ -142,7 +142,7 @@ async def test_post_or_source_only_change_updates_candidate(
     assert result.candidate_change is CandidateChange.CHANGED
     assert state is not None
     assert state.posts[0].content["text"] == expected_text
-    assert state.posts[0].content["num_likes"] == expected_likes
+    assert state.posts[0].content["engagement"] == {"likes": expected_likes}
 
 
 @pytest.mark.anyio

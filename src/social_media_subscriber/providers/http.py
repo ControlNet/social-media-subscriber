@@ -62,18 +62,17 @@ async def _log_response(response: httpx2.Response) -> None:
 def create_async_http_client(
     api_key: str,
     config: HttpClientConfig = _DEFAULT_CONFIG,
+    *,
+    transport: httpx2.AsyncBaseTransport | None = None,
 ) -> httpx2.AsyncClient:
     """Create one credential-bound client with the required transport tuning."""
-    transport = httpx2.AsyncHTTPTransport(
-        http2=True,
-        retries=3,
-        limits=_LIMITS,
-        socket_options=_SOCKET_OPTIONS,
+    selected_transport = transport or httpx2.AsyncHTTPTransport(
+        http2=True, retries=3, limits=_LIMITS, socket_options=_SOCKET_OPTIONS
     )
     return httpx2.AsyncClient(
         base_url=config.base_url,
         headers={"Authorization": f"Bearer {api_key}"},
-        transport=transport,
+        transport=selected_transport,
         timeout=_TIMEOUT,
         follow_redirects=True,
         event_hooks={"request": [_log_request], "response": [_log_response]},

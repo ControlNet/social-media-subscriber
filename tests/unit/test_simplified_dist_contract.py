@@ -8,6 +8,7 @@ from pydantic import TypeAdapter
 
 from social_media_subscriber.domain.account import Account
 from social_media_subscriber.domain.platform import AccountKind, Platform
+from social_media_subscriber.domain.post_index import PostsIndex
 from social_media_subscriber.providers.brightdata.models import BrightDataPost
 from social_media_subscriber.providers.brightdata.normalize import normalize_posts
 from social_media_subscriber.storage.repository import SnapshotRepository
@@ -77,15 +78,14 @@ def test_normalization_preserves_safe_content_and_all_post_types() -> None:
     original = result.posts[0]
     assert original.content["text"] == "Synthetic original post"
     assert original.content["images"] == [
-        "https://media.licdn.com/dms/image/synthetic?signature=redacted"
+        {"url": "https://media.licdn.com/dms/image/synthetic?signature=redacted"}
     ]
     assert original.content["videos"] == [
         {"url": "https://media.licdn.com/video/synthetic"}
     ]
     assert original.content["headline"] == "Explicitly synthetic headline"
     assert original.content["title"] == "Explicitly synthetic title"
-    assert original.content["num_comments"] == 3
-    assert original.content["num_likes"] == 42
+    assert original.content["engagement"] == {"comments": 3, "likes": 42}
     assert original.content["unknown_nested"] == {"future": [True, None, {"n": 3}]}
     assert original.content["hashtags"] == ["Testing", "Synthetic", "Testing"]
     assert (
@@ -108,10 +108,11 @@ def test_repository_writes_only_accounts_and_posts_with_a_flat_account_index(
     files = tuple(
         sorted(path.relative_to(root).as_posix() for path in root.rglob("*.json"))
     )
-    assert len(files) == 3
+    assert len(files) == 4
     assert files[0] == "accounts.json"
     assert files[1].startswith("accounts/")
-    assert files[2].startswith("posts/linkedin/")
+    assert files[2] == "posts.json"
+    assert files[3].startswith("posts/linkedin/")
     assert not (root / "feed.json").exists()
     assert not (root / "source").exists()
     assert not (root / "snapshot.json").exists()
@@ -120,3 +121,14 @@ def test_repository_writes_only_accounts_and_posts_with_a_flat_account_index(
         (root / "accounts.json").read_bytes()
     )
     assert account_index == {PROFILE_URL: files[1]}
+    posts_index = PostsIndex.model_validate_json((root / "posts.json").read_bytes())
+    assert posts_index.model_dump(mode="json") == {
+        "posts": [
+            {
+                "path": files[3],
+                "account_profile_url": PROFILE_URL,
+                "published_at": "2026-08-19T09:30:00Z",
+                "platform": "linkedin",
+            }
+        ]
+    }

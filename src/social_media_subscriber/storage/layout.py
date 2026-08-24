@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 ACCOUNTS_DIRECTORY: Final = Path("accounts")
 POSTS_DIRECTORY: Final = Path("posts/linkedin")
 ACCOUNTS_INDEX: Final = Path("accounts.json")
+POSTS_INDEX: Final = Path("posts.json")
 
 
 def snapshot_digest(files: Mapping[Path, bytes]) -> str:

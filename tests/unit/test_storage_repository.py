@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
 
 import pytest
@@ -8,6 +8,7 @@ import pytest
 from social_media_subscriber.domain import Account, AccountKind, Platform
 from social_media_subscriber.domain.ids import PlatformPostId, record_filename
 from social_media_subscriber.domain.post import Post
+from social_media_subscriber.domain.post_index import PostsIndex
 from social_media_subscriber.serialization.json import (
     JsonBoundaryModel,
     canonical_json_bytes,
@@ -77,7 +78,16 @@ def test_repository_writes_only_flat_index_accounts_and_posts(tmp_path: Path) ->
         f"accounts/{record_filename(state.accounts[0].id)}",
         f"posts/linkedin/{record_filename(state.posts[0].id)}",
         "accounts.json",
+        "posts.json",
     }
+    index = PostsIndex.model_validate_json((root / "posts.json").read_bytes())
+    assert len(index.posts) == 1
+    assert index.posts[0].path == (
+        f"posts/linkedin/{record_filename(state.posts[0].id)}"
+    )
+    assert index.posts[0].account_profile_url == ACCOUNT_URL
+    assert index.posts[0].published_at == NOW
+    assert index.posts[0].platform.value == "linkedin"
 
 
 def test_repository_repeated_write_is_byte_identical(tmp_path: Path) -> None:
@@ -94,6 +104,37 @@ def test_repository_repeated_write_is_byte_identical(tmp_path: Path) -> None:
     assert second.digest == validated.summary.digest
 
 
+def test_posts_index_is_newest_first_and_empty_safe(tmp_path: Path) -> None:
+    state = _state()
+    first = state.posts[0]
+    newer = first.model_copy(
+        update={
+            "platform_post_id": PlatformPostId("1002"),
+            "canonical_url": (
+                "https://www.linkedin.com/feed/update/urn:li:activity:1002/"
+            ),
+            "published_at": NOW + timedelta(hours=1),
+        }
+    )
+    populated = tmp_path / "populated"
+    empty = tmp_path / "empty"
+
+    _ = SnapshotRepository(populated).write(
+        SnapshotState(state.accounts, (first, newer))
+    )
+    _ = SnapshotRepository(empty).write(SnapshotState(state.accounts, ()))
+
+    populated_index = PostsIndex.model_validate_json(
+        (populated / "posts.json").read_bytes()
+    )
+    empty_index = PostsIndex.model_validate_json((empty / "posts.json").read_bytes())
+    assert tuple(item.path for item in populated_index.posts) == (
+        f"posts/linkedin/{record_filename(newer.id)}",
+        f"posts/linkedin/{record_filename(first.id)}",
+    )
+    assert empty_index.posts == ()
+
+
 def test_repository_replaces_an_empty_output_placeholder(tmp_path: Path) -> None:
     root = tmp_path / "dist"
     root.mkdir()
@@ -104,7 +145,8 @@ def test_repository_replaces_an_empty_output_placeholder(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize(
-    "target", ["accounts.json", "accounts/*.json", "posts/linkedin/*.json"]
+    "target",
+    ["accounts.json", "posts.json", "accounts/*.json", "posts/linkedin/*.json"],
 )
 def test_repository_rejects_corrupt_inventory(tmp_path: Path, target: str) -> None:
     root = tmp_path / "dist"

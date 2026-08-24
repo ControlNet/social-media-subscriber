@@ -198,6 +198,6 @@ async def test_collector_routes_records_by_actor_url_not_provider_user_id() -> N
         second_account.id,
     )
     assert tuple(item.posts[0].platform_post_id for item in result.accounts) == (
-        "urn:li:activity:1001",
-        "urn:li:activity:1002",
+        "1001",
+        "1002",
     )

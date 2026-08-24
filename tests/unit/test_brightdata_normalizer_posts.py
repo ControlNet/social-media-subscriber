@@ -52,13 +52,20 @@ def test_original_record_preserves_post_content() -> None:
         _ = expected_content.pop(field, None)
     expected_content["text"] = expected_content.pop("post_text")
     expected_content["links"] = expected_content.pop("embedded_links")
+    expected_content["images"] = [
+        {"url": ("https://media.licdn.com/dms/image/synthetic?signature=redacted")}
+    ]
+    expected_content["engagement"] = {
+        "comments": expected_content.pop("num_comments"),
+        "likes": expected_content.pop("num_likes"),
+    }
 
     assert post.content == expected_content
-    assert post.content["images"] == record.payload["images"]
+    assert post.content["images"] == expected_content["images"]
     assert post.content["videos"] == record.payload["videos"]
     assert post.content["headline"] == record.payload["headline"]
     assert post.content["title"] == record.payload["title"]
-    assert post.content["num_likes"] == 42
+    assert post.content["engagement"] == {"comments": 3, "likes": 42}
     assert post.content["unknown_nested"] == {"future": [True, None, {"n": 3}]}
     assert post.content["links"] == record.payload["embedded_links"]
     assert post.content["hashtags"] == ["Testing", "Synthetic", "Testing"]
@@ -119,7 +126,11 @@ def test_company_image_only_post_keeps_its_media() -> None:
 
     assert result.posts[0].content["text"] is None
     assert result.posts[0].content["images"] == [
-        "https://media.licdn.com/dms/image/company-synthetic?signature=redacted"
+        {
+            "url": (
+                "https://media.licdn.com/dms/image/company-synthetic?signature=redacted"
+            )
+        }
     ]
 
 

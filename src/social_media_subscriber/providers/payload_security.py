@@ -1,13 +1,12 @@
-"""Sensitive field detection for persistable provider payloads."""
+"""Sensitive field detection shared by provider payload boundaries."""
 
 from __future__ import annotations
 
 import re
-from typing import Final, assert_never
+from typing import TYPE_CHECKING, Final, assert_never
 
-type JsonValue = (
-    bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
-)
+if TYPE_CHECKING:
+    from social_media_subscriber.serialization.json import JsonValue
 
 _FORBIDDEN_FIELD_NAMES: Final = frozenset(
     """accessToken apiKey auth authorization clientSecret cookie cookies
@@ -53,6 +52,12 @@ def _is_safe_metric_field(value: str, item: JsonValue) -> bool:
     )
 
 
+def _is_safe_content_header(value: str, item: JsonValue) -> bool:
+    """Allow a structured provider content header, not transport header text."""
+    normalized = re.sub(r"[^a-z0-9]", "", value.casefold())
+    return normalized == "header" and isinstance(item, dict)
+
+
 def _is_forbidden_field_name(value: str) -> bool:
     normalized = re.sub(r"[^a-z0-9]", "", value.casefold())
     return (
@@ -71,7 +76,11 @@ def contains_forbidden_field(value: JsonValue) -> bool:
     match value:
         case dict() as mapping:
             return any(
-                (not _is_safe_metric_field(key, item) and _is_forbidden_field_name(key))
+                (
+                    not _is_safe_metric_field(key, item)
+                    and not _is_safe_content_header(key, item)
+                    and _is_forbidden_field_name(key)
+                )
                 or contains_forbidden_field(item)
                 for key, item in mapping.items()
             )

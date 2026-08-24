@@ -70,9 +70,12 @@ query parameters are rejected. Each non-empty `SOURCES` line must follow
 `<source_id>:<api_token>`. The parser splits only the first colon, so provider
 tokens may contain additional colons. Source IDs are case-normalized, unknown
 IDs reject the whole input, and exact source/token duplicates keep only their
-first occurrence. The current allowlist contains only `brightdata`. Line order
-is failover priority. Do not put either value in a shell command, shell history,
-`.env.local`, tracked file, or a workflow input.
+first occurrence. The current allowlist contains `apify` and `brightdata`. Line
+order is preserved within each provider. LinkedIn collection always tries every
+configured Apify credential before Bright Data, regardless of how the two source
+IDs are interleaved. Repeating either source ID with a different token creates
+another independent fallback instance. Do not put either value in a shell
+command, shell history, `.env.local`, tracked file, or a workflow input.
 
 Prepare files outside the repository with restrictive permissions, populate them
 only through a trusted local editor or secret manager, and use shell redirection
@@ -154,19 +157,36 @@ is a distinct Account, not a rename. Alias reconciliation and entity merging are
 not supported here.
 Downstream consumers own those cross-URL decisions.
 
-Every provider record must include at least one of
+Every Bright Data record must include at least one of
 `use_url, user_url, profile_url, and company_url`. The collector parses every
 supplied actor URL, rejects a wrong kind or disagreement between fields, and
 requires the one resulting canonical URL to equal the requested Account.
 `user_id` is optional provider payload data only; it is not consulted for
-ownership, routing, discovery, or merging.
+ownership, routing, discovery, or merging. Apify records use
+`query.targetUrl` for the same strict ownership check and never persist that
+Actor request metadata. `author` remains content because a repost can identify
+its original author instead of the subscribed Account. The LinkedIn
+`activity` URN prefix is removed from post IDs so equivalent Bright Data and
+Apify activity records merge as one Platform Post; other URN namespaces remain
+distinct.
 
-The persisted dataset contains only `accounts.json`, Account records, and
-unified Platform Post records. It does not contain a feed, provider source copy,
-or snapshot manifest. A successful response with zero records creates the
-requested Account without Posts. Reply, repost, quote, media-only, and unknown
-provider post types are retained. A typed `NOT_FOUND` does not create a new
-Account; on refresh, prior history is retained.
+The persisted dataset contains `accounts.json`, `posts.json`, Account records,
+and unified Platform Post records. `posts.json` is a newest-first complete list
+of Post paths with owner URL, publication time, and platform; it is an index,
+not a feed. The dataset does not contain a feed, provider source copy, or
+snapshot manifest. A successful response with zero records creates the
+requested Account and `{ "posts": [] }` when there is no prior Post history.
+Reply, repost, quote, media-only, and unknown provider post types are retained.
+A typed `NOT_FOUND` does not create a new Account; on refresh, prior history is
+retained.
+
+LinkedIn activity IDs use one feed-update canonical URL, timestamps use UTC
+whole-second precision, and positive repost markers correct a generic `post`
+classification. Common content is exposed through sparse `text`, `images`,
+`videos`, `links`, `author`, `engagement`, `document`, and `repost` keys. Media
+lists use objects with a `url` key; optional provider attributes remain inside
+those objects. Unknown safe content is retained, but transport and credential
+metadata is never persisted.
 
 For typed input/`NOT_FOUND` and terminal provider failures,
 `failed_account_ids` contains canonical requested LinkedIn URLs. An integrity,
@@ -192,13 +212,26 @@ through the UTC run date. An Account already present uses the inclusive range
 from the run date minus three days through the run date, even when it has no
 persisted Posts. A complete explicit pair replaces all per-account defaults.
 First-time backfills may take substantially longer and consume more provider
-credits; the Bright Data snapshot wait limit is 30 minutes. A valid JSON list
-without provider errors is required. The client explicitly requests up to 1,000
-results per Account and only owner-authored posts for personal profiles. Bright
-Data exposes no independently verifiable truncation marker; split backfills
-into narrower explicit date windows if an Account may exceed 1,000 posts. Do
-not execute this command for exploratory CLI testing: it is a live provider
-action.
+credits. Both providers have a 30-minute wait limit and require a valid complete
+JSON result without embedded provider errors. Bright Data explicitly requests
+up to 1,000 results per Account and only owner-authored posts for personal
+profiles. Its profile discovery exposes no cursor, offset, page token, or
+reliable truncation marker. The requested limit is not a completeness guarantee,
+and the provider does not guarantee complete profile history. Narrower date
+windows do not establish completeness and can return account-level provider
+errors even when a broad window succeeds. Treat a first-time Bright Data result
+as the currently discoverable public feed subset, not as proof of a complete
+historical backfill.
+
+Apify runs `harvestapi/linkedin-profile-posts` separately for each Account and
+passes the request start date as `postedLimitDate`. It includes reposts and quote
+posts, disables comments and reactions, and enforces the complete inclusive date
+window locally. It sends no Actor charge limit and no maximum post count, then
+reads dataset pages until exhausted without a total item limit. Once an Actor run
+may have been accepted, a later timeout, polling, dataset, or schema failure does
+not fail over to another token or provider during that Account attempt; retry
+only through a new approved collection run. Do not execute this command for
+exploratory CLI testing: it is a live provider action.
 
 | Exit | Binary observable | Required action |
 | --- | --- | --- |

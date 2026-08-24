@@ -27,8 +27,12 @@ pixi run subscriber publish-dist --help
 
 `collect` needs the multiline `ACCOUNTS` and `SOURCES` environment variables
 and performs provider I/O. Each non-empty `SOURCES` line has the form
-`<source_id>:<api_token>`; source order is failover priority. The currently
-supported source ID is `brightdata`. `verify-snapshot` is local and read-only.
+`<source_id>:<api_token>`. The supported source IDs are `apify` and
+`brightdata`; LinkedIn collection always tries all configured Apify instances
+before Bright Data. Repeating either source ID with a different token creates
+another independent fallback instance, preserving line order within that
+provider.
+`verify-snapshot` is local and read-only.
 `publish-dist` mutates the selected Git remote and must be used only under the
 immutable lease described in the runbook; do not run it as a casual local test.
 
@@ -72,23 +76,28 @@ snapshot/
 ├── accounts/
 │   └── <sha256(profile_url)>.json
 ├── accounts.json
+├── posts.json
 └── posts/linkedin/
     └── <sha256(platform post identity)>.json
 ```
 
 `accounts.json` is a direct `profile_url` to account-record path map. Account
-records contain only `platform`, `kind`, `profile_url`, and `first_seen_at`. Post
-records contain fixed provider-neutral identity, ownership, URL, timestamp, and
-type fields plus an open `content` object. That object preserves safe text,
-images, videos, documents, links, metrics, and provider fields that are not yet
-known to this project. Transport, authentication, request, response, and error
-metadata are rejected before persistence.
+records contain only `platform`, `kind`, `profile_url`, and `first_seen_at`.
+`posts.json` contains a newest-first `posts` list with each Post record's path,
+owner URL, publication timestamp, and platform. Post records contain fixed
+provider-neutral identity, ownership, URL, timestamp, and type fields plus an
+open `content` object. LinkedIn adapters use shared canonical keys for text,
+image/video objects, links, author, engagement, document, and repost data while
+retaining safe future provider fields that have no canonical mapping yet.
+Transport, authentication, request, response, and error metadata are rejected
+before persistence.
 
 The collector deliberately does not emit a feed, provider source copy, or
-snapshot manifest. Feed ordering and other derived views belong to the backend
-compiler that consumes `dist`. `pixi run subscriber verify-snapshot <snapshot>`
-validates the exact file inventory, regenerated account index, record schemas,
-and ownership before reporting counts and a derived digest.
+snapshot manifest. `posts.json` is only a complete record locator index, not a
+curated feed. Other derived views belong to the backend compiler that consumes
+`dist`. `pixi run subscriber verify-snapshot <snapshot>` validates the exact
+file inventory, regenerated indexes, record schemas, and ownership before
+reporting counts and a derived digest.
 
 The `dist` branch is an immutable snapshot history: every changed publication
 is a new root commit with no parent. It intentionally does not retain source

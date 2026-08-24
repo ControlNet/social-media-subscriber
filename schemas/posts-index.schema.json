@@ -1,0 +1,60 @@
+{
+  "$defs": {
+    "Platform": {
+      "description": "External service where subscribed content is published.",
+      "enum": [
+        "linkedin"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "PostIndexEntry": {
+      "additionalProperties": false,
+      "description": "Public locator and routing metadata for one persisted Post file.",
+      "properties": {
+        "account_profile_url": {
+          "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/$",
+          "title": "Account Profile Url",
+          "type": "string"
+        },
+        "path": {
+          "pattern": "^posts/linkedin/[a-f0-9]{64}\\.json$",
+          "title": "Path",
+          "type": "string"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "published_at": {
+          "format": "date-time",
+          "title": "Published At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "account_profile_url",
+        "published_at",
+        "platform"
+      ],
+      "title": "PostIndexEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Newest-first complete index of every persisted Post record.",
+  "properties": {
+    "posts": {
+      "items": {
+        "$ref": "#/$defs/PostIndexEntry"
+      },
+      "title": "Posts",
+      "type": "array"
+    }
+  },
+  "required": [
+    "posts"
+  ],
+  "title": "PostsIndex",
+  "type": "object"
+}

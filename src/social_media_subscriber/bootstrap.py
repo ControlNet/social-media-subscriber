@@ -8,6 +8,13 @@ from typing import TYPE_CHECKING, Protocol
 from social_media_subscriber.adapters.instance import AdapterInstanceSpec
 from social_media_subscriber.adapters.registry import AdapterRegistry
 from social_media_subscriber.adapters.router import Router
+from social_media_subscriber.providers.apify.adapter import (
+    ApifyAdapterConfig,
+    ApifyAdapterFactory,
+    ApifyClientContract,
+    ApifyLinkedInAdapter,
+)
+from social_media_subscriber.providers.apify.client import ApifyClient
 from social_media_subscriber.providers.brightdata.adapter import (
     BrightDataAdapterFactory,
     BrightDataLinkedInAdapter,
@@ -52,6 +59,23 @@ class BrightDataSourceComposer:
 
 
 @dataclass(frozen=True, slots=True)
+class ApifySourceComposer:
+    """Compose the explicitly supported Apify driver set."""
+
+    factory: ApifyAdapterFactory
+
+    def build_specs(self, source: SourceInput) -> tuple[AdapterInstanceSpec, ...]:
+        """Bind one configured Apify credential to LinkedIn Posts."""
+        return (
+            AdapterInstanceSpec(
+                ApifyLinkedInAdapter,
+                self.factory,
+                source.credential,
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class SubscriberRuntime:
     """Router and owned adapter resources for one collection run."""
 
@@ -64,6 +88,10 @@ class SubscriberRuntime:
 
 def _build_client(credential: str) -> BrightDataClient:
     return BrightDataClient(credential)
+
+
+def _build_apify_client(credential: str) -> ApifyClient:
+    return ApifyClient(credential)
 
 
 def build_runtime(
@@ -99,10 +127,27 @@ def bootstrap_runtime(
     config: BrightDataAdapterConfig,
     *,
     client_builder: Callable[[str], BrightDataClientContract] = _build_client,
+    apify_client_builder: Callable[[str], ApifyClientContract] = _build_apify_client,
 ) -> SubscriberRuntime:
-    """Compose approved production sources without dynamic imports."""
-    factory = BrightDataAdapterFactory(config, client_builder)
+    """Compose production sources with Apify ahead of Bright Data."""
+    brightdata_factory = BrightDataAdapterFactory(config, client_builder)
+    apify_factory = ApifyAdapterFactory(
+        ApifyAdapterConfig(config.first_seen_at), apify_client_builder
+    )
+    prioritized_input = runtime_input.model_copy(
+        update={
+            "sources": tuple(
+                sorted(
+                    runtime_input.sources,
+                    key=lambda source: source.source_id is not SourceId.APIFY,
+                )
+            )
+        }
+    )
     return compose_runtime(
-        runtime_input,
-        {SourceId.BRIGHTDATA: BrightDataSourceComposer(factory)},
+        prioritized_input,
+        {
+            SourceId.APIFY: ApifySourceComposer(apify_factory),
+            SourceId.BRIGHTDATA: BrightDataSourceComposer(brightdata_factory),
+        },
     )

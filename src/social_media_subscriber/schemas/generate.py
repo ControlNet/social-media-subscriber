@@ -9,6 +9,7 @@ from pydantic import BaseModel, TypeAdapter
 
 from social_media_subscriber.domain.account import Account
 from social_media_subscriber.domain.post import Post
+from social_media_subscriber.domain.post_index import PostsIndex
 from social_media_subscriber.serialization.json import (
     JsonValue,
     canonical_json_value_bytes,
@@ -17,6 +18,7 @@ from social_media_subscriber.serialization.json import (
 _SCHEMA_MODELS: Final[tuple[tuple[str, type[BaseModel]], ...]] = (
     ("account.schema.json", Account),
     ("post.schema.json", Post),
+    ("posts-index.schema.json", PostsIndex),
 )
 _JSON_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
 _DEFAULT_SCHEMA_DIRECTORY: Final = Path("schemas")

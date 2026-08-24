@@ -44,6 +44,7 @@ BOUNDARY_SCHEMAS: Final = {
         "platform_post_id account_profile_url canonical_url published_at",
         "type content first_seen_at",
     ),
+    "posts-index.schema.json": _words("posts"),
 }
 FORBIDDEN_BOUNDARY_FIELDS: Final = _words(
     "api_key credential platform_account_id profile_id url_aliases user_id"

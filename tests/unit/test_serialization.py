@@ -70,6 +70,7 @@ def test_schema_generation_is_deterministic_and_structural(tmp_path: Path) -> No
     assert tuple(path.name for path in first_paths) == (
         "account.schema.json",
         "post.schema.json",
+        "posts-index.schema.json",
     )
     assert tuple(path.read_bytes() for path in second_paths) == first_bytes
     for path in second_paths:
@@ -107,7 +108,7 @@ def test_schema_generation_is_deterministic_and_structural(tmp_path: Path) -> No
         case unexpected:
             pytest.fail(f"unexpected Account ID schema: {unexpected!r}")
 
-    for schema_path in first_paths[1:]:
+    for schema_path in first_paths[1:2]:
         schema = _JSON_ADAPTER.validate_json(schema_path.read_bytes())
         match schema:
             case {

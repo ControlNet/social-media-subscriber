@@ -31,6 +31,9 @@ def test_persisted_data_docs_define_outcomes_and_atomicity() -> None:
         "successful response with zero records",
         "Reply, repost, quote, media-only",
         "does not contain a feed",
+        "posts.json",
+        "newest-first",
+        "path, account_profile_url, published_at, and platform",
         "typed NOT_FOUND",
         "whole candidate",
         "prior snapshot remains byte-identical",
@@ -39,6 +42,17 @@ def test_persisted_data_docs_define_outcomes_and_atomicity() -> None:
     )
 
     for statement in required_contract:
+        assert statement in NORMALIZED_IDENTITY_DOCS
+
+
+def test_brightdata_docs_do_not_promise_complete_profile_history() -> None:
+    required_boundaries = (
+        "does not guarantee complete profile history",
+        "not a completeness guarantee",
+        "narrower date windows do not establish completeness",
+    )
+
+    for statement in required_boundaries:
         assert statement in NORMALIZED_IDENTITY_DOCS
 
 
@@ -88,9 +102,42 @@ def test_source_configuration_docs_define_ordered_allowlisted_composition() -> N
         "ACCOUNTS and SOURCES",
         "<source_id>:<api_token>",
         "splits only the first colon",
-        "current allowlist contains only brightdata",
-        "Line order is failover priority",
+        "current allowlist contains apify and brightdata",
+        "always tries every configured Apify credential before Bright Data",
+        "Line order is preserved within each provider",
+        "another independent fallback instance",
         "never creates a Cartesian product",
+    )
+
+    for statement in required_contract:
+        assert statement in NORMALIZED_IDENTITY_DOCS
+
+
+def test_apify_docs_define_window_and_failover_boundaries() -> None:
+    required_contract = (
+        "postedLimitDate",
+        "query.targetUrl",
+        "never persist that Actor request metadata",
+        "a repost can identify its original author",
+        "disables comments and reactions",
+        "enforces the complete inclusive date window locally",
+        "no Actor charge limit and no maximum post count",
+        "without a total item limit",
+        "does not fail over to another token or provider",
+    )
+
+    for statement in required_contract:
+        assert statement in NORMALIZED_IDENTITY_DOCS
+
+
+def test_linkedin_post_docs_define_cross_provider_canonicalization() -> None:
+    required_contract = (
+        "whole-second precision",
+        "positive repost evidence",
+        "feed/update/urn:li:activity:<id>",
+        "LinkedIn content is a sparse canonical union",
+        "images and videos lists",
+        "Safe unknown fields remain open",
     )
 
     for statement in required_contract:

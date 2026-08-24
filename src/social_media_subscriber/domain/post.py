@@ -19,6 +19,7 @@ from social_media_subscriber.domain.ids import (
     post_id_for,
 )
 from social_media_subscriber.domain.time import canonical_utc
+from social_media_subscriber.platforms.linkedin import canonical_post_timestamp
 from social_media_subscriber.serialization.json import JsonValue
 
 _UNSAFE_URL_PATTERN = re.compile(
@@ -106,10 +107,16 @@ class Post(BaseModel):
         """Reject unsafe or non-canonical public Post URLs."""
         return _canonical_post_url(value)
 
-    @field_validator("published_at", "first_seen_at")
+    @field_validator("published_at")
     @classmethod
-    def validate_utc_timestamp(cls, value: datetime) -> datetime:
-        """Require canonical UTC publication and discovery timestamps."""
+    def normalize_publication_timestamp(cls, value: datetime) -> datetime:
+        """Use one-second LinkedIn precision independent of provider output."""
+        return canonical_post_timestamp(value)
+
+    @field_validator("first_seen_at")
+    @classmethod
+    def validate_first_seen_timestamp(cls, value: datetime) -> datetime:
+        """Require a canonical UTC discovery timestamp."""
         return canonical_utc(value)
 
     @field_validator("type")

@@ -26,6 +26,8 @@ from social_media_subscriber.application.windows import (
 )
 from social_media_subscriber.bootstrap import bootstrap_runtime
 from social_media_subscriber.domain.time import canonical_utc
+from social_media_subscriber.providers.apify.adapter import ApifyClientContract
+from social_media_subscriber.providers.apify.client import ApifyClient
 from social_media_subscriber.providers.brightdata.adapter_contracts import (
     BrightDataAdapterConfig,
 )
@@ -50,6 +52,7 @@ if TYPE_CHECKING:
     from social_media_subscriber.settings import Settings
 
 type ClientBuilder = Callable[[str], BrightDataClientContract]
+type ApifyClientBuilder = Callable[[str], ApifyClientContract]
 
 
 type RuntimeBuilder = Callable[[RuntimeInput, datetime], SubscriberRuntime]
@@ -69,6 +72,10 @@ class CollectionRequest:
 
 def _build_client(credential: str) -> BrightDataClient:
     return BrightDataClient(credential)
+
+
+def _build_apify_client(credential: str) -> ApifyClient:
+    return ApifyClient(credential)
 
 
 def _prepare(request: CollectionRequest) -> PreparedCollection | CollectionResult:
@@ -126,6 +133,7 @@ async def collect_snapshot(
     client_builder: ClientBuilder = _build_client,
     *,
     runtime_builder: RuntimeBuilder | None = None,
+    apify_client_builder: ApifyClientBuilder = _build_apify_client,
 ) -> CollectionResult:
     """Build one validated complete candidate without publishing it."""
     prepared = _prepare(request)
@@ -139,6 +147,7 @@ async def collect_snapshot(
             prepared.runtime_input,
             BrightDataAdapterConfig(prepared.run_started_at),
             client_builder=client_builder,
+            apify_client_builder=apify_client_builder,
         )
         if runtime_builder is None
         else runtime_builder(prepared.runtime_input, prepared.run_started_at)

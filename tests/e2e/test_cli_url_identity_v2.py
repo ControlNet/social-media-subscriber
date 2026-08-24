@@ -61,7 +61,7 @@ def test_cli_success_collects_person_and_company_over_loopback(tmp_path: Path) -
     state, manifest = assert_snapshot_metadata(
         tmp_path / "candidate",
         account_urls=(COMPANY_URL, PERSON_URL),
-        post_ids=(*PERSON_POST_IDS, "linkedin:post:urn:li:activity:2001"),
+        post_ids=(*PERSON_POST_IDS, "linkedin:post:2001"),
     )
     assert result.exit_code == 0
     assert report(result) == {

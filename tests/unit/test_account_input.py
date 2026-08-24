@@ -209,6 +209,8 @@ def test_runtime_input_normalizes_deduplicates_and_preserves_source_order() -> N
         "\r\n  BrightData:synthetic-key-one  \r\n",
         "brightdata:synthetic-key-one\r\n",
         " brightdata:synthetic:key-two \r\n",
+        " Apify:synthetic-apify-one \r\n",
+        "apify:synthetic-apify-two\r\n",
     )
     settings = Settings(
         accounts=SecretStr("".join(account_lines)),
@@ -226,10 +228,17 @@ def test_runtime_input_normalizes_deduplicates_and_preserves_source_order() -> N
     assert tuple(source.source_id for source in runtime_input.sources) == (
         SourceId.BRIGHTDATA,
         SourceId.BRIGHTDATA,
+        SourceId.APIFY,
+        SourceId.APIFY,
     )
     assert tuple(
         source.credential.get_secret_value() for source in runtime_input.sources
-    ) == ("synthetic-key-one", "synthetic:key-two")
+    ) == (
+        "synthetic-key-one",
+        "synthetic:key-two",
+        "synthetic-apify-one",
+        "synthetic-apify-two",
+    )
 
 
 @pytest.mark.parametrize(

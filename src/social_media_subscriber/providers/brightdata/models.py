@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import re
 from datetime import datetime
 from typing import Annotated, ClassVar, Final, Self
-from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import (
     BaseModel,
@@ -18,11 +16,17 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from social_media_subscriber.domain.time import canonical_utc
+from social_media_subscriber.platforms.linkedin import (
+    LinkedInPostUrlError,
+)
+from social_media_subscriber.platforms.linkedin import (
+    canonical_post_url as canonical_linkedin_post_url,
+)
 from social_media_subscriber.providers.brightdata.normalization_errors import (
     BrightDataNormalizationError,
     BrightDataNormalizationErrorCategory,
 )
-from social_media_subscriber.providers.brightdata.payload_security import (
+from social_media_subscriber.providers.payload_security import (
     contains_forbidden_field,
 )
 
@@ -45,13 +49,6 @@ _JSON_OBJECT_ADAPTER: Final[TypeAdapter[dict[str, JsonValue]]] = TypeAdapter(
 _HASHTAGS_ADAPTER: Final[TypeAdapter[tuple[str, ...]]] = TypeAdapter(tuple[str, ...])
 _FORBIDDEN_FIELD_ERROR: Final = "provider_post_forbidden_field"
 _FORBIDDEN_FIELD_MESSAGE: Final = "provider post contains non-persistable metadata"
-_LINKEDIN_HOST: Final = re.compile(
-    r"(?:linkedin\.com|www\.linkedin\.com|[a-z]{2,3}\.linkedin\.com)\Z",
-    re.ASCII,
-)
-_UNSAFE_URL: Final = re.compile(
-    r"(?:[\x00-\x1f\x7f\\]|%(?:[01][0-9a-f]|7f|2f|5c|2e))", re.IGNORECASE
-)
 
 
 def validate_persistable_post_payload(value: JsonValue) -> dict[str, JsonValue]:
@@ -151,27 +148,11 @@ class BrightDataSnapshotProgress(_BrightDataModel):
     status: str = Field(min_length=1)
 
 
-def canonical_post_url(value: str) -> str:
+def canonical_post_url(value: str, *, platform_post_id: str | None = None) -> str:
     """Return a query-free canonical LinkedIn Post URL or a safe typed failure."""
     try:
-        parsed = urlsplit(value)
-        hostname = parsed.hostname
-        port = parsed.port
-    except ValueError:
-        hostname = None
-        port = -1
-        parsed = urlsplit("")
-    if (
-        _UNSAFE_URL.search(value) is not None
-        or parsed.scheme.casefold() != "https"
-        or hostname is None
-        or _LINKEDIN_HOST.fullmatch(hostname.casefold()) is None
-        or parsed.username is not None
-        or parsed.password is not None
-        or port not in {None, 443}
-        or not parsed.path.startswith(("/posts/", "/feed/update/"))
-    ):
+        return canonical_linkedin_post_url(value, platform_post_id=platform_post_id)
+    except LinkedInPostUrlError:
         raise BrightDataNormalizationError(
             BrightDataNormalizationErrorCategory.POST_URL
-        )
-    return urlunsplit(("https", "www.linkedin.com", parsed.path, "", ""))
+        ) from None

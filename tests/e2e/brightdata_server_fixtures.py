@@ -16,10 +16,10 @@ SCHEMA_CANARY: Final = "provider-schema-canary"
 PERSON_SNAPSHOT: Final = "person-snapshot"
 COMPANY_SNAPSHOT: Final = "company-snapshot"
 PERSON_POST_IDS: Final = (
-    "linkedin:post:urn:li:activity:1001",
-    "linkedin:post:urn:li:activity:1002",
-    "linkedin:post:urn:li:activity:1003",
-    "linkedin:post:urn:li:activity:1004",
+    "linkedin:post:1001",
+    "linkedin:post:1002",
+    "linkedin:post:1003",
+    "linkedin:post:1004",
 )
 type FakeJson = dict[str, str] | list[dict[str, str | int | object]]
 

@@ -1,0 +1,39 @@
+{
+  "author": {
+    "linkedinUrl": "https://www.linkedin.com/in/synthetic-ada?miniProfileUrn=synthetic",
+    "name": "Synthetic Ada",
+    "publicIdentifier": "synthetic-ada",
+    "type": "profile"
+  },
+  "content": "Synthetic post",
+  "document": {
+    "title": "Synthetic document",
+    "totalPageCount": 2
+  },
+  "engagement": {
+    "comments": 2,
+    "likes": 7,
+    "shares": 1
+  },
+  "fixture_notice": "EXPLICITLY SYNTHETIC AND REDACTED TEST DATA",
+  "id": "1001",
+  "linkedinUrl": "https://www.linkedin.com/posts/synthetic-ada_example-activity-1001-abcd?utm_source=synthetic",
+  "postedAt": {
+    "date": "2026-08-19T09:00:00.000Z",
+    "timestamp": 1787130000000
+  },
+  "postImages": [
+    {
+      "height": 720,
+      "url": "https://media.licdn.com/synthetic-image",
+      "width": 1280
+    }
+  ],
+  "query": {
+    "page": 1,
+    "sessionId": "synthetic-session",
+    "sortBy": "date",
+    "targetUrl": "https://www.linkedin.com/in/synthetic-ada/"
+  },
+  "type": "post"
+}

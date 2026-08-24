@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 class SourceId(StrEnum):
     """Explicitly supported runtime source identifiers."""
 
+    APIFY = "apify"
     BRIGHTDATA = "brightdata"
 
 

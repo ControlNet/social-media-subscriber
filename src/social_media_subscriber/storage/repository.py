@@ -11,7 +11,9 @@ from pydantic import ValidationError
 
 from social_media_subscriber.domain.account import Account
 from social_media_subscriber.domain.ids import record_filename
+from social_media_subscriber.domain.platform import Platform
 from social_media_subscriber.domain.post import Post
+from social_media_subscriber.domain.post_index import PostIndexEntry, PostsIndex
 from social_media_subscriber.serialization.json import (
     JsonBoundaryModel,
     JsonValue,
@@ -23,6 +25,7 @@ from social_media_subscriber.storage.layout import (
     ACCOUNTS_DIRECTORY,
     ACCOUNTS_INDEX,
     POSTS_DIRECTORY,
+    POSTS_INDEX,
     snapshot_digest,
 )
 from social_media_subscriber.storage.safe_directory import (
@@ -153,7 +156,7 @@ class SnapshotRepository:
         files = tree.files
         account_paths = _record_paths(files, ACCOUNTS_DIRECTORY)
         post_paths = _record_paths(files, POSTS_DIRECTORY)
-        if ACCOUNTS_INDEX not in files:
+        if ACCOUNTS_INDEX not in files or POSTS_INDEX not in files:
             raise SnapshotIntegrityError(SnapshotIntegrityCategory.INVENTORY)
         accounts = tuple(
             Account.model_validate_json(files[path]) for path in account_paths
@@ -196,6 +199,22 @@ class SnapshotRepository:
             for account in sorted(state.accounts, key=lambda item: item.id)
         }
         files[ACCOUNTS_INDEX] = canonical_json_value_bytes(index)
+        posts_index = PostsIndex(
+            posts=tuple(
+                PostIndexEntry(
+                    path=(POSTS_DIRECTORY / record_filename(post.id)).as_posix(),
+                    account_profile_url=post.account_profile_url,
+                    published_at=post.published_at,
+                    platform=Platform.LINKEDIN,
+                )
+                for post in sorted(
+                    state.posts,
+                    key=lambda item: (item.published_at, item.id),
+                    reverse=True,
+                )
+            )
+        )
+        files[POSTS_INDEX] = self._encoder(posts_index)
         return files
 
 
