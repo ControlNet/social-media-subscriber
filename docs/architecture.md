@@ -146,10 +146,12 @@ Identical duplicate account/window requests collapse; different windows for
 the same account fail before collection. An Adapter must return the complete
 available result for its requested window or classify the attempt as a failure.
 The Bright Data client accepts a snapshot only after it reaches `ready`, then
-requires the download to be a valid complete JSON list with no embedded
-provider errors. Bright Data currently exposes no independently verifiable
-truncation marker, so the application cannot prove that the provider did not
-silently truncate an otherwise valid download.
+downloads `format=json` and requires a valid complete JSON list with no
+embedded provider errors. It explicitly requests up to 1,000 results per
+Account; person requests also set `only_authored_posts=true`. Bright Data
+exposes no independently verifiable truncation marker, so an Account with more
+than 1,000 posts in one requested window requires narrower backfill windows
+before the application can claim complete history.
 
 ## Snapshot storage and atomic candidate creation
 

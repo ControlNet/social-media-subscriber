@@ -12,6 +12,7 @@ from pydantic import BaseModel, ValidationError
 from social_media_subscriber.providers.brightdata.constants import (
     LINKEDIN_POSTS_DATASET,
     MAX_SYNC_BATCH_SIZE,
+    POST_RESULTS_PER_INPUT,
     SNAPSHOT_POLL_SECONDS,
     SNAPSHOT_TIMEOUT_SECONDS,
     STATUS_RETRY_DELAYS,
@@ -108,7 +109,10 @@ class BrightDataClient:
         return await self._scrape(
             dataset=LINKEDIN_POSTS_DATASET,
             mode=mode,
-            body=[item.as_json() for item in bounded],
+            body=[
+                item.as_json(only_authored_posts=mode == "profile_url")
+                for item in bounded
+            ],
             item_type=BrightDataPost,
         )
 
@@ -124,12 +128,13 @@ class BrightDataClient:
         *,
         dataset: str,
         mode: str,
-        body: list[dict[str, str]],
+        body: list[dict[str, str | bool]],
         item_type: type[ModelT],
     ) -> tuple[ModelT, ...]:
         params = {
             "dataset_id": dataset,
             "include_errors": "true",
+            "limit_per_input": str(POST_RESULTS_PER_INPUT),
             "type": "discover_new",
             "discover_by": mode,
         }
@@ -172,7 +177,10 @@ class BrightDataClient:
             status = progress.status.casefold()
             if status == "ready":
                 downloaded = await self._snapshot_request(
-                    "GET", f"/datasets/v3/snapshot/{snapshot_id}", None, None
+                    "GET",
+                    f"/datasets/v3/snapshot/{snapshot_id}",
+                    {"format": "json"},
+                    None,
                 )
                 value = parse_response_content(downloaded.content)
                 if not isinstance(value, list):
@@ -198,7 +206,7 @@ class BrightDataClient:
         method: str,
         path: str,
         params: dict[str, str] | None,
-        body: list[dict[str, str]] | None,
+        body: list[dict[str, str | bool]] | None,
     ) -> httpx2.Response:
         try:
             return await self._request(method, path, params, body)
@@ -212,7 +220,7 @@ class BrightDataClient:
         method: str,
         path: str,
         params: dict[str, str] | None,
-        body: list[dict[str, str]] | None,
+        body: list[dict[str, str | bool]] | None,
     ) -> httpx2.Response:
         for attempt in range(len(STATUS_RETRY_DELAYS) + 1):
             try:

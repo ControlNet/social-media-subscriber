@@ -193,9 +193,12 @@ from the run date minus three days through the run date, even when it has no
 persisted Posts. A complete explicit pair replaces all per-account defaults.
 First-time backfills may take substantially longer and consume more provider
 credits; the Bright Data snapshot wait limit is 30 minutes. A valid JSON list
-without provider errors is required, but Bright Data exposes no independently
-verifiable truncation marker. Do not execute this command for exploratory CLI
-testing: it is a live provider action.
+without provider errors is required. The client explicitly requests up to 1,000
+results per Account and only owner-authored posts for personal profiles. Bright
+Data exposes no independently verifiable truncation marker; split backfills
+into narrower explicit date windows if an Account may exceed 1,000 posts. Do
+not execute this command for exploratory CLI testing: it is a live provider
+action.
 
 | Exit | Binary observable | Required action |
 | --- | --- | --- |

@@ -16,6 +16,7 @@ from structlog.testing import capture_logs
 from social_media_subscriber.providers.brightdata.client import BrightDataClient
 from social_media_subscriber.providers.brightdata.constants import (
     LINKEDIN_POSTS_DATASET,
+    POST_RESULTS_PER_INPUT,
 )
 from social_media_subscriber.providers.brightdata.errors import (
     BrightDataError,
@@ -157,12 +158,13 @@ async def test_company_posts_follow_owned_snapshot_to_ready_download() -> None:
     assert [entry.target for entry in state.requests] == [
         (
             "/datasets/v3/trigger?dataset_id="
-            f"{LINKEDIN_POSTS_DATASET}&include_errors=true&type=discover_new"
+            f"{LINKEDIN_POSTS_DATASET}&include_errors=true"
+            f"&limit_per_input={POST_RESULTS_PER_INPUT}&type=discover_new"
             "&discover_by=company_url"
         ),
         "/datasets/v3/progress/snapshot-safe-id",
         "/datasets/v3/progress/snapshot-safe-id",
-        "/datasets/v3/snapshot/snapshot-safe-id",
+        "/datasets/v3/snapshot/snapshot-safe-id?format=json",
     ]
     assert state.requests[0].body == [
         {
@@ -251,9 +253,17 @@ async def test_person_posts_accept_jsonl_and_exact_trigger_contract() -> None:
     assert [post.id for post in result] == ["post-1", "post-2"]
     assert state.requests[0].target == (
         f"/datasets/v3/trigger?dataset_id={LINKEDIN_POSTS_DATASET}"
-        "&include_errors=true&type=discover_new&discover_by=profile_url"
+        f"&include_errors=true&limit_per_input={POST_RESULTS_PER_INPUT}"
+        "&type=discover_new&discover_by=profile_url"
     )
-    assert state.requests[0].body == [item.as_json()]
+    assert state.requests[0].body == [
+        {
+            "url": item.url,
+            "start_date": "2026-08-19T00:00:00.000Z",
+            "end_date": "2026-08-20T23:59:59.999Z",
+            "only_authored_posts": True,
+        }
+    ]
 
 
 @pytest.mark.anyio
