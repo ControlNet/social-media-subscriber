@@ -14,7 +14,8 @@ and incident contact in your approved internal system. A pilot must pass these
 gates before secrets are configured: explicit legal approval, provider-contract
 approval, named operator, bounded account list, bounded run frequency, and a
 credit alert/stop threshold. Expanding the pool, cadence, platform, or data use
-is a new approval decision—not a retry.
+is a new approval decision, not a retry. X architecture support does not
+authorize X collection or data use.
 
 This runbook intentionally contains no provider key, live account URL, or
 personal information. Never add any of those to an issue, pull request, shell
@@ -65,8 +66,8 @@ integrity failure. It does not contact a provider or Git remote.
 ## Secrets: multiline, non-repository handling
 
 `ACCOUNTS` and `SOURCES` are newline-delimited values. For `ACCOUNTS`, each line
-must be an approved public LinkedIn person/company locator; credentials and
-query parameters are rejected. Each non-empty `SOURCES` line must follow
+must be an approved public LinkedIn person/company or X profile locator;
+credentials and query parameters are rejected. Each non-empty `SOURCES` line must follow
 `<source_id>:<api_token>`. The parser splits only the first colon, so provider
 tokens may contain additional colons. Source IDs are case-normalized, unknown
 IDs reject the whole input, and exact source/token duplicates keep only their
@@ -76,6 +77,11 @@ configured Apify credential before Bright Data, regardless of how the two source
 IDs are interleaved. Repeating either source ID with a different token creates
 another independent fallback instance. Do not put either value in a shell
 command, shell history, `.env.local`, tracked file, or a workflow input.
+
+Both allowlisted sources currently compose LinkedIn adapters only. No production
+X source exists. An X-only `collect` run therefore stops at capability routing,
+performs no provider collection request, writes a valid partial candidate, and
+exits `4`; this boundary check is not a live X smoke test.
 
 Prepare files outside the repository with restrictive permissions, populate them
 only through a trusted local editor or secret manager, and use shell redirection
@@ -124,10 +130,12 @@ remediated and rescanned. `staged` intentionally scans only staged paths.
 The collection workflow has a UTC cron schedule, `17 3 * * *`, and
 `workflow_dispatch` inputs `start_date` and `end_date`. A manual request must
 provide both dates or neither; dates are inclusive and must not be inverted.
-Scheduled collection runs once per day. Accounts absent from the previous
-snapshot are backfilled from `2003-05-05`; accounts already present use an
-inclusive window from the UTC run date minus three days through the run date.
-Use a manual dispatch only for an approved bounded operation. Read GitHub's
+Scheduled production collection runs once per day and is currently LinkedIn-only.
+LinkedIn Accounts absent from the previous snapshot are backfilled from
+`2003-05-05`; accounts already present use an inclusive window from the UTC run
+date minus three days through the run date. The architecture assigns
+`2006-03-21` to future X collection, but no scheduled X source exists. Use a
+manual dispatch only for an approved bounded operation. Read GitHub's
 official [workflow events documentation](https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows)
 for schedule/manual trigger behavior.
 
@@ -151,10 +159,10 @@ concurrency policy to make an ad-hoc test easier.
 
 Each approved input canonicalizes to the Account key. `profile_url` is the only
 persisted Account identity, and each `Post.account_profile_url` must equal that
-exact canonical URL. Runtime code exposes derived `Account.id`, `Post.id`, and
-`Post.content_hash` properties without duplicating them in JSON. A changed slug
-is a distinct Account, not a rename. Alias reconciliation and entity merging are
-not supported here.
+exact canonical LinkedIn or X URL. Runtime code exposes derived `Account.id`,
+`Post.id`, and `Post.content_hash` properties without duplicating them in JSON.
+A changed LinkedIn slug or X handle is a distinct Account, not a rename. Alias
+reconciliation and entity merging are not supported here.
 Downstream consumers own those cross-URL decisions.
 
 Every Bright Data record must include at least one of
@@ -171,11 +179,12 @@ Apify activity records merge as one Platform Post; other URN namespaces remain
 distinct.
 
 The persisted dataset contains `accounts.json`, `posts.json`, Account records,
-and unified Platform Post records. `posts.json` is a newest-first complete list
-of Post paths with owner URL, publication time, and platform; it is an index,
-not a feed. The dataset does not contain a feed, provider source copy, or
-snapshot manifest. A successful response with zero records creates the
-requested Account and `{ "posts": [] }` when there is no prior Post history.
+and unified Platform Post records under `posts/<platform>/`. `posts.json` is a
+newest-first complete list of Post paths with owner URL, publication time, and
+platform; it is an index, not a feed. The dataset does not contain a feed,
+provider source copy, or snapshot manifest. A successful response with zero
+records creates the requested Account and `{ "posts": [] }` when there is no
+prior Post history.
 Reply, repost, quote, media-only, and unknown provider post types are retained.
 A typed `NOT_FOUND` does not create a new Account; on refresh, prior history is
 retained.
@@ -189,11 +198,12 @@ those objects. Unknown safe content is retained, but transport and credential
 metadata is never persisted.
 
 For typed input/`NOT_FOUND` and terminal provider failures,
-`failed_account_ids` contains canonical requested LinkedIn URLs. An integrity,
-actor-ownership, provider-schema, batch-coverage, duplicate-payload, or
-referential conflict aborts the whole candidate before promotion. No candidate
-or candidate counters are exposed, and the prior snapshot remains
-byte-identical.
+`failed_account_ids` contains canonical requested account URLs. Current provider
+failures contain canonical requested LinkedIn URLs; an unsupported X capability
+contains its canonical X profile URL. An integrity, actor-ownership,
+provider-schema, batch-coverage, duplicate-payload, or referential conflict
+aborts the whole candidate before promotion. No candidate or candidate counters
+are exposed, and the prior snapshot remains byte-identical.
 
 `collect` requires a prior snapshot directory and a separate candidate output
 directory. It contacts the provider and may consume credits:
@@ -206,9 +216,15 @@ pixi run subscriber collect \
   --end-date YYYY-MM-DD
 ```
 
-Omit both date options only for the default policy. An Account absent from the
-previous snapshot is backfilled from LinkedIn's launch date, `2003-05-05`,
-through the UTC run date. An Account already present uses the inclusive range
+This is a LinkedIn production procedure. There is no live X collection command
+or source to authorize. Do not substitute an X locator into an operational smoke
+run and interpret the partial capability result as collected X data.
+
+Omit both date options only for the default policy. A LinkedIn Account absent
+from the previous snapshot is backfilled from LinkedIn's launch date,
+`2003-05-05`, through the UTC run date. The architecture defines `2006-03-21`
+for a future X source, but no operational X backfill exists. An Account already
+present uses the inclusive range
 from the run date minus three days through the run date, even when it has no
 persisted Posts. A complete explicit pair replaces all per-account defaults.
 First-time backfills may take substantially longer and consume more provider
@@ -298,6 +314,9 @@ all of the following in the approved change record:
    is sufficient, and the operator has authority to spend the expected credit.
 4. The candidate output and prior snapshot are in an approved temporary
    location outside the repository. No publication command is scheduled.
+
+This checklist remains LinkedIn-only. Adding an X source requires a separate
+provider contract, approval, operational procedure, and live-smoke design.
 
 Immediately before the opt-in run, check the redaction boundary without printing
 secret contents: confirm the two environment variables are set in the current
