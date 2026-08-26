@@ -24,7 +24,6 @@ from social_media_subscriber.application.windows import (
 )
 from social_media_subscriber.domain.account import Account
 from social_media_subscriber.domain.ids import AccountId
-from social_media_subscriber.domain.platform import Platform
 from social_media_subscriber.storage.snapshot import SnapshotState
 
 if TYPE_CHECKING:
@@ -63,7 +62,7 @@ def _post_outcomes(
     failed: list[AccountId] = []
     pool_exhausted = 0
     for outcome in post_result.accounts:
-        match outcome:
+        match outcome:  # noqa: MATCH_OK - union is exhaustive without a Never case.
             case AccountRouteSucceeded(account_id=account_id):
                 succeeded.add(account_id)
             case AccountRouteFailed(
@@ -86,7 +85,7 @@ def _requested_accounts(prepared: PreparedCollection) -> tuple[Account, ...]:
     for locator in prepared.runtime_input.locators:
         account_id = AccountId(locator.canonical_url)
         requested[account_id] = previous_by_id.get(account_id) or Account(
-            platform=Platform.LINKEDIN,
+            platform=locator.platform,
             kind=locator.kind,
             profile_url=locator.canonical_url,
             first_seen_at=prepared.run_started_at,
@@ -119,7 +118,7 @@ async def collect_posts(
     if not requests:
         return CollectedPosts(SnapshotState((), ()), 0, 0, (), 0)
     result = await runtime.router.route(requests)
-    match result.aggregate.status:
+    match result.aggregate.status:  # noqa: MATCH_OK - enum is exhaustively grouped.
         case RouterRunStatus.ABORTED:
             return aborted_result(CollectionExitCode.INTEGRITY)
         case RouterRunStatus.SUCCESS | RouterRunStatus.PARTIAL:

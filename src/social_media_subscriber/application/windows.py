@@ -8,7 +8,7 @@ from enum import StrEnum, unique
 from typing import TYPE_CHECKING, override
 
 from social_media_subscriber.adapters.instance import AdapterPostRequest
-from social_media_subscriber.domain.platform import LINKEDIN_EARLIEST_DATE
+from social_media_subscriber.domain.platform import earliest_collection_date
 
 if TYPE_CHECKING:
     from social_media_subscriber.domain.account import Account
@@ -85,7 +85,7 @@ def build_post_requests(
             start_date = (
                 run_date - timedelta(days=_OVERLAP_DAYS)
                 if account.id in prior_account_ids
-                else LINKEDIN_EARLIEST_DATE
+                else earliest_collection_date(account.platform)
             )
             end_date = run_date
         requests.append(AdapterPostRequest(account, start_date, end_date))

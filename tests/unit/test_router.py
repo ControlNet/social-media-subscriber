@@ -33,6 +33,12 @@ test_batches_are_bounded_and_start_with_first_source = (
 test_person_and_company_batches_are_separate_and_stable = (
     account_routing.test_person_and_company_batches_are_separate_and_stable
 )
+test_mixed_platform_batches_use_platform_specific_drivers_in_order = (
+    account_routing.test_mixed_platform_batches_use_platform_specific_drivers_in_order
+)
+test_unregistered_x_capability_is_an_account_scoped_failure = (
+    account_routing.test_unregistered_x_capability_is_an_account_scoped_failure
+)
 test_non_batching_compatible_driver_forces_single_account_batches = (
     account_routing.test_non_batching_compatible_driver_forces_single_account_batches
 )

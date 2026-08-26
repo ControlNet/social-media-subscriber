@@ -16,13 +16,16 @@ from social_media_subscriber.adapters.router_outcomes import (
     AccountRouteFailureCategory,
     RouterRunStatus,
 )
-from social_media_subscriber.domain.platform import AccountKind
+from social_media_subscriber.domain.platform import AccountKind, Platform
 from tests.fakes.router import (
     FakeDriver,
     FallbackFakeDriver,
     NonBatchFakeDriver,
+    RouterCall,
     ScriptedFactory,
+    XFakeDriver,
     make_account,
+    make_x_account,
 )
 from tests.unit.test_router_support import build_post_requests, build_router
 
@@ -103,6 +106,57 @@ async def test_person_and_company_batches_are_separate_and_stable() -> None:
         (AdapterInstanceOrdinal(0), AccountKind.PERSON, 1),
         (AdapterInstanceOrdinal(0), AccountKind.COMPANY, 2),
     ]
+
+
+@pytest.mark.anyio
+async def test_mixed_platform_batches_use_platform_specific_drivers_in_order() -> None:
+    # Given
+    linkedin_account = make_account(AccountKind.PERSON, 1)
+    x_account = make_x_account(1)
+    execution_log: list[RouterCall] = []
+    linkedin_factory = ScriptedFactory(((),), FakeDriver, calls=execution_log)
+    x_factory = ScriptedFactory(((),), XFakeDriver, calls=execution_log)
+    router = Router(
+        AdapterRegistry((FakeDriver, XFakeDriver)),
+        (
+            AdapterInstanceSpec(
+                FakeDriver,
+                linkedin_factory,
+                SecretStr("linkedin-source-key"),
+            ),
+            AdapterInstanceSpec(XFakeDriver, x_factory, SecretStr("x-source-key")),
+        ),
+    )
+
+    # When
+    result = await router.route(build_post_requests((x_account, linkedin_account)))
+
+    # Then
+    assert result.aggregate.status is RouterRunStatus.SUCCESS
+    assert tuple((call.platform, call.kind) for call in execution_log) == (
+        (Platform.LINKEDIN, AccountKind.PERSON),
+        (Platform.X, AccountKind.PROFILE),
+    )
+
+
+@pytest.mark.anyio
+async def test_unregistered_x_capability_is_an_account_scoped_failure() -> None:
+    # Given
+    account = make_x_account(1)
+    router, factory = build_router(((),))
+
+    # When
+    result = await router.route(build_post_requests((account,)))
+
+    # Then
+    assert result.accounts == (
+        AccountRouteFailed(
+            account.id,
+            AccountRouteFailureCategory.UNSUPPORTED_CAPABILITY,
+        ),
+    )
+    assert result.aggregate.status is RouterRunStatus.PARTIAL
+    assert factory.calls == []
 
 
 @pytest.mark.anyio

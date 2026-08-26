@@ -13,8 +13,8 @@ from social_media_subscriber.accounts.errors import (
     AccountInputField,
 )
 from social_media_subscriber.accounts.locator import (
-    LinkedInLocator,
-    parse_linkedin_locator,
+    AccountLocator,
+    parse_account_locator,
 )
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ class RuntimeInput(BaseModel):
 
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
-    locators: tuple[LinkedInLocator, ...] = Field(min_length=1)
+    locators: tuple[AccountLocator, ...] = Field(min_length=1)
     sources: tuple[SourceInput, ...] = Field(min_length=1)
 
 
@@ -93,9 +93,9 @@ def load_runtime_input(settings: Settings) -> RuntimeInput:
     if not source_lines:
         raise _invalid_source(AccountInputErrorCategory.EMPTY_SOURCES)
 
-    locators_by_url: dict[str, LinkedInLocator] = {}
+    locators_by_url: dict[str, AccountLocator] = {}
     for line in account_lines:
-        locator = parse_linkedin_locator(line)
+        locator = parse_account_locator(line)
         if locator.canonical_url not in locators_by_url:
             locators_by_url[locator.canonical_url] = locator
 

@@ -62,6 +62,16 @@ class NonBatchFakeDriver(DeclaredFakeDriver):
     pass
 
 
+@adapter(
+    platform=Platform.X,
+    operations=(AdapterOperation.COLLECT_ACCOUNT_POSTS,),
+    account_kinds=(AccountKind.PROFILE,),
+    supports_batch=True,
+)
+class XFakeDriver(DeclaredFakeDriver):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class CompleteBatch:
     posts_by_account: tuple[tuple[Post, ...], ...] = ()
@@ -74,11 +84,12 @@ type FakeStep = AdapterAttempt | CompleteBatch
 class RouterCall:
     ordinal: AdapterInstanceOrdinal
     account_ids: tuple[AccountId, ...]
+    platform: Platform
     kind: AccountKind
 
 
 @final
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: MUTABLE_OK - scripted fixture records calls and steps.
 class ScriptedInstance:
     driver_class: type[AdapterDriver]
     ordinal: AdapterInstanceOrdinal
@@ -94,11 +105,12 @@ class ScriptedInstance:
             RouterCall(
                 self.ordinal,
                 tuple(account.id for account in batch.accounts),
+                batch.accounts[0].platform,
                 batch.accounts[0].kind,
             )
         )
         step = self.steps.pop(0) if self.steps else CompleteBatch()
-        match step:
+        match step:  # noqa: MATCH_OK - fallback returns typed AdapterAttempt variants.
             case CompleteBatch(posts_by_account=posts_by_account):
                 return BatchCompleted(
                     tuple(
@@ -116,7 +128,7 @@ class ScriptedInstance:
 
 
 @final
-@dataclass(slots=True)
+@dataclass(slots=True)  # noqa: MUTABLE_OK - factory records created test instances.
 class ScriptedFactory:
     scripts: tuple[tuple[FakeStep, ...], ...]
     driver_class: type[AdapterDriver] = FakeDriver
@@ -163,5 +175,27 @@ def make_post(account_id: AccountId, number: int) -> Post:
         published_at=datetime(2026, 8, 20, tzinfo=UTC),
         type="post",
         content={"text": f"post {number}", "hashtags": [], "links": []},
+        first_seen_at=datetime(2026, 8, 20, tzinfo=UTC),
+    )
+
+
+def make_x_account(number: int) -> Account:
+    return Account(
+        platform=Platform.X,
+        kind=AccountKind.PROFILE,
+        profile_url=f"https://x.com/synthetic_{number}/",
+        first_seen_at=datetime(2026, 8, 20, tzinfo=UTC),
+    )
+
+
+def make_x_post(account_id: AccountId, number: int) -> Post:
+    platform_post_id = PlatformPostId(str(number))
+    return Post(
+        platform_post_id=platform_post_id,
+        account_profile_url=account_id,
+        canonical_url=f"{account_id}status/{number}",
+        published_at=datetime(2026, 8, 20, tzinfo=UTC),
+        type="post",
+        content={"text": f"X post {number}"},
         first_seen_at=datetime(2026, 8, 20, tzinfo=UTC),
     )
