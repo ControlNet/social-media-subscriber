@@ -1,6 +1,9 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from social_media_subscriber.platforms.linkedin import (
+    LinkedInPostUrlError,
     canonical_platform_post_id,
     canonical_post_timestamp,
     canonical_post_type,
@@ -45,6 +48,19 @@ def test_non_activity_ids_keep_the_validated_provider_post_url() -> None:
         )
         == "https://www.linkedin.com/posts/example_share-1001/"
     )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.linkedin.com/posts/../synthetic",
+        "https://www.linkedin.com/feed/update/./synthetic",
+    ],
+)
+def test_post_url_rejects_literal_dot_segments(url: str) -> None:
+    # Given / When / Then
+    with pytest.raises(LinkedInPostUrlError):
+        _ = canonical_post_url(url)
 
 
 def test_platform_timestamp_discards_provider_precision_below_one_second() -> None:

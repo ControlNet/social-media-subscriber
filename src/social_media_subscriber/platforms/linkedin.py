@@ -24,6 +24,12 @@ _UNSAFE_URL: Final = re.compile(
 )
 _ACTIVITY_URN_PREFIX: Final = "urn:li:activity:"
 _NUMERIC_ACTIVITY_ID: Final = re.compile(r"[0-9]+\Z", re.ASCII)
+LINKEDIN_POST_URL_PATTERN: Final = (
+    r"^https://www\.linkedin\.com/(?:posts/|feed/update/)"
+    r"(?!\.{1,2}(?:/|$))(?!.*\/\.{1,2}(?:/|$))"
+    r"(?!.*%(?:[01][0-9A-Fa-f]|7[fF]|2[fF]|5[cC]|2[eE]))"
+    r"[^?#\x00-\x1f\x7f\\]*$"
+)
 
 
 class LinkedInPostUrlErrorCategory(StrEnum):
@@ -62,6 +68,7 @@ def canonical_post_url(value: str, *, platform_post_id: str | None = None) -> st
         or parsed.password is not None
         or port not in {None, 443}
         or not parsed.path.startswith(("/posts/", "/feed/update/"))
+        or any(segment in {".", ".."} for segment in parsed.path.split("/"))
     ):
         raise LinkedInPostUrlError
     validated = urlunsplit(("https", "www.linkedin.com", parsed.path, "", ""))
@@ -109,7 +116,7 @@ def canonical_media_items(value: JsonValue) -> list[JsonValue]:
 
 def has_meaningful_value(value: JsonValue) -> bool:
     """Return whether an optional provider marker contains positive evidence."""
-    match value:
+    match value:  # noqa: MATCH_OK - fallback covers open recursive JSON values.
         case None | False | "":
             return False
         case list() | dict():
