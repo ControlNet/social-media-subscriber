@@ -1,7 +1,7 @@
 """Frozen canonical Account boundary contract."""
 
 from datetime import datetime
-from typing import Annotated, ClassVar, Final, Literal, Self
+from typing import Annotated, ClassVar, Final, Self
 
 from pydantic import (
     BaseModel,
@@ -13,7 +13,10 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from social_media_subscriber.accounts.errors import AccountInputError
-from social_media_subscriber.accounts.locator import parse_linkedin_locator
+from social_media_subscriber.accounts.locator import (
+    AccountLocator,
+    parse_account_locator,
+)
 from social_media_subscriber.domain.ids import ACCOUNT_ID_PATTERN, AccountId
 from social_media_subscriber.domain.platform import AccountKind, Platform
 from social_media_subscriber.domain.time import canonical_utc
@@ -23,11 +26,11 @@ _CanonicalProfileUrl = Annotated[
     WithJsonSchema({"type": "string", "pattern": ACCOUNT_ID_PATTERN}),
 ]
 _PROFILE_URL_ERROR_CODE: Final = "canonical_profile_url"
-_PROFILE_URL_ERROR_MESSAGE: Final = (
-    "value must be a canonical public LinkedIn profile URL"
-)
+_PROFILE_URL_ERROR_MESSAGE: Final = "value must be a canonical public account URL"
 _ACCOUNT_KIND_URL_ERROR_CODE: Final = "account_kind_url_mismatch"
 _ACCOUNT_KIND_URL_ERROR_MESSAGE: Final = "profile URL does not match account kind"
+_ACCOUNT_PLATFORM_URL_ERROR_CODE: Final = "account_platform_url_mismatch"
+_ACCOUNT_PLATFORM_URL_ERROR_MESSAGE: Final = "profile URL does not match platform"
 
 
 class Account(BaseModel):
@@ -40,7 +43,7 @@ class Account(BaseModel):
         validate_default=True,
     )
 
-    platform: Literal[Platform.LINKEDIN]
+    platform: Platform
     kind: AccountKind
     profile_url: _CanonicalProfileUrl
     first_seen_at: datetime
@@ -59,8 +62,13 @@ class Account(BaseModel):
     @model_validator(mode="after")
     def validate_profile_url(self) -> Self:
         """Require Account kind and canonical URL shape to agree."""
-        actual_kind = _canonical_account_kind(self.profile_url)
-        if actual_kind is not self.kind:
+        locator = _canonical_account_locator(self.profile_url)
+        if locator.platform is not self.platform:
+            raise PydanticCustomError(
+                _ACCOUNT_PLATFORM_URL_ERROR_CODE,
+                _ACCOUNT_PLATFORM_URL_ERROR_MESSAGE,
+            )
+        if locator.kind is not self.kind:
             raise PydanticCustomError(
                 _ACCOUNT_KIND_URL_ERROR_CODE,
                 _ACCOUNT_KIND_URL_ERROR_MESSAGE,
@@ -68,10 +76,10 @@ class Account(BaseModel):
         return self
 
 
-def _canonical_account_kind(value: str) -> AccountKind:
+def _canonical_account_locator(value: str) -> AccountLocator:
     """Validate through the strict parser's canonicalization authority."""
     try:
-        locator = parse_linkedin_locator(value)
+        locator = parse_account_locator(value)
     except AccountInputError:
         raise PydanticCustomError(
             _PROFILE_URL_ERROR_CODE,
@@ -82,4 +90,4 @@ def _canonical_account_kind(value: str) -> AccountKind:
             _PROFILE_URL_ERROR_CODE,
             _PROFILE_URL_ERROR_MESSAGE,
         )
-    return locator.kind
+    return locator

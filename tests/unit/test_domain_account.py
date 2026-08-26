@@ -27,7 +27,7 @@ def _account(*, kind: AccountKind = AccountKind.PERSON) -> Account:
     )
 
 
-@pytest.mark.parametrize("kind", tuple(AccountKind))
+@pytest.mark.parametrize("kind", [AccountKind.PERSON, AccountKind.COMPANY])
 def test_account_uses_profile_url_as_its_runtime_identity(kind: AccountKind) -> None:
     account = _account(kind=kind)
 
