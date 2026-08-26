@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 NOW: Final = datetime(2026, 8, 20, 12, tzinfo=UTC)
 ACCOUNT_URL: Final = "https://www.linkedin.com/in/synthetic-ada/"
+X_ACCOUNT_URL: Final = "https://x.com/synthetic_x/"
 
 
 def _state() -> SnapshotState:
@@ -48,6 +49,26 @@ def _state() -> SnapshotState:
         first_seen_at=NOW,
     )
     return SnapshotState((account,), (post,))
+
+
+def _mixed_state() -> SnapshotState:
+    linkedin = _state()
+    x_account = Account(
+        platform=Platform.X,
+        kind=AccountKind.PROFILE,
+        profile_url=X_ACCOUNT_URL,
+        first_seen_at=NOW,
+    )
+    x_post = Post(
+        platform_post_id=PlatformPostId("1001"),
+        account_profile_url=x_account.id,
+        canonical_url="https://x.com/synthetic_x/status/1001",
+        published_at=NOW + timedelta(minutes=1),
+        type="post",
+        content={"text": "Synthetic X post"},
+        first_seen_at=NOW,
+    )
+    return SnapshotState((*linkedin.accounts, x_account), (*linkedin.posts, x_post))
 
 
 def _tree(root: Path) -> dict[str, bytes]:
@@ -102,6 +123,35 @@ def test_repository_repeated_write_is_byte_identical(tmp_path: Path) -> None:
     assert _tree(root) == before
     assert validated is not None
     assert second.digest == validated.summary.digest
+
+
+def test_repository_writes_mixed_platform_posts_without_changing_linkedin_records(
+    tmp_path: Path,
+) -> None:
+    # Given
+    linkedin_root = tmp_path / "linkedin"
+    mixed_root = tmp_path / "mixed"
+    linkedin_state = _state()
+    mixed_state = _mixed_state()
+    _ = SnapshotRepository(linkedin_root).write(linkedin_state)
+    linkedin_tree = _tree(linkedin_root)
+
+    # When
+    _ = SnapshotRepository(mixed_root).write(mixed_state)
+
+    # Then
+    mixed_tree = _tree(mixed_root)
+    linkedin_post_path = f"posts/linkedin/{record_filename(linkedin_state.posts[0].id)}"
+    x_post_path = f"posts/x/{record_filename(mixed_state.posts[1].id)}"
+    assert SnapshotRepository(mixed_root).load_optional() == mixed_state
+    assert linkedin_post_path in mixed_tree
+    assert x_post_path in mixed_tree
+    assert mixed_tree[linkedin_post_path] == linkedin_tree[linkedin_post_path]
+    index = PostsIndex.model_validate_json((mixed_root / "posts.json").read_bytes())
+    assert tuple((item.platform, item.path) for item in index.posts) == (
+        (Platform.X, x_post_path),
+        (Platform.LINKEDIN, linkedin_post_path),
+    )
 
 
 def test_posts_index_is_newest_first_and_empty_safe(tmp_path: Path) -> None:

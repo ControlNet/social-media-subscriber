@@ -24,8 +24,8 @@ from social_media_subscriber.storage import safe_promotion
 from social_media_subscriber.storage.layout import (
     ACCOUNTS_DIRECTORY,
     ACCOUNTS_INDEX,
-    POSTS_DIRECTORY,
     POSTS_INDEX,
+    posts_directory,
     snapshot_digest,
 )
 from social_media_subscriber.storage.safe_directory import (
@@ -155,7 +155,11 @@ class SnapshotRepository:
     def _load_tree(self, tree: DirectoryTree) -> tuple[SnapshotState, SnapshotSummary]:
         files = tree.files
         account_paths = _record_paths(files, ACCOUNTS_DIRECTORY)
-        post_paths = _record_paths(files, POSTS_DIRECTORY)
+        post_paths = tuple(
+            path
+            for platform in Platform
+            for path in _record_paths(files, posts_directory(platform))
+        )
         if ACCOUNTS_INDEX not in files or POSTS_INDEX not in files:
             raise SnapshotIntegrityError(SnapshotIntegrityCategory.INVENTORY)
         accounts = tuple(
@@ -189,7 +193,10 @@ class SnapshotRepository:
             for account in state.accounts
         }
         files.update(
-            (POSTS_DIRECTORY / record_filename(post.id), self._encoder(post))
+            (
+                posts_directory(post.platform) / record_filename(post.id),
+                self._encoder(post),
+            )
             for post in state.posts
         )
         index: JsonValue = {
@@ -202,10 +209,12 @@ class SnapshotRepository:
         posts_index = PostsIndex(
             posts=tuple(
                 PostIndexEntry(
-                    path=(POSTS_DIRECTORY / record_filename(post.id)).as_posix(),
+                    path=(
+                        posts_directory(post.platform) / record_filename(post.id)
+                    ).as_posix(),
                     account_profile_url=post.account_profile_url,
                     published_at=post.published_at,
-                    platform=Platform.LINKEDIN,
+                    platform=post.platform,
                 )
                 for post in sorted(
                     state.posts,
