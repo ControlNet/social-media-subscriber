@@ -30,7 +30,10 @@ Settings → strict runtime parser → source composers → credential-bound ins
 The supported production source IDs are `apify` and `brightdata`. Each
 explicitly composes its LinkedIn adapter. No discovery mechanism, module path,
 or environment-provided class name creates arbitrary adapters or credential
-clients at runtime.
+clients at runtime. X account identity, Post identity, collection windows,
+routing, schemas, and snapshot paths are implemented, but no production X
+driver or source composer is registered. Architecture support does not imply a
+live X collection capability.
 
 ## Canonical records and schemas
 
@@ -49,6 +52,12 @@ The checked-in JSON Schemas are the public persistence contract:
   the derived `posts.json` locator index. Each entry contains only `path`,
   `account_profile_url`, `published_at`, and `platform`.
 
+The Account and Post schemas use platform-specific `oneOf` branches so an X
+owner cannot be paired with a LinkedIn platform or canonical Post URL, and vice
+versa. Runtime validation remains authoritative for semantic relationships JSON
+Schema cannot express, including equality between an X status ID and
+`platform_post_id`.
+
 There is no persisted format version, provider source-record format, or
 snapshot manifest. The repository validates the exact current contract instead
 of maintaining compatibility readers. The schema generator is `pixi run
@@ -56,12 +65,13 @@ schemas`; `pixi run schemas-check` proves the checked-in files match it.
 
 ## Account and post identity
 
-`ACCOUNTS` is newline-delimited public LinkedIn person or company locators.
-The parser canonicalizes accepted locators, de-duplicates them while preserving
-first occurrence, and rejects malformed hosts, credentials-in-URLs, ports,
-query-like path variations, control characters, invalid percent escaping, and
-percent-encoded slug variants, and non-person/company paths. It does not retain
-arbitrary user text downstream.
+`ACCOUNTS` is newline-delimited public account locators. The parser accepts
+LinkedIn person/company URLs and X profile URLs, canonicalizes them,
+de-duplicates them while preserving first occurrence, and rejects malformed
+hosts, credentials-in-URLs, ports, query-like path variations, control
+characters, invalid percent escaping, percent-encoded slug variants, and
+unsupported paths. It does not retain arbitrary user text downstream. Only
+LinkedIn locators currently have production source composition.
 
 The strict locator parser is the only Account canonicalization authority. For
 every persisted Account, `profile_url` is the parser's canonical person/company
@@ -89,8 +99,12 @@ This request identity is retained only long enough to validate ownership and is
 not persisted. `author` remains post content because reposts can name the
 original author instead of the subscribed Account.
 
-Canonical runtime post identity is `linkedin:post:<platform-post-id>`. It is
-derived for filenames and merge checks but is not duplicated in JSON. The
+Canonical runtime post identity is platform-qualified and is not duplicated in
+JSON. LinkedIn uses `linkedin:post:<platform-post-id>`; X uses
+`x:post:<numeric-status-id>`. X canonical Post URLs have the form
+`https://x.com/<lowercase-handle>/status/<numeric-status-id>`, and runtime
+validation requires the URL status ID to equal `platform_post_id`. The
+LinkedIn identity is derived for filenames and merge checks. The
 LinkedIn `activity` URN prefix is removed so the numeric Apify ID and the
 equivalent Bright Data activity URN resolve to the same Platform Post. Other URN
 namespaces remain distinct. Numeric activity IDs also produce one canonical
@@ -121,7 +135,9 @@ metadata, duplicate driver classes, and empty or repeated operations/account
 kinds. Multiple drivers may declare the same capability; a lookup returns every
 driver matching `(platform, operation, account kind)`. Registry order remains
 deterministic capability metadata. Production LinkedIn composition always puts
-Apify instances before Bright Data instances.
+Apify instances before Bright Data instances. Production composition registers
+no X driver, so X requests become account-scoped unsupported-capability outcomes
+without calling a LinkedIn provider instance.
 
 `SOURCES` is a newline-delimited ordered list. Every non-empty line is parsed by
 splitting only its first colon into `<source_id>:<api_token>`. Source IDs are
@@ -162,8 +178,10 @@ Each accepted `AdapterPostRequest` has one canonical account and one inclusive
 UTC date range. Windows are calculated independently, not as a global provider
 filter:
 
-- An account absent from the previous snapshot's Account set starts at the
-  LinkedIn launch date, `2003-05-05`, and ends at `run_start_date`.
+- An account absent from the previous snapshot's Account set starts at its
+  platform boundary and ends at `run_start_date`: LinkedIn uses `2003-05-05` and
+  X uses `2006-03-21`. The X boundary is architecture policy only until a
+  production X source is registered.
 - An account already present in the previous snapshot starts at
   `run_start_date - 3 days` and ends at `run_start_date`. Because the range is
   inclusive, this covers the run date and the preceding three UTC dates.
@@ -217,8 +235,11 @@ records are deterministic JSON.
 ├── accounts/<encoded canonical Account ID>.json
 ├── accounts.json                         # profile_url → record path map
 ├── posts.json                            # newest-first Post locator list
-└── posts/linkedin/<encoded runtime Post ID>.json
+└── posts/<platform>/<encoded runtime Post ID>.json
 ```
+
+`<platform>` is currently `linkedin` or `x`. Existing LinkedIn bytes and paths
+remain unchanged; no current production source writes `posts/x/`.
 
 There are no derived feed, source-copy, or manifest files. `posts.json` contains
 one entry for every Post file, sorted by descending `published_at` and then a
@@ -257,9 +278,11 @@ history. Ownership, schema, batch-coverage, duplicate-payload, and referential
 conflicts abort the whole candidate before promotion. The candidate and its
 counters are suppressed, and the prior snapshot remains byte-identical.
 
-For typed input/`NOT_FOUND` and terminal provider failures, the CLI field
-`failed_account_ids` contains canonical requested LinkedIn URLs. Account URLs
-are the intentionally observable identifiers in that field; credentials,
+For typed input/`NOT_FOUND` and terminal provider failures, the current
+production CLI contract states that `failed_account_ids` contains canonical
+requested LinkedIn URLs. Architecture-only X requests also use their canonical
+X profile URL when they fail at the unsupported-capability boundary. Account
+URLs are the intentionally observable identifiers in that field; credentials,
 provider bodies, snapshot IDs, and exception internals remain protected.
 
 ## Immutable `dist` publication lease
