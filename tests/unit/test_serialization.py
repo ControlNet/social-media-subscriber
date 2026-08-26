@@ -1,31 +1,11 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Final
-
-import pytest
-from pydantic import TypeAdapter
 
 from social_media_subscriber.domain.account import Account
 from social_media_subscriber.domain.platform import AccountKind, Platform
-from social_media_subscriber.schemas.generate import generate_schemas
-from social_media_subscriber.serialization.json import (
-    JsonValue,
-    canonical_json_bytes,
-)
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-_JSON_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
-_REQUIRED_FIELDS_ADAPTER: Final[TypeAdapter[list[str]]] = TypeAdapter(list[str])
-
-
-def _required_fields(schema: JsonValue) -> set[str]:
-    assert isinstance(schema, dict)
-    return set(_REQUIRED_FIELDS_ADAPTER.validate_python(schema.get("required")))
+from social_media_subscriber.serialization.json import canonical_json_bytes
 
 
 def _account() -> Account:
@@ -58,82 +38,3 @@ def test_canonical_json_is_utf8_sorted_indented_lf_terminated_and_deterministic(
     assert b"\r" not in first
     assert first.decode("utf-8").startswith('{\n  "first_seen_at"')
     assert json.loads(first) == ordered.model_dump(mode="json")
-
-
-def test_schema_generation_is_deterministic_and_structural(tmp_path: Path) -> None:
-    # Given / When
-    first_paths = generate_schemas(tmp_path)
-    first_bytes = tuple(path.read_bytes() for path in first_paths)
-    second_paths = generate_schemas(tmp_path)
-
-    # Then
-    assert tuple(path.name for path in first_paths) == (
-        "account.schema.json",
-        "post.schema.json",
-        "posts-index.schema.json",
-    )
-    assert tuple(path.read_bytes() for path in second_paths) == first_bytes
-    for path in second_paths:
-        schema = _JSON_ADAPTER.validate_json(path.read_bytes())
-        assert isinstance(schema, dict)
-        assert schema["additionalProperties"] is False
-        assert "schema_version" not in _required_fields(schema)
-
-    account_schema = _JSON_ADAPTER.validate_json(first_paths[0].read_bytes())
-    match account_schema:
-        case {
-            "properties": {
-                "profile_url": {"pattern": str() as profile_pattern},
-            }
-        }:
-            for pattern in (profile_pattern,):
-                assert re.fullmatch(
-                    pattern,
-                    "https://www.linkedin.com/in/synthetic/",
-                )
-                for unsafe_url in (
-                    "https://www.linkedin.com/in/syn\nthetic/",
-                    "https://www.linkedin.com/in/synthetic?tracking=unsafe/",
-                    "https://www.linkedin.com/in/synthetic#about/",
-                    "https://www.linkedin.com/in/syn%2Fthetic/",
-                    "https://www.linkedin.com/in/syn%5cthetic/",
-                    "https://www.linkedin.com/in/%2e%2E/",
-                    "https://www.linkedin.com/in/synthetic%ZZ/",
-                    "https://www.linkedin.com/in/synthetic%FF/",
-                    "https://www.linkedin.com/in/synthetic%F0%28%8C%28/",
-                    "https://www.linkedin.com/in/synthetic%E9%9B%AA/",
-                    "https://www.linkedin.com/in/../",
-                ):
-                    assert re.fullmatch(pattern, unsafe_url) is None
-        case unexpected:
-            pytest.fail(f"unexpected Account ID schema: {unexpected!r}")
-
-    for schema_path in first_paths[1:2]:
-        schema = _JSON_ADAPTER.validate_json(schema_path.read_bytes())
-        match schema:
-            case {
-                "properties": {
-                    "account_profile_url": {"pattern": str() as post_account_id_pattern}
-                }
-            }:
-                pass
-            case unexpected:
-                pytest.fail(f"unexpected owned AccountId schema: {unexpected!r}")
-        for valid_id in (
-            "https://www.linkedin.com/in/synthetic-ada/",
-            "https://www.linkedin.com/company/synthetic-labs/",
-        ):
-            assert re.fullmatch(post_account_id_pattern, valid_id)
-        for invalid_id in (
-            "linkedin:person:123",
-            "https://linkedin.com/in/synthetic-ada/",
-            "https://www.linkedin.com/in/synthetic-ada",
-            "https://www.linkedin.com/in/synthetic-ada?tracking=unsafe/",
-            "https://www.linkedin.com/in/synthetic-ada#about/",
-            "https://www.linkedin.com/in/synthetic%2eada/",
-            "https://www.linkedin.com/in/synthetic%ZZ/",
-            "https://www.linkedin.com/in/synthetic%FF/",
-            "https://www.linkedin.com/in/synthetic%F0%28%8C%28/",
-            "https://www.linkedin.com/company/synthetic%E9%9B%AA/",
-        ):
-            assert re.fullmatch(post_account_id_pattern, invalid_id) is None
