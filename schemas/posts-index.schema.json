@@ -3,7 +3,8 @@
     "Platform": {
       "description": "External service where subscribed content is published.",
       "enum": [
-        "linkedin"
+        "linkedin",
+        "x"
       ],
       "title": "Platform",
       "type": "string"
@@ -11,14 +12,42 @@
     "PostIndexEntry": {
       "additionalProperties": false,
       "description": "Public locator and routing metadata for one persisted Post file.",
+      "oneOf": [
+        {
+          "properties": {
+            "account_profile_url": {
+              "pattern": "^(?:https://www\\.linkedin\\.com/in/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/|https://www\\.linkedin\\.com/company/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/)$"
+            },
+            "path": {
+              "pattern": "^posts/linkedin/[a-f0-9]{64}\\.json$"
+            },
+            "platform": {
+              "const": "linkedin"
+            }
+          }
+        },
+        {
+          "properties": {
+            "account_profile_url": {
+              "pattern": "^https://x\\.com/(?!(?:compose|explore|home|i|intent|login|messages|notifications|search|settings|signup)/)[a-z0-9_]{1,15}/$"
+            },
+            "path": {
+              "pattern": "^posts/x/[a-f0-9]{64}\\.json$"
+            },
+            "platform": {
+              "const": "x"
+            }
+          }
+        }
+      ],
       "properties": {
         "account_profile_url": {
-          "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/$",
+          "pattern": "^(?:https://www\\.linkedin\\.com/in/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/|https://www\\.linkedin\\.com/company/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/|https://x\\.com/(?!(?:compose|explore|home|i|intent|login|messages|notifications|search|settings|signup)/)[a-z0-9_]{1,15}/)$",
           "title": "Account Profile Url",
           "type": "string"
         },
         "path": {
-          "pattern": "^posts/linkedin/[a-f0-9]{64}\\.json$",
+          "pattern": "^posts/(?:linkedin|x)/[a-f0-9]{64}\\.json$",
           "title": "Path",
           "type": "string"
         },

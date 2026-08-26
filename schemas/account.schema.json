@@ -4,14 +4,65 @@
       "description": "Public identity shape supported by a platform.",
       "enum": [
         "person",
-        "company"
+        "company",
+        "profile"
       ],
       "title": "AccountKind",
+      "type": "string"
+    },
+    "Platform": {
+      "description": "External service where subscribed content is published.",
+      "enum": [
+        "linkedin",
+        "x"
+      ],
+      "title": "Platform",
       "type": "string"
     }
   },
   "additionalProperties": false,
   "description": "Provider-neutral Account identified by its canonical profile URL.",
+  "oneOf": [
+    {
+      "properties": {
+        "kind": {
+          "const": "person"
+        },
+        "platform": {
+          "const": "linkedin"
+        },
+        "profile_url": {
+          "pattern": "^https://www\\.linkedin\\.com/in/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/$"
+        }
+      }
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "company"
+        },
+        "platform": {
+          "const": "linkedin"
+        },
+        "profile_url": {
+          "pattern": "^https://www\\.linkedin\\.com/company/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/$"
+        }
+      }
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "profile"
+        },
+        "platform": {
+          "const": "x"
+        },
+        "profile_url": {
+          "pattern": "^https://x\\.com/(?!(?:compose|explore|home|i|intent|login|messages|notifications|search|settings|signup)/)[a-z0-9_]{1,15}/$"
+        }
+      }
+    }
+  ],
   "properties": {
     "first_seen_at": {
       "format": "date-time",
@@ -22,12 +73,10 @@
       "$ref": "#/$defs/AccountKind"
     },
     "platform": {
-      "const": "linkedin",
-      "title": "Platform",
-      "type": "string"
+      "$ref": "#/$defs/Platform"
     },
     "profile_url": {
-      "pattern": "^https://www\\.linkedin\\.com/(?:in|company)/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/$",
+      "pattern": "^(?:https://www\\.linkedin\\.com/in/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/|https://www\\.linkedin\\.com/company/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/|https://x\\.com/(?!(?:compose|explore|home|i|intent|login|messages|notifications|search|settings|signup)/)[a-z0-9_]{1,15}/)$",
       "title": "Profile Url",
       "type": "string"
     }
