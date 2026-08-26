@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING, Final
 
 from social_media_subscriber.domain.ids import PlatformPostId
 from social_media_subscriber.domain.post import Post
+from social_media_subscriber.domain.time import canonical_post_timestamp
 from social_media_subscriber.platforms.linkedin import (
     canonical_media_items,
     canonical_platform_post_id,
-    canonical_post_timestamp,
     canonical_post_type,
     has_meaningful_value,
 )

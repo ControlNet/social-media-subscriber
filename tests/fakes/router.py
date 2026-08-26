@@ -89,7 +89,7 @@ class RouterCall:
 
 
 @final
-@dataclass(slots=True)  # noqa: MUTABLE_OK - scripted fixture records calls and steps.
+@dataclass(slots=True)  # Scripted fixture records calls and steps.
 class ScriptedInstance:
     driver_class: type[AdapterDriver]
     ordinal: AdapterInstanceOrdinal
@@ -110,7 +110,7 @@ class ScriptedInstance:
             )
         )
         step = self.steps.pop(0) if self.steps else CompleteBatch()
-        match step:  # noqa: MATCH_OK - fallback returns typed AdapterAttempt variants.
+        match step:  # Fallback returns typed AdapterAttempt variants.
             case CompleteBatch(posts_by_account=posts_by_account):
                 return BatchCompleted(
                     tuple(
@@ -128,7 +128,7 @@ class ScriptedInstance:
 
 
 @final
-@dataclass(slots=True)  # noqa: MUTABLE_OK - factory records created test instances.
+@dataclass(slots=True)  # Factory records created test instances.
 class ScriptedFactory:
     scripts: tuple[tuple[FakeStep, ...], ...]
     driver_class: type[AdapterDriver] = FakeDriver

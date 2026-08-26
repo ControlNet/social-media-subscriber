@@ -19,3 +19,8 @@ def canonical_utc(value: datetime) -> datetime:
             _UTC_ERROR_MESSAGE,
         )
     return value.astimezone(UTC)
+
+
+def canonical_post_timestamp(value: datetime) -> datetime:
+    """Return the platform-neutral UTC publication second."""
+    return canonical_utc(value).replace(microsecond=0)

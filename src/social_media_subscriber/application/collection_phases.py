@@ -62,7 +62,7 @@ def _post_outcomes(
     failed: list[AccountId] = []
     pool_exhausted = 0
     for outcome in post_result.accounts:
-        match outcome:  # noqa: MATCH_OK - union is exhaustive without a Never case.
+        match outcome:  # The outcome union is exhaustively matched.
             case AccountRouteSucceeded(account_id=account_id):
                 succeeded.add(account_id)
             case AccountRouteFailed(
@@ -118,7 +118,7 @@ async def collect_posts(
     if not requests:
         return CollectedPosts(SnapshotState((), ()), 0, 0, (), 0)
     result = await runtime.router.route(requests)
-    match result.aggregate.status:  # noqa: MATCH_OK - enum is exhaustively grouped.
+    match result.aggregate.status:  # The status enum is exhaustively grouped.
         case RouterRunStatus.ABORTED:
             return aborted_result(CollectionExitCode.INTEGRITY)
         case RouterRunStatus.SUCCESS | RouterRunStatus.PARTIAL:

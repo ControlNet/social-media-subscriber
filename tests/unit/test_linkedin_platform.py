@@ -2,10 +2,10 @@ from datetime import UTC, datetime
 
 import pytest
 
+from social_media_subscriber.domain.time import canonical_post_timestamp
 from social_media_subscriber.platforms.linkedin import (
     LinkedInPostUrlError,
     canonical_platform_post_id,
-    canonical_post_timestamp,
     canonical_post_type,
     canonical_post_url,
 )

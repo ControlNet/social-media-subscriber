@@ -8,11 +8,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Final, override
 from urllib.parse import urlsplit, urlunsplit
 
-from social_media_subscriber.domain.time import canonical_utc
-
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from social_media_subscriber.serialization.json import JsonValue
 
 _LINKEDIN_HOST: Final = re.compile(
@@ -89,11 +85,6 @@ def canonical_platform_post_id(value: str) -> str:
     return normalized
 
 
-def canonical_post_timestamp(value: datetime) -> datetime:
-    """Return the UTC publication second shared by all LinkedIn providers."""
-    return canonical_utc(value).replace(microsecond=0)
-
-
 def canonical_post_type(value: str, *, is_repost: bool) -> str:
     """Return a normalized type, correcting generic posts with repost evidence."""
     normalized = value.strip().casefold()
@@ -116,7 +107,7 @@ def canonical_media_items(value: JsonValue) -> list[JsonValue]:
 
 def has_meaningful_value(value: JsonValue) -> bool:
     """Return whether an optional provider marker contains positive evidence."""
-    match value:  # noqa: MATCH_OK - fallback covers open recursive JSON values.
+    match value:  # Fallback covers open recursive JSON values.
         case None | False | "":
             return False
         case list() | dict():

@@ -13,7 +13,11 @@ from social_media_subscriber.adapters.registry_errors import (
     InvalidAdapterMetadataError,
     MissingAdapterMetadataError,
 )
-from social_media_subscriber.domain.platform import AccountKind, Platform
+from social_media_subscriber.domain.platform import (
+    AccountKind,
+    Platform,
+    supported_account_kinds,
+)
 
 if TYPE_CHECKING:
     from social_media_subscriber.adapters.protocol import AdapterDriver
@@ -57,6 +61,12 @@ def _find_metadata_violation(metadata: AdapterMetadata) -> MetadataViolation | N
         (
             len(frozenset(metadata.account_kinds)) != len(metadata.account_kinds),
             MetadataViolation.DUPLICATE_ACCOUNT_KINDS,
+        ),
+        (
+            not frozenset(metadata.account_kinds).issubset(
+                supported_account_kinds(metadata.platform)
+            ),
+            MetadataViolation.INVALID_ACCOUNT_KINDS,
         ),
     )
     for is_invalid, violation in content_checks:

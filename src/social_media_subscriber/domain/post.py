@@ -19,11 +19,8 @@ from social_media_subscriber.domain.ids import (
     post_id_for,
 )
 from social_media_subscriber.domain.platform import Platform
-from social_media_subscriber.domain.time import canonical_utc
-from social_media_subscriber.platforms.linkedin import (
-    LinkedInPostUrlError,
-    canonical_post_timestamp,
-)
+from social_media_subscriber.domain.time import canonical_post_timestamp, canonical_utc
+from social_media_subscriber.platforms.linkedin import LinkedInPostUrlError
 from social_media_subscriber.platforms.linkedin import (
     canonical_post_url as canonical_linkedin_post_url,
 )
@@ -96,7 +93,7 @@ class Post(BaseModel):
         """Require the Post URL to be canonical for its owning platform."""
         try:
             platform = self.platform
-            match platform:  # noqa: MATCH_OK - exhaustive enum; Never case is rejected.
+            match platform:  # The Platform enum is exhaustively matched.
                 case Platform.LINKEDIN:
                     canonical = canonical_linkedin_post_url(self.canonical_url)
                 case Platform.X:

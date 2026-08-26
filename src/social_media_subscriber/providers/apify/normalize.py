@@ -8,11 +8,11 @@ from social_media_subscriber.accounts.errors import AccountInputError
 from social_media_subscriber.accounts.locator import parse_linkedin_locator
 from social_media_subscriber.domain.ids import AccountId, PlatformPostId
 from social_media_subscriber.domain.post import Post
+from social_media_subscriber.domain.time import canonical_post_timestamp
 from social_media_subscriber.platforms.linkedin import (
     LinkedInPostUrlError,
     canonical_media_items,
     canonical_platform_post_id,
-    canonical_post_timestamp,
     canonical_post_type,
     canonical_post_url,
     has_meaningful_value,

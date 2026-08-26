@@ -99,7 +99,7 @@ class BrightDataPostCollector:
         kind: _LinkedInAccountKind,
         inputs: tuple[PostDiscoveryInput, ...],
     ) -> tuple[BrightDataPost, ...]:
-        match kind:  # noqa: MATCH_OK - narrowed literal union is exhaustive.
+        match kind:  # The narrowed literal union is exhaustive.
             case AccountKind.PERSON:
                 return await self.client.collect_person_posts(inputs)
             case AccountKind.COMPANY:

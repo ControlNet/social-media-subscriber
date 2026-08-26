@@ -131,6 +131,11 @@ def test_account_schema_couples_platform_kind_and_identity(
             "https://www.linkedin.com/in/../",
             "https://x.com/login/",
             "https://x.com/signup/",
+            "https://x.com/about/",
+            "https://x.com/download/",
+            "https://x.com/help/",
+            "https://x.com/privacy/",
+            "https://x.com/tos/",
         ),
     )
 
@@ -176,6 +181,11 @@ def test_post_schema_couples_owner_url_and_post_identity(
         (
             "https://x.com/login/status/123",
             "https://x.com/signup/status/123",
+            "https://x.com/about/status/123",
+            "https://x.com/download/status/123",
+            "https://x.com/help/status/123",
+            "https://x.com/privacy/status/123",
+            "https://x.com/tos/status/123",
             "https://www.linkedin.com/posts/synthetic-activity/",
         ),
     )
@@ -200,6 +210,11 @@ def test_post_schema_couples_owner_url_and_post_identity(
             "https://www.linkedin.com/company/synthetic%E9%9B%AA/",
             "https://x.com/login/",
             "https://x.com/signup/",
+            "https://x.com/about/",
+            "https://x.com/download/",
+            "https://x.com/help/",
+            "https://x.com/privacy/",
+            "https://x.com/tos/",
             "https://x.com/too-long-synthetic-user/",
         ),
     )

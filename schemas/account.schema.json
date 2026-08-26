@@ -58,7 +58,7 @@
           "const": "x"
         },
         "profile_url": {
-          "pattern": "^https://x\\.com/(?!(?:compose|explore|home|i|intent|login|messages|notifications|search|settings|signup)/)[a-z0-9_]{1,15}/$"
+          "pattern": "^https://x\\.com/(?!(?:about|compose|download|explore|help|home|i|intent|login|messages|notifications|privacy|search|settings|signup|tos)/)[a-z0-9_]{1,15}/$"
         }
       }
     }
@@ -76,7 +76,7 @@
       "$ref": "#/$defs/Platform"
     },
     "profile_url": {
-      "pattern": "^(?:https://www\\.linkedin\\.com/in/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/|https://www\\.linkedin\\.com/company/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/|https://x\\.com/(?!(?:compose|explore|home|i|intent|login|messages|notifications|search|settings|signup)/)[a-z0-9_]{1,15}/)$",
+      "pattern": "^(?:https://www\\.linkedin\\.com/in/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/|https://www\\.linkedin\\.com/company/(?!\\.{1,2}/)(?![^/]*(?:\\\\|%))[^/?#\\x00-\\x1f\\x7f]+/|https://x\\.com/(?!(?:about|compose|download|explore|help|home|i|intent|login|messages|notifications|privacy|search|settings|signup|tos)/)[a-z0-9_]{1,15}/)$",
       "title": "Profile Url",
       "type": "string"
     }

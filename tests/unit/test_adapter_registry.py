@@ -230,6 +230,37 @@ def test_registry_rejects_invalid_metadata(
     assert captured.value.violation is violation
 
 
+@pytest.mark.parametrize(
+    ("platform", "account_kinds"),
+    [
+        (Platform.LINKEDIN, (AccountKind.PROFILE,)),
+        (Platform.X, (AccountKind.PERSON,)),
+        (Platform.X, (AccountKind.COMPANY, AccountKind.PROFILE)),
+    ],
+)
+def test_registry_rejects_account_kinds_unsupported_by_platform(
+    platform: Platform,
+    account_kinds: tuple[AccountKind, ...],
+) -> None:
+    # Given
+    @adapter(
+        platform=platform,
+        operations=(AdapterOperation.COLLECT_ACCOUNT_POSTS,),
+        account_kinds=account_kinds,
+        supports_batch=False,
+    )
+    class InvalidPlatformKindsDriver(_DeclaredAdapterDriver):
+        pass
+
+    # When
+    with pytest.raises(InvalidAdapterMetadataError) as captured:
+        _ = AdapterRegistry((InvalidPlatformKindsDriver,))
+
+    # Then
+    assert captured.value.driver_name == "InvalidPlatformKindsDriver"
+    assert captured.value.violation is MetadataViolation.INVALID_ACCOUNT_KINDS
+
+
 def test_registry_rejects_non_enum_platform_before_instance_creation() -> None:
     # Given
     @adapter(

@@ -55,7 +55,7 @@ def _request(root: Path, accounts: str) -> CollectionRequest:
     )
 
 
-@dataclass(slots=True)  # noqa: MUTABLE_OK - records forbidden provider calls in tests.
+@dataclass(slots=True)  # Records forbidden provider calls in tests.
 class _NoCallBrightDataClient:
     collect_calls: int = 0
     close_calls: int = 0

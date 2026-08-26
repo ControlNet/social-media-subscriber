@@ -5,13 +5,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Final, override
+from typing import Final, override
 from urllib.parse import urlsplit
-
-from social_media_subscriber.domain.time import canonical_utc
-
-if TYPE_CHECKING:
-    from datetime import datetime
 
 _HOST_PATTERN: Final = re.compile(
     r"(?:x\.com|www\.x\.com|twitter\.com|www\.twitter\.com|mobile\.twitter\.com)\Z",
@@ -19,17 +14,22 @@ _HOST_PATTERN: Final = re.compile(
 )
 X_RESERVED_HANDLES: Final = frozenset(
     {
+        "about",
         "compose",
+        "download",
         "explore",
+        "help",
         "home",
         "i",
         "intent",
         "login",
         "messages",
         "notifications",
+        "privacy",
         "search",
         "settings",
         "signup",
+        "tos",
     }
 )
 _X_RESERVED_HANDLE_ALTERNATION: Final = "|".join(sorted(X_RESERVED_HANDLES))
@@ -110,8 +110,3 @@ def canonical_post_url(value: str, *, platform_post_id: str | None = None) -> st
         if canonical_id != expected_id:
             raise XPostUrlError
     return f"https://x.com/{handle.casefold()}/status/{canonical_id}"
-
-
-def canonical_post_timestamp(value: datetime) -> datetime:
-    """Return the UTC publication second shared by X providers."""
-    return canonical_utc(value).replace(microsecond=0)

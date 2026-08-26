@@ -23,6 +23,14 @@ class AccountKind(StrEnum):
     PROFILE = "profile"
 
 
+def supported_account_kinds(platform: Platform) -> frozenset[AccountKind]:
+    """Return the Account kinds that can be represented by one platform."""
+    return {
+        Platform.LINKEDIN: frozenset({AccountKind.PERSON, AccountKind.COMPANY}),
+        Platform.X: frozenset({AccountKind.PROFILE}),
+    }[platform]
+
+
 def earliest_collection_date(platform: Platform) -> date:
     """Return the earliest supported collection date for one platform."""
     return {

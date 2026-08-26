@@ -57,6 +57,11 @@ def test_x_locator_canonicalizes_supported_public_profile_urls(
         "https://x.com/home",
         "https://x.com/login",
         "https://x.com/signup",
+        "https://x.com/about",
+        "https://x.com/download",
+        "https://x.com/help",
+        "https://x.com/privacy",
+        "https://x.com/tos",
         "https://x.com/openai?lang=en",
         "https://user@x.com/openai",
         "https://x.com:443/openai",
@@ -125,7 +130,10 @@ def test_x_post_identity_rejects_noncanonical_numeric_spelling(value: str) -> No
         _ = canonical_platform_post_id(value)
 
 
-@pytest.mark.parametrize("handle", ["login", "signup"])
+@pytest.mark.parametrize(
+    "handle",
+    ["about", "download", "help", "login", "privacy", "signup", "tos"],
+)
 def test_x_post_url_rejects_reserved_application_routes(handle: str) -> None:
     # Given
     url = f"https://x.com/{handle}/status/123"
