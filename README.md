@@ -1,10 +1,12 @@
 # Social Media Subscriber
 
 `social-media-subscriber` builds a deterministic, provider-neutral snapshot of
-authorized public LinkedIn accounts. It is an operations tool, not a browser
-automation service: collection uses the approved provider adapter, normalizes
-the response into canonical records, and can publish one validated snapshot to
-the repository's `dist` branch.
+authorized public social-media accounts. The domain, runtime, schemas, and
+snapshot layout support LinkedIn accounts and X profiles. Production source
+composition is currently LinkedIn-only: no production X source is registered.
+It is an operations tool, not a browser automation service; collection uses an
+approved provider adapter, normalizes the response into canonical records, and
+can publish one validated snapshot to the repository's `dist` branch.
 
 Use it only for accounts and provider credentials that your organization is
 authorized to use. The service does not bypass platform controls, authentication,
@@ -32,35 +34,43 @@ and performs provider I/O. Each non-empty `SOURCES` line has the form
 before Bright Data. Repeating either source ID with a different token creates
 another independent fallback instance, preserving line order within that
 provider.
+Neither current source composes an X adapter. An X locator is valid architecture
+input, but production collection stops at the unsupported-capability boundary,
+makes no X provider request, and reports a partial result until an approved X
+source is implemented.
 `verify-snapshot` is local and read-only.
 `publish-dist` mutates the selected Git remote and must be used only under the
 immutable lease described in the runbook; do not run it as a casual local test.
 
 ## Persisted data boundary
 
-Account identity is the exact canonical public LinkedIn person or company URL
-returned by the strict locator parser. `profile_url` is the only persisted
-Account identity field. Runtime code exposes the same value as `Account.id` for
-routing and merge operations, but does not duplicate it in JSON. Each Post uses
-`account_profile_url` for ownership. A changed LinkedIn slug produces a distinct
-Account, so both URL-keyed histories may coexist. Alias reconciliation and
-entity merging belong in the consuming system.
+Account identity is the exact canonical public account URL returned by the
+strict locator parser: a LinkedIn person/company URL or an X profile URL.
+`profile_url` is the only persisted Account identity field. Runtime code exposes
+the same value as `Account.id` for routing and merge operations, but does not
+duplicate it in JSON. Each Post uses `account_profile_url` for ownership. A
+changed LinkedIn slug or X handle produces a distinct Account, so both URL-keyed
+histories may coexist. Alias reconciliation and entity merging belong in the
+consuming system.
 
-Every successful provider record must supply at least one actor field from
-`use_url, user_url, profile_url, and company_url`. The collector parses every
-supplied actor URL, requires one requested person/company kind and canonical
-URL, and requires that owner to equal the requested Account URL. Provider
-`user_id` is optional provider payload data only; it is never identity or an
-ownership fallback.
+Every successful Bright Data LinkedIn record must supply at least one actor
+field from `use_url, user_url, profile_url, and company_url`. The LinkedIn
+collector parses every supplied actor URL, requires one requested person/company
+kind and canonical URL, and requires that owner to equal the requested Account
+URL. Provider `user_id` is optional provider payload data only; it is never
+identity or an ownership fallback. A future X source owns its own typed
+ownership-normalization contract.
 
 A successful response with zero records still persists the requested Account
 with no Posts. Reply, repost, quote, media-only, and provider-defined post types
 are retained rather than filtered. A typed `NOT_FOUND` is different: it does not
 create a new Account, and a failed refresh preserves existing history. For
 account-scoped and terminal provider failures, `failed_account_ids` contains
-canonical requested LinkedIn URLs. Integrity, ownership, schema, coverage, or
-conflict failures abort the whole candidate, suppress candidate counters, and
-the prior snapshot remains byte-identical.
+canonical requested account URLs. Current provider failures therefore contain
+canonical requested LinkedIn URLs; an unsupported X capability reports the
+canonical X profile URL. Integrity, ownership, schema, coverage, or conflict
+failures abort the whole candidate, suppress candidate counters, and the prior
+snapshot remains byte-identical.
 
 This repository revision was verified offline with synthetic data. It does not
 authorize a live provider call, does not authorize publication, and does not
@@ -77,9 +87,13 @@ snapshot/
 │   └── <sha256(profile_url)>.json
 ├── accounts.json
 ├── posts.json
-└── posts/linkedin/
+└── posts/<platform>/
     └── <sha256(platform post identity)>.json
 ```
+
+The supported directories are `posts/linkedin/` and `posts/x/`. Current
+production sources populate only `posts/linkedin/`; `posts/x/` is ready for a
+future explicitly registered source.
 
 `accounts.json` is a direct `profile_url` to account-record path map. Account
 records contain only `platform`, `kind`, `profile_url`, and `first_seen_at`.
@@ -149,8 +163,10 @@ GitHub Actions has two separate workflows:
   with missing secrets fails preflight. Only the publication job has
   `contents: write`, and only after preflight succeeds.
 - By default, an Account absent from the previous snapshot is backfilled from
-  `2003-05-05`. An existing Account, including one with zero Posts, is collected
-  from the UTC run date minus three days through the run date.
+  its platform boundary: `2003-05-05` for LinkedIn and `2006-03-21` for X. An
+  existing Account, including one with zero Posts, is collected from the UTC run
+  date minus three days through the run date. The X date is architecture policy,
+  not an available production backfill, because no X source is registered.
 
 For secret setup, scheduling behavior, incident recovery, and the explicit
 operator-only live smoke procedure, use [docs/operations.md](docs/operations.md).
