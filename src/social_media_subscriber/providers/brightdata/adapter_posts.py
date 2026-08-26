@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, assert_never
+from typing import TYPE_CHECKING, Final, Literal
 
 from social_media_subscriber.domain.platform import AccountKind
 from social_media_subscriber.providers.brightdata.actor_ownership import (
@@ -19,6 +19,12 @@ from social_media_subscriber.providers.brightdata.normalization_errors import (
 )
 from social_media_subscriber.providers.brightdata.normalize import normalize_posts
 from social_media_subscriber.providers.brightdata.requests import PostDiscoveryInput
+
+type _LinkedInAccountKind = Literal[AccountKind.PERSON, AccountKind.COMPANY]
+_LINKEDIN_ACCOUNT_KINDS: Final[tuple[_LinkedInAccountKind, ...]] = (
+    AccountKind.PERSON,
+    AccountKind.COMPANY,
+)
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -50,7 +56,7 @@ class BrightDataPostCollector:
         records_by_account: dict[AccountId, list[BrightDataPost]] = {
             request.account.id: [] for request in requests
         }
-        for kind in (AccountKind.PERSON, AccountKind.COMPANY):
+        for kind in _LINKEDIN_ACCOUNT_KINDS:
             selected = tuple(
                 request for request in requests if request.account.kind is kind
             )
@@ -90,12 +96,11 @@ class BrightDataPostCollector:
 
     async def _collect_kind(
         self,
-        kind: AccountKind,
+        kind: _LinkedInAccountKind,
         inputs: tuple[PostDiscoveryInput, ...],
     ) -> tuple[BrightDataPost, ...]:
-        match kind:
+        match kind:  # noqa: MATCH_OK - narrowed literal union is exhaustive.
             case AccountKind.PERSON:
                 return await self.client.collect_person_posts(inputs)
             case AccountKind.COMPANY:
                 return await self.client.collect_company_posts(inputs)
-        assert_never(kind)
