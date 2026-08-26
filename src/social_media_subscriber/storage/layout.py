@@ -6,13 +6,23 @@ import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
+from social_media_subscriber.domain.platform import Platform
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
 ACCOUNTS_DIRECTORY: Final = Path("accounts")
-POSTS_DIRECTORY: Final = Path("posts/linkedin")
+POSTS_ROOT: Final = Path("posts")
 ACCOUNTS_INDEX: Final = Path("accounts.json")
 POSTS_INDEX: Final = Path("posts.json")
+
+
+def posts_directory(platform: Platform) -> Path:
+    """Return the stable record directory for one platform."""
+    return POSTS_ROOT / platform.value
+
+
+POSTS_DIRECTORY: Final = posts_directory(Platform.LINKEDIN)
 
 
 def snapshot_digest(files: Mapping[Path, bytes]) -> str:
