@@ -1,1 +1,1 @@
-"""Typed Apify boundary and LinkedIn normalization contracts."""
+"""Typed Apify boundaries for LinkedIn and X collection."""

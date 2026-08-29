@@ -20,6 +20,7 @@ class ApifyErrorCategory(StrEnum):
     OWNERSHIP = "ownership"
     DUPLICATE = "duplicate"
     POST_URL = "post_url"
+    INCOMPLETE = "incomplete"
 
 
 _STATUS_CATEGORIES: Final = {

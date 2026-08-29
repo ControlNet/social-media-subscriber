@@ -3,7 +3,8 @@
 `social-media-subscriber` builds a deterministic, provider-neutral snapshot of
 authorized public social-media accounts. The domain, runtime, schemas, and
 snapshot layout support LinkedIn accounts and X profiles. Production source
-composition is currently LinkedIn-only: no production X source is registered.
+composition supports LinkedIn through Apify and Bright Data, and X profiles
+through Apify's Xquik Actor.
 It is an operations tool, not a browser automation service; collection uses an
 approved provider adapter, normalizes the response into canonical records, and
 can publish one validated snapshot to the repository's `dist` branch.
@@ -34,10 +35,13 @@ and performs provider I/O. Each non-empty `SOURCES` line has the form
 before Bright Data. Repeating either source ID with a different token creates
 another independent fallback instance, preserving line order within that
 provider.
-Neither current source composes an X adapter. An X locator is valid architecture
-input, but production collection stops at the unsupported-capability boundary,
-makes no X provider request, and reports a partial result until an approved X
-source is implemented.
+Each configured Apify credential composes independent LinkedIn and X adapters;
+Bright Data remains LinkedIn-only. A new X Account uses one complete Xquik
+`profileReplies` run for its initial backfill. An X Account already present in
+the previous snapshot uses a bounded `Latest` search for the requested date
+window, which lowers incremental cost and latency but can omit replies. Both
+routes enforce the inclusive date window locally and require strict completion
+evidence. Neither route sends an item limit or run-level USD charge limit.
 `verify-snapshot` is local and read-only.
 `publish-dist` mutates the selected Git remote and must be used only under the
 immutable lease described in the runbook; do not run it as a casual local test.
@@ -58,8 +62,9 @@ field from `use_url, user_url, profile_url, and company_url`. The LinkedIn
 collector parses every supplied actor URL, requires one requested person/company
 kind and canonical URL, and requires that owner to equal the requested Account
 URL. Provider `user_id` is optional provider payload data only; it is never
-identity or an ownership fallback. A future X source owns its own typed
-ownership-normalization contract.
+identity or an ownership fallback. The Apify X adapter independently validates
+the Actor author's canonical handle and each numeric status URL against the
+requested X profile before persistence.
 
 A successful response with zero records still persists the requested Account
 with no Posts. Reply, repost, quote, media-only, and provider-defined post types
@@ -67,8 +72,8 @@ are retained rather than filtered. A typed `NOT_FOUND` is different: it does not
 create a new Account, and a failed refresh preserves existing history. For
 account-scoped and terminal provider failures, `failed_account_ids` contains
 canonical requested account URLs. Current provider failures therefore contain
-canonical requested LinkedIn URLs; an unsupported X capability reports the
-canonical X profile URL. Integrity, ownership, schema, coverage, or conflict
+canonical requested LinkedIn URLs or canonical requested X profile URLs.
+Integrity, ownership, schema, coverage, or conflict
 failures abort the whole candidate, suppress candidate counters, and the prior
 snapshot remains byte-identical.
 
@@ -91,9 +96,8 @@ snapshot/
     └── <sha256(platform post identity)>.json
 ```
 
-The supported directories are `posts/linkedin/` and `posts/x/`. Current
-production sources populate only `posts/linkedin/`; `posts/x/` is ready for a
-future explicitly registered source.
+The supported directories are `posts/linkedin/` and `posts/x/`. The Apify
+source can populate both; Bright Data can populate only `posts/linkedin/`.
 
 `accounts.json` is a direct `profile_url` to account-record path map. Account
 records contain only `platform`, `kind`, `profile_url`, and `first_seen_at`.
@@ -165,8 +169,13 @@ GitHub Actions has two separate workflows:
 - By default, an Account absent from the previous snapshot is backfilled from
   its platform boundary: `2003-05-05` for LinkedIn and `2006-03-21` for X. An
   existing Account, including one with zero Posts, is collected from the UTC run
-  date minus three days through the run date. The X date is architecture policy,
-  not an available production backfill, because no X source is registered.
+  date minus three days through the run date. New X Accounts use full
+  `profileReplies`; existing X Accounts use `Latest` search with
+  `since:<start>` and exclusive `until:<end+1-day>`. Search is the intentional
+  cost-first incremental route and has demonstrated reply false negatives even
+  with `source_exhausted`. Xquik input sets neither an item limit nor a USD
+  charge limit; any run that finishes without source exhaustion is rejected as
+  incomplete rather than published.
 
 For secret setup, scheduling behavior, incident recovery, and the explicit
 operator-only live smoke procedure, use [docs/operations.md](docs/operations.md).

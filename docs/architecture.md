@@ -27,13 +27,13 @@ Settings → strict runtime parser → source composers → credential-bound ins
                  validate → immutable leased `dist` publication
 ```
 
-The supported production source IDs are `apify` and `brightdata`. Each
-explicitly composes its LinkedIn adapter. No discovery mechanism, module path,
-or environment-provided class name creates arbitrary adapters or credential
-clients at runtime. X account identity, Post identity, collection windows,
-routing, schemas, and snapshot paths are implemented, but no production X
-driver or source composer is registered. Architecture support does not imply a
-live X collection capability.
+The supported production source IDs are `apify` and `brightdata`. Apify
+explicitly composes LinkedIn and X adapters; Bright Data explicitly composes its
+LinkedIn adapter. No discovery mechanism, module path, or environment-provided
+class name creates arbitrary adapters or credential clients at runtime. The X
+adapter uses the approved Xquik Actor contract. It does not impose a run-level
+USD charge limit; repository capability does not by itself authorize a live
+collection.
 
 ## Canonical records and schemas
 
@@ -70,8 +70,8 @@ LinkedIn person/company URLs and X profile URLs, canonicalizes them,
 de-duplicates them while preserving first occurrence, and rejects malformed
 hosts, credentials-in-URLs, ports, query-like path variations, control
 characters, invalid percent escaping, percent-encoded slug variants, and
-unsupported paths. It does not retain arbitrary user text downstream. Only
-LinkedIn locators currently have production source composition.
+unsupported paths. It does not retain arbitrary user text downstream. Both
+LinkedIn and X locators have explicit production source composition.
 
 The strict locator parser is the only Account canonicalization authority. For
 every persisted Account, `profile_url` is the parser's canonical person/company
@@ -92,12 +92,14 @@ validation parses every supplied actor URL with the strict locator parser,
 requires every URL to have the requested Account kind, requires all of them to
 canonicalize to one URL, and then requires that URL to equal the exact requested
 Account URL. `user_id` is optional provider payload data only and cannot
-establish ownership when actor URL evidence is absent. Apify ownership uses the
-Actor record's `query.targetUrl`, applies the same strict Account
-canonicalization, and requires an exact match to the requested Account URL.
-This request identity is retained only long enough to validate ownership and is
-not persisted. `author` remains post content because reposts can name the
-original author instead of the subscribed Account.
+establish ownership when actor URL evidence is absent. The Apify LinkedIn
+adapter uses the Actor record's `query.targetUrl`, applies the same strict
+Account canonicalization, and requires an exact match to the requested Account
+URL. This request identity is retained only long enough to validate ownership
+and is not persisted. `author` remains LinkedIn post content because reposts can
+name the original author instead of the subscribed Account. The Apify X adapter
+instead validates `author.username`, the numeric status ID, and the canonical
+`x.com/<handle>/status/<id>` URL against the requested X profile.
 
 Canonical runtime post identity is platform-qualified and is not duplicated in
 JSON. LinkedIn uses `linkedin:post:<platform-post-id>`; X uses
@@ -135,9 +137,9 @@ metadata, duplicate driver classes, and empty or repeated operations/account
 kinds. Multiple drivers may declare the same capability; a lookup returns every
 driver matching `(platform, operation, account kind)`. Registry order remains
 deterministic capability metadata. Production LinkedIn composition always puts
-Apify instances before Bright Data instances. Production composition registers
-no X driver, so X requests become account-scoped unsupported-capability outcomes
-without calling a LinkedIn provider instance.
+Apify instances before Bright Data instances. Production X composition
+registers one Xquik adapter per Apify credential; Bright Data instances remain
+ineligible for X routing.
 
 `SOURCES` is a newline-delimited ordered list. Every non-empty line is parsed by
 splitting only its first colon into `<source_id>:<api_token>`. Source IDs are
@@ -180,8 +182,7 @@ filter:
 
 - An account absent from the previous snapshot's Account set starts at its
   platform boundary and ends at `run_start_date`: LinkedIn uses `2003-05-05` and
-  X uses `2006-03-21`. The X boundary is architecture policy only until a
-  production X source is registered.
+  X uses `2006-03-21`.
 - An account already present in the previous snapshot starts at
   `run_start_date - 3 days` and ends at `run_start_date`. Because the range is
   inclusive, this covers the run date and the preceding three UTC dates.
@@ -225,6 +226,36 @@ provider `header` object is post content, not an HTTP header; it is retained onl
 after the same recursive credential and transport-metadata checks as all other
 content.
 
+The Apify X adapter chooses its Xquik route from explicit snapshot lifecycle
+state rather than inferring it from dates. An Account absent from the previous
+snapshot uses `profileReplies` for its initial provider-visible backfill. An
+existing Account uses `mode=search`, `queryType=Latest`, and
+`from:<handle> since:<start> until:<end+1-day>` for its incremental window; the
+extra day converts the application's inclusive end date to X search's exclusive
+`until` boundary. Both routes request rich, nested camelCase records without
+`maxItems`, validate the provider dataset, and enforce the inclusive UTC window
+locally. The bounded search materially reduces recurring delivery cost and
+latency, but observed `source_exhausted` searches can still omit replies. It is
+therefore a deliberate cost-first incremental route, not an absolute
+completeness guarantee.
+
+The run request also omits `maxTotalChargeUsd`; pricing and budget approval are
+operational controls rather than client-side truncation mechanisms. Xquik
+1.12.65 and later store their completion report under `run-report` and may use
+`outcome=partial` even when a selected route finishes normally.
+The adapter therefore accepts `outcome=complete` or `outcome=partial` only when
+`completionReason=source_exhausted`, `failedSubtargets=0`, the report counts
+exactly match the downloaded dataset, and the dataset contains no diagnostic
+rows. The report must also contain no nonzero anomaly count. A validated
+`zero-output` report plus its single diagnostic maps to an empty Post tuple;
+an exhausted nonzero outcome with an empty dataset is incomplete. Budget-limited,
+pagination-limited, failed-subtarget, count-mismatched, diagnostic-mixed, or
+unknown results are rejected as accepted-run failures, so the Router does not
+start a second paid fallback.
+Rich tweet content remains open after recursive credential and transport-field
+rejection; canonical engagement keys are `bookmarks`, `likes`, `quotes`,
+`replies`, `reposts`, and `views`.
+
 ## Snapshot storage and atomic candidate creation
 
 Snapshots have one root and the exact layout below. Paths are stable and all
@@ -239,7 +270,7 @@ records are deterministic JSON.
 ```
 
 `<platform>` is currently `linkedin` or `x`. Existing LinkedIn bytes and paths
-remain unchanged; no current production source writes `posts/x/`.
+remain unchanged; the Apify X adapter writes canonical records under `posts/x/`.
 
 There are no derived feed, source-copy, or manifest files. `posts.json` contains
 one entry for every Post file, sorted by descending `published_at` and then a
@@ -280,9 +311,8 @@ counters are suppressed, and the prior snapshot remains byte-identical.
 
 For typed input/`NOT_FOUND` and terminal provider failures, the current
 production CLI contract states that `failed_account_ids` contains canonical
-requested LinkedIn URLs. Architecture-only X requests also use their canonical
-X profile URL when they fail at the unsupported-capability boundary. Account
-URLs are the intentionally observable identifiers in that field; credentials,
+requested LinkedIn URLs or canonical requested X profile URLs. Account URLs are
+the intentionally observable identifiers in that field; credentials,
 provider bodies, snapshot IDs, and exception internals remain protected.
 
 ## Immutable `dist` publication lease

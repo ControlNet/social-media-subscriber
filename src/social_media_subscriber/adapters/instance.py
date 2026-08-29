@@ -48,11 +48,12 @@ class AdapterRequestError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class AdapterPostRequest:
-    """Provider-neutral Account plus inclusive post collection dates."""
+    """Provider-neutral Account, inclusive dates, and collection lifecycle."""
 
     account: Account
     start_date: date
     end_date: date
+    is_initial_collection: bool = False
 
     def __post_init__(self) -> None:
         """Reject inverted dates before an Adapter instance can run."""

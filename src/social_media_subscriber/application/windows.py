@@ -76,6 +76,7 @@ def build_post_requests(
     run_date = context.run_started_at.date()
     requests: list[AdapterPostRequest] = []
     for account in accounts:
+        is_initial_collection = account.id not in prior_account_ids
         if context.override.start_date is not None:
             start_date = context.override.start_date
             end_date = context.override.end_date
@@ -88,5 +89,12 @@ def build_post_requests(
                 else earliest_collection_date(account.platform)
             )
             end_date = run_date
-        requests.append(AdapterPostRequest(account, start_date, end_date))
+        requests.append(
+            AdapterPostRequest(
+                account,
+                start_date,
+                end_date,
+                is_initial_collection=is_initial_collection,
+            )
+        )
     return tuple(requests)

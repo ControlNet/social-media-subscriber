@@ -1,0 +1,46 @@
+{
+  "author": {
+    "followers": 42,
+    "id": "3001",
+    "name": "Synthetic Ada",
+    "profilePicture": "https://media.example.test/synthetic-profile",
+    "username": "synthetic_ada"
+  },
+  "bookmarkCount": 1,
+  "conversationId": "2001",
+  "createdAt": "Wed Aug 19 09:00:00 +0000 2026",
+  "displayTextRange": [
+    0,
+    16
+  ],
+  "edit": {
+    "editableUntil": "2026-08-19T10:00:00.000Z",
+    "isEditEligible": false
+  },
+  "entities": {
+    "hashtags": [
+      {
+        "text": "Synthetic"
+      }
+    ],
+    "urls": [],
+    "userMentions": []
+  },
+  "fixtureNotice": "EXPLICITLY SYNTHETIC AND REDACTED TEST DATA",
+  "id": "2001",
+  "isNoteTweet": false,
+  "isQuoteStatus": false,
+  "isReply": false,
+  "isTranslatable": false,
+  "lang": "en",
+  "likeCount": 7,
+  "quoteCount": 2,
+  "replyCount": 3,
+  "retweetCount": 5,
+  "source": "Synthetic Web App",
+  "text": "Synthetic X post",
+  "type": "tweet",
+  "url": "https://x.com/synthetic_ada/status/2001",
+  "viewCount": 101,
+  "viewState": "EnabledWithCount"
+}

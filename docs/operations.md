@@ -14,7 +14,7 @@ and incident contact in your approved internal system. A pilot must pass these
 gates before secrets are configured: explicit legal approval, provider-contract
 approval, named operator, bounded account list, bounded run frequency, and a
 credit alert/stop threshold. Expanding the pool, cadence, platform, or data use
-is a new approval decision, not a retry. X architecture support does not
+is a new approval decision, not a retry. The presence of an X adapter does not
 authorize X collection or data use.
 
 This runbook intentionally contains no provider key, live account URL, or
@@ -78,10 +78,11 @@ IDs are interleaved. Repeating either source ID with a different token creates
 another independent fallback instance. Do not put either value in a shell
 command, shell history, `.env.local`, tracked file, or a workflow input.
 
-Both allowlisted sources currently compose LinkedIn adapters only. No production
-X source exists. An X-only `collect` run therefore stops at capability routing,
-performs no provider collection request, writes a valid partial candidate, and
-exits `4`; this boundary check is not a live X smoke test.
+Apify composes both LinkedIn and X adapters; Bright Data remains LinkedIn-only.
+An X-only `collect` run requires at least one approved Apify credential. A new
+X Account uses a complete Xquik `profileReplies` run; an existing X Account uses
+a bounded `Latest` search. Both routes may consume credits, so this is not a
+capability-only boundary check.
 
 Prepare files outside the repository with restrictive permissions, populate them
 only through a trusted local editor or secret manager, and use shell redirection
@@ -130,12 +131,18 @@ remediated and rescanned. `staged` intentionally scans only staged paths.
 The collection workflow has a UTC cron schedule, `17 3 * * *`, and
 `workflow_dispatch` inputs `start_date` and `end_date`. A manual request must
 provide both dates or neither; dates are inclusive and must not be inverted.
-Scheduled production collection runs once per day and is currently LinkedIn-only.
-LinkedIn Accounts absent from the previous snapshot are backfilled from
-`2003-05-05`; accounts already present use an inclusive window from the UTC run
-date minus three days through the run date. The architecture assigns
-`2006-03-21` to future X collection, but no scheduled X source exists. Use a
-manual dispatch only for an approved bounded operation. Read GitHub's
+Scheduled production collection runs once per day for the approved accounts in
+`ACCOUNTS`. New LinkedIn Accounts are backfilled from `2003-05-05`; new X
+profiles are backfilled from `2006-03-21`; existing accounts use an inclusive
+window from the UTC run date minus three days through the run date. New X
+profiles use complete `profileReplies`; existing X profiles use bounded
+`Latest` search with an exclusive next-day `until` boundary. The client applies
+the inclusive window locally on both routes. The adapter sends neither
+`maxItems` nor `maxTotalChargeUsd`; it fails closed unless the Actor reports
+source exhaustion. A search report with `source_exhausted` does not guarantee
+absolute window completeness and has been observed to omit replies; this is the
+approved cost-first tradeoff for recurring collection. Use a manual dispatch
+only for an approved bounded operation. Read GitHub's
 official [workflow events documentation](https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows)
 for schedule/manual trigger behavior.
 
@@ -199,8 +206,8 @@ metadata is never persisted.
 
 For typed input/`NOT_FOUND` and terminal provider failures,
 `failed_account_ids` contains canonical requested account URLs. Current provider
-failures contain canonical requested LinkedIn URLs; an unsupported X capability
-contains its canonical X profile URL. An integrity, actor-ownership,
+failures contain canonical requested LinkedIn URLs or canonical requested X
+profile URLs. An integrity, actor-ownership,
 provider-schema, batch-coverage, duplicate-payload, or referential conflict
 aborts the whole candidate before promotion. No candidate or candidate counters
 are exposed, and the prior snapshot remains byte-identical.
@@ -216,14 +223,13 @@ pixi run subscriber collect \
   --end-date YYYY-MM-DD
 ```
 
-This is a LinkedIn production procedure. There is no live X collection command
-or source to authorize. Do not substitute an X locator into an operational smoke
-run and interpret the partial capability result as collected X data.
+This command supports both platforms, but executing it for X is a live paid
+provider action and requires explicit X scope, account, date-window, and budget
+approval. Do not substitute an X locator into a LinkedIn-only operational smoke
+approval.
 
-Omit both date options only for the default policy. A LinkedIn Account absent
-from the previous snapshot is backfilled from LinkedIn's launch date,
-`2003-05-05`, through the UTC run date. The architecture defines `2006-03-21`
-for a future X source, but no operational X backfill exists. An Account already
+Omit both date options only for the default policy. A new LinkedIn Account starts
+at `2003-05-05`; a new X profile starts at `2006-03-21`. An Account already
 present uses the inclusive range
 from the run date minus three days through the run date, even when it has no
 persisted Posts. A complete explicit pair replaces all per-account defaults.
@@ -250,6 +256,24 @@ polling, dataset, or schema failure does not fail over to another token or
 provider during that Account attempt; retry only through a new approved
 collection run. Do not execute this command for exploratory CLI testing: it is a
 live provider action.
+
+For X, Apify runs `xquik/x-tweet-scraper` separately for each profile with rich
+nested output. New Accounts use `profileReplies`; existing Accounts use bounded
+`Latest` search for `from:<handle> since:<start> until:<end+1-day>`. Neither
+route sends `maxItems` or `maxTotalChargeUsd`. The client validates the returned
+provider dataset and applies the requested inclusive UTC date window locally.
+The incremental search route can omit replies even when it reports source
+exhaustion, so it is a cost control rather than a completeness boundary.
+Publication requires the Actor's `run-report` record to show
+`source_exhausted`, zero failed subtargets, and exact report/dataset row counts.
+It also requires zero reported anomalies and a nonempty tweet dataset for a
+nonzero outcome.
+Current Actor versions may pair that evidence with `outcome=partial`, so the
+adapter accepts that exact combination as well as `outcome=complete`; other
+partial, budget-limited, or pagination-limited results remain incomplete. A
+strict zero-output report and its single diagnostic map to an empty result. An
+accepted paid run does not fail over to another token or provider after a later
+report, dataset, or schema failure.
 
 | Exit | Binary observable | Required action |
 | --- | --- | --- |
@@ -315,8 +339,10 @@ all of the following in the approved change record:
 4. The candidate output and prior snapshot are in an approved temporary
    location outside the repository. No publication command is scheduled.
 
-This checklist remains LinkedIn-only. Adding an X source requires a separate
-provider contract, approval, operational procedure, and live-smoke design.
+This checklist remains LinkedIn-only. The X adapter's presence does not extend
+this approval to X; an X live smoke still requires a separate approved
+procedure with a current pricing review, budget approval, and completion-report
+review.
 
 Immediately before the opt-in run, check the redaction boundary without printing
 secret contents: confirm the two environment variables are set in the current
@@ -387,4 +413,4 @@ account PII:
 - Manual live smoke has a documented opt-in, narrow UTC window, one approved
   account, credit gate, cancellation path, redaction check, and cleanup record.
 - Any hanging command is terminated using the approved process supervisor; do
-  not extend the timeout by repeatedly rerunning an unbounded provider call.
+  not extend the timeout by repeatedly rerunning a provider call.

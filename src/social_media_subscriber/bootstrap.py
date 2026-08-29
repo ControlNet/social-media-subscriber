@@ -15,6 +15,12 @@ from social_media_subscriber.providers.apify.adapter import (
     ApifyLinkedInAdapter,
 )
 from social_media_subscriber.providers.apify.client import ApifyClient
+from social_media_subscriber.providers.apify.x_adapter import (
+    ApifyXAdapter,
+    ApifyXAdapterFactory,
+    ApifyXClientContract,
+)
+from social_media_subscriber.providers.apify.x_client import ApifyXClient
 from social_media_subscriber.providers.brightdata.adapter import (
     BrightDataAdapterFactory,
     BrightDataLinkedInAdapter,
@@ -62,14 +68,20 @@ class BrightDataSourceComposer:
 class ApifySourceComposer:
     """Compose the explicitly supported Apify driver set."""
 
-    factory: ApifyAdapterFactory
+    linkedin_factory: ApifyAdapterFactory
+    x_factory: ApifyXAdapterFactory
 
     def build_specs(self, source: SourceInput) -> tuple[AdapterInstanceSpec, ...]:
-        """Bind one configured Apify credential to LinkedIn Posts."""
+        """Bind one configured Apify credential to every supported platform."""
         return (
             AdapterInstanceSpec(
                 ApifyLinkedInAdapter,
-                self.factory,
+                self.linkedin_factory,
+                source.credential,
+            ),
+            AdapterInstanceSpec(
+                ApifyXAdapter,
+                self.x_factory,
                 source.credential,
             ),
         )
@@ -92,6 +104,10 @@ def _build_client(credential: str) -> BrightDataClient:
 
 def _build_apify_client(credential: str) -> ApifyClient:
     return ApifyClient(credential)
+
+
+def _build_apify_x_client(credential: str) -> ApifyXClient:
+    return ApifyXClient(credential)
 
 
 def build_runtime(
@@ -128,11 +144,17 @@ def bootstrap_runtime(
     *,
     client_builder: Callable[[str], BrightDataClientContract] = _build_client,
     apify_client_builder: Callable[[str], ApifyClientContract] = _build_apify_client,
+    apify_x_client_builder: Callable[
+        [str], ApifyXClientContract
+    ] = _build_apify_x_client,
 ) -> SubscriberRuntime:
     """Compose production sources with Apify ahead of Bright Data."""
     brightdata_factory = BrightDataAdapterFactory(config, client_builder)
     apify_factory = ApifyAdapterFactory(
         ApifyAdapterConfig(config.first_seen_at), apify_client_builder
+    )
+    apify_x_factory = ApifyXAdapterFactory(
+        ApifyAdapterConfig(config.first_seen_at), apify_x_client_builder
     )
     prioritized_input = runtime_input.model_copy(
         update={
@@ -147,7 +169,7 @@ def bootstrap_runtime(
     return compose_runtime(
         prioritized_input,
         {
-            SourceId.APIFY: ApifySourceComposer(apify_factory),
+            SourceId.APIFY: ApifySourceComposer(apify_factory, apify_x_factory),
             SourceId.BRIGHTDATA: BrightDataSourceComposer(brightdata_factory),
         },
     )

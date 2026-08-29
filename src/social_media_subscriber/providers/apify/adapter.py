@@ -107,11 +107,12 @@ class ApifyLinkedInAdapter(_DeclaredAdapter):
                 request.account, records, self._config.first_seen_at
             )
         except ApifyError as error:
-            return _map_error(error)
+            return map_apify_error(error)
         return BatchCompleted((CollectedAccount(request.account.id, posts),))
 
 
-def _map_error(error: ApifyError) -> AdapterAttempt:
+def map_apify_error(error: ApifyError) -> AdapterAttempt:
+    """Map one sanitized Apify error into router control flow."""
     if error.run_accepted:
         return AcceptedSnapshotBatchFailure()
     match error.category:
@@ -128,6 +129,7 @@ def _map_error(error: ApifyError) -> AdapterAttempt:
             | ApifyErrorCategory.OWNERSHIP
             | ApifyErrorCategory.DUPLICATE
             | ApifyErrorCategory.POST_URL
+            | ApifyErrorCategory.INCOMPLETE
         ):
             return SchemaBatchFailure()
 

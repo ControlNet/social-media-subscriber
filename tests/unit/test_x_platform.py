@@ -23,6 +23,7 @@ from social_media_subscriber.platforms.x import (
 )
 from social_media_subscriber.runtime_input import SourceId, load_runtime_input
 from social_media_subscriber.settings import Settings
+from social_media_subscriber.storage.snapshot import SnapshotState
 
 _FIRST_SEEN = datetime(2026, 8, 26, 10, tzinfo=UTC)
 
@@ -201,3 +202,43 @@ def test_new_x_account_uses_x_platform_history_boundary() -> None:
     # Then
     assert requests[0].start_date == date(2006, 3, 21)
     assert requests[0].end_date == date(2026, 8, 26)
+    assert requests[0].is_initial_collection is True
+
+
+def test_existing_x_account_uses_same_incremental_window_as_linkedin() -> None:
+    # Given
+    account = Account(
+        platform=Platform.X,
+        kind=AccountKind.PROFILE,
+        profile_url="https://x.com/openai/",
+        first_seen_at=_FIRST_SEEN,
+    )
+    previous = SnapshotState((account,), ())
+    context = WindowContext(_FIRST_SEEN, ExplicitWindow.parse(None, None))
+
+    # When
+    requests = build_post_requests((account,), previous, context)
+
+    # Then
+    assert requests[0].start_date == date(2026, 8, 23)
+    assert requests[0].end_date == date(2026, 8, 26)
+    assert requests[0].is_initial_collection is False
+
+
+def test_explicit_x_window_preserves_initial_collection_state() -> None:
+    account = Account(
+        platform=Platform.X,
+        kind=AccountKind.PROFILE,
+        profile_url="https://x.com/openai/",
+        first_seen_at=_FIRST_SEEN,
+    )
+    context = WindowContext(
+        _FIRST_SEEN,
+        ExplicitWindow.parse(date(2026, 8, 1), date(2026, 8, 2)),
+    )
+
+    requests = build_post_requests((account,), None, context)
+
+    assert requests[0].start_date == date(2026, 8, 1)
+    assert requests[0].end_date == date(2026, 8, 2)
+    assert requests[0].is_initial_collection is True

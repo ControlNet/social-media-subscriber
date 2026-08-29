@@ -127,6 +127,36 @@ async def test_equivalent_duplicate_collection_windows_deduplicate() -> None:
     assert client.calls[0].urls == (account.profile_url,)
 
 
+@pytest.mark.anyio
+async def test_conflicting_initial_collection_modes_fail_before_provider_io() -> None:
+    account = _account(AccountKind.PERSON, "person")
+    client = SyntheticBrightDataClient()
+    runtime = bootstrap_runtime(
+        RuntimeInput(
+            locators=(parse_linkedin_locator(account.profile_url),),
+            sources=(
+                SourceInput(
+                    source_id=SourceId.BRIGHTDATA,
+                    credential=SecretStr("synthetic-one"),
+                ),
+            ),
+        ),
+        BrightDataAdapterConfig(_NOW),
+        client_builder=lambda _credential: client,
+    )
+    dates = (date(2026, 8, 1), date(2026, 8, 2))
+    requests = (
+        AdapterPostRequest(account, *dates, is_initial_collection=False),
+        AdapterPostRequest(account, *dates, is_initial_collection=True),
+    )
+
+    with pytest.raises(AdapterRequestError) as captured:
+        _ = await runtime.router.route(requests)
+
+    assert client.calls == []
+    assert captured.value.category is AdapterRequestErrorCategory.CONFLICTING_WINDOW
+
+
 def test_inverted_collection_window_fails_typed_before_provider_io() -> None:
     # Given
     account = _account(AccountKind.PERSON, "person")

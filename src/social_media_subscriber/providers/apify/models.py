@@ -117,6 +117,9 @@ class ApifyRun(_ApifyModel):
     id: str = Field(min_length=1)
     status: str = Field(min_length=1)
     default_dataset_id: str | None = Field(default=None, alias="defaultDatasetId")
+    default_key_value_store_id: str | None = Field(
+        default=None, alias="defaultKeyValueStoreId"
+    )
 
 
 class ApifyRunEnvelope(_ApifyModel):

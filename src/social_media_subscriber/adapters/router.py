@@ -80,6 +80,7 @@ class Router:
             if existing is not None and (
                 existing.start_date != request.start_date
                 or existing.end_date != request.end_date
+                or existing.is_initial_collection != request.is_initial_collection
             ):
                 raise instance_contract.AdapterRequestError(
                     instance_contract.AdapterRequestErrorCategory.CONFLICTING_WINDOW
