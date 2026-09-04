@@ -103,7 +103,7 @@ def test_setup_pixi_defers_to_explicit_locked_install(
     assert "pixi install --locked" in commands
 
 
-def test_collection_has_exact_triggers_inputs_and_non_cancelling_lock() -> None:
+def test_collection_has_exact_triggers_and_non_cancelling_lock() -> None:
     # Given / When
     workflow = load_workflow(_COLLECT_PATH)
     triggers = mapping(workflow["on"])
@@ -111,18 +111,31 @@ def test_collection_has_exact_triggers_inputs_and_non_cancelling_lock() -> None:
     # Then
     schedule = mapping(sequence(triggers["schedule"])[0])
     assert schedule == {"cron": "17 3 * * *"}
-    dispatch = mapping(triggers["workflow_dispatch"])
-    inputs = mapping(dispatch["inputs"])
-    assert set(inputs) == {"start_date", "end_date"}
-    for name in ("start_date", "end_date"):
-        item = mapping(inputs[name])
-        assert item["required"] is False
-        assert item["type"] == "string"
+    assert mapping(triggers["workflow_dispatch"]) == {}
     assert mapping(workflow["concurrency"]) == {
         "group": "social-media-subscriber-dist",
         "cancel-in-progress": False,
     }
     assert mapping(workflow["permissions"]) == {"contents": "read"}
+
+
+def test_collection_action_uses_only_the_automatic_window_policy() -> None:
+    # Given / When
+    workflow = load_workflow(_COLLECT_PATH)
+    publication = mapping(mapping(workflow["jobs"])["publication"])
+    collect_step = next(
+        step
+        for step in _steps(workflow, "publication")
+        if step.get("name") == "Collect candidate"
+    )
+    source = text(collect_step["run"])
+
+    # Then
+    environment = mapping(publication["env"])
+    assert "START_DATE" not in environment
+    assert "END_DATE" not in environment
+    assert "--start-date" not in source
+    assert "--end-date" not in source
 
 
 def test_collection_gates_secrets_and_scopes_write_to_publication_job() -> None:

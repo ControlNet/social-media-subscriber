@@ -129,20 +129,21 @@ remediated and rescanned. `staged` intentionally scans only staged paths.
 ## GitHub Actions behavior and least privilege
 
 The collection workflow has a UTC cron schedule, `17 3 * * *`, and
-`workflow_dispatch` inputs `start_date` and `end_date`. A manual request must
-provide both dates or neither; dates are inclusive and must not be inverted.
-Scheduled production collection runs once per day for the approved accounts in
-`ACCOUNTS`. New LinkedIn Accounts are backfilled from `2003-05-05`; new X
-profiles are backfilled from `2006-03-21`; existing accounts use an inclusive
-window from the UTC run date minus three days through the run date. New X
-profiles use complete `profileReplies`; existing X profiles use bounded
+an input-free `workflow_dispatch` trigger. Both scheduled and manual workflow
+runs use the automatic per-account window policy; the workflow does not expose
+date overrides. Production collection runs once per day for the approved
+accounts in `ACCOUNTS`. New LinkedIn Accounts are backfilled from `2003-05-05`;
+new X profiles are backfilled from `2006-03-21`; existing accounts use an
+inclusive window from the UTC run date minus three days through the run date.
+New X profiles use complete `profileReplies`; existing X profiles use bounded
 `Latest` search with an exclusive next-day `until` boundary. The client applies
 the inclusive window locally on both routes. The adapter sends neither
-`maxItems` nor `maxTotalChargeUsd`; it fails closed unless the Actor reports
-source exhaustion. A search report with `source_exhausted` does not guarantee
-absolute window completeness and has been observed to omit replies; this is the
-approved cost-first tradeoff for recurring collection. Use a manual dispatch
-only for an approved bounded operation. Read GitHub's
+`maxItems` nor `maxTotalChargeUsd`. It accepts source exhaustion and Xquik's
+bounded `pagination_safety_limit`; the latter publishes validated rows, or no
+new Posts for a validated empty dataset, without proving that the search window
+is complete. Even a search report with `source_exhausted` has been observed to
+omit replies, so recurring X collection is an approved best-effort,
+cost-first tradeoff. Read GitHub's
 official [workflow events documentation](https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows)
 for schedule/manual trigger behavior.
 
@@ -264,16 +265,17 @@ route sends `maxItems` or `maxTotalChargeUsd`. The client validates the returned
 provider dataset and applies the requested inclusive UTC date window locally.
 The incremental search route can omit replies even when it reports source
 exhaustion, so it is a cost control rather than a completeness boundary.
-Publication requires the Actor's `run-report` record to show
-`source_exhausted`, zero failed subtargets, and exact report/dataset row counts.
-It also requires zero reported anomalies and a nonempty tweet dataset for a
-nonzero outcome.
-Current Actor versions may pair that evidence with `outcome=partial`, so the
-adapter accepts that exact combination as well as `outcome=complete`; other
-partial, budget-limited, or pagination-limited results remain incomplete. A
-strict zero-output report and its single diagnostic map to an empty result. An
-accepted paid run does not fail over to another token or provider after a later
-report, dataset, or schema failure.
+Publication requires the Actor's `run-report` record to show zero failed
+subtargets and either `source_exhausted` or `pagination_safety_limit`, plus exact
+report/dataset row counts and zero reported anomalies. Source-exhausted
+nonzero outcomes require a nonempty tweet dataset. A pagination safety limit is
+accepted as best effort and may publish a validated empty dataset, even though
+it does not prove window completeness. Current Actor versions may pair either
+completion reason with `outcome=partial`, so the adapter accepts that outcome as
+well as `outcome=complete`; budget-limited and unknown completion reasons remain
+incomplete. A strict zero-output report and its single diagnostic map to an
+empty result. An accepted paid run does not fail over to another token or
+provider after a later report, dataset, or schema failure.
 
 After a successful Xquik dataset is normalized, eligible X replies and native
 `RT @handle:` reposts are enriched through the unauthenticated X syndication

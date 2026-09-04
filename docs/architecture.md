@@ -243,15 +243,18 @@ The run request also omits `maxTotalChargeUsd`; pricing and budget approval are
 operational controls rather than client-side truncation mechanisms. Xquik
 1.12.65 and later store their completion report under `run-report` and may use
 `outcome=partial` even when a selected route finishes normally.
-The adapter therefore accepts `outcome=complete` or `outcome=partial` only when
-`completionReason=source_exhausted`, `failedSubtargets=0`, the report counts
-exactly match the downloaded dataset, and the dataset contains no diagnostic
-rows. The report must also contain no nonzero anomaly count. A validated
-`zero-output` report plus its single diagnostic maps to an empty Post tuple;
-an exhausted nonzero outcome with an empty dataset is incomplete. Budget-limited,
-pagination-limited, failed-subtarget, count-mismatched, diagnostic-mixed, or
-unknown results are rejected as accepted-run failures, so the Router does not
-start a second paid fallback.
+The adapter accepts `outcome=complete` or `outcome=partial` with zero failed
+subtargets when `completionReason=source_exhausted` or
+`completionReason=pagination_safety_limit`. A pagination safety limit is a
+deliberate best-effort result: accepted rows are published, and a validated
+empty dataset maps to no new Posts, even though the search did not prove source
+exhaustion. Both completion paths require report counts to exactly match the
+downloaded dataset, no diagnostic rows, and no nonzero anomaly count. A
+validated `zero-output` report plus its single diagnostic also maps to an empty
+Post tuple; an exhausted nonzero outcome with an empty dataset remains
+incomplete. Budget-limited, failed-subtarget, count-mismatched,
+diagnostic-mixed, or unknown results are rejected as accepted-run failures, so
+the Router does not start a second paid fallback.
 Rich tweet content remains open after recursive credential and transport-field
 rejection; canonical engagement keys are `bookmarks`, `likes`, `quotes`,
 `replies`, `reposts`, and `views`.

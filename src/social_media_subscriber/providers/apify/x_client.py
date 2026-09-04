@@ -40,6 +40,7 @@ _DEFAULT_HTTP_CONFIG: Final = HttpClientConfig(base_url="https://api.apify.com")
 
 class _Completion(StrEnum):
     COMPLETE = "complete"
+    BEST_EFFORT = "best_effort"
     ZERO_OUTPUT = "zero_output"
 
 
@@ -97,13 +98,13 @@ class ApifyXClient:
             raise ApifyError(ApifyErrorCategory.RUN_TERMINAL, run_accepted=True)
         report = await self._report(store_id)
         completion = _completion(report)
-        if completion is _Completion.COMPLETE:
+        if completion in {_Completion.COMPLETE, _Completion.BEST_EFFORT}:
             values = await self._runner.download_dataset(dataset_id)
             posts, diagnostics = _parse_dataset(values)
             _validate_counts(report, len(posts), len(diagnostics), len(values))
             if diagnostics:
                 raise ApifyError(ApifyErrorCategory.SCHEMA, run_accepted=True)
-            if not posts:
+            if completion is _Completion.COMPLETE and not posts:
                 raise ApifyError(ApifyErrorCategory.INCOMPLETE, run_accepted=True)
             return tuple(
                 post
@@ -135,6 +136,12 @@ def _completion(report: ApifyXRunReport) -> _Completion:
         and results.failed_subtargets == 0
     ):
         return _Completion.COMPLETE
+    if (
+        report.outcome in {"complete", "partial"}
+        and results.completion_reason == "pagination_safety_limit"
+        and results.failed_subtargets == 0
+    ):
+        return _Completion.BEST_EFFORT
     if (
         report.outcome == "zero-output"
         and results.completion_reason == "zero_output"

@@ -3,16 +3,7 @@ name: Collect and publish dist
 "on":
   schedule:
     - cron: "17 3 * * *"
-  workflow_dispatch:
-    inputs:
-      start_date:
-        description: Optional inclusive ISO date; requires end_date
-        required: false
-        type: string
-      end_date:
-        description: Optional inclusive ISO date; requires start_date
-        required: false
-        type: string
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -58,8 +49,6 @@ jobs:
       ACCOUNTS: ${{ secrets.ACCOUNTS }}
       SOURCES: ${{ secrets.SOURCES }}
       GITHUB_TOKEN: ${{ github.token }}
-      START_DATE: ${{ inputs.start_date }}
-      END_DATE: ${{ inputs.end_date }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -114,9 +103,6 @@ jobs:
             --previous-snapshot "$PREVIOUS_SNAPSHOT"
             --output "$CANDIDATE_SNAPSHOT"
           )
-          if [[ -n "$START_DATE" || -n "$END_DATE" ]]; then
-            collect_arguments+=(--start-date "$START_DATE" --end-date "$END_DATE")
-          fi
           set +e
           pixi run subscriber "${collect_arguments[@]}"
           COLLECT_STATUS=$?

@@ -394,9 +394,7 @@ async def test_x_client_rejects_missing_completion_report_as_accepted_failure() 
 
 
 @pytest.mark.anyio
-async def test_x_client_rejects_pagination_safety_limit_before_dataset_download() -> (
-    None
-):
+async def test_x_client_accepts_pagination_safety_limit_dataset() -> None:
     dataset_requests = 0
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -417,18 +415,49 @@ async def test_x_client_rejects_pagination_safety_limit_before_dataset_download(
         transport=httpx2.MockTransport(handler),
     )
 
-    with pytest.raises(ApifyError) as captured:
-        _ = await client.collect_posts(
-            ApifyXPostInput(
-                "https://x.com/synthetic_ada/",
-                date(2026, 8, 17),
-                date(2026, 8, 20),
-            )
+    posts = await client.collect_posts(
+        ApifyXPostInput(
+            "https://x.com/synthetic_ada/",
+            date(2026, 8, 17),
+            date(2026, 8, 20),
         )
+    )
 
-    assert captured.value.category is ApifyErrorCategory.INCOMPLETE
-    assert captured.value.run_accepted is True
-    assert dataset_requests == 0
+    assert tuple(post.id for post in posts) == ("2001",)
+    assert dataset_requests == 1
+    await client.aclose()
+
+
+@pytest.mark.anyio
+async def test_x_client_accepts_empty_pagination_safety_limit_dataset() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path == f"/v2/acts/{APIFY_X_ACTOR}/runs":
+            return httpx2.Response(201, json=_run())
+        if request.url.path.endswith("/records/run-report"):
+            return httpx2.Response(
+                200,
+                json=_report(
+                    completion_reason="pagination_safety_limit",
+                    real_rows=0,
+                ),
+            )
+        return httpx2.Response(200, json=[])
+
+    client = ApifyXClient(
+        "synthetic-token",
+        HttpClientConfig(base_url="https://api.apify.test"),
+        transport=httpx2.MockTransport(handler),
+    )
+
+    posts = await client.collect_posts(
+        ApifyXPostInput(
+            "https://x.com/synthetic_ada/",
+            date(2026, 8, 17),
+            date(2026, 8, 20),
+        )
+    )
+
+    assert posts == ()
     await client.aclose()
 
 
