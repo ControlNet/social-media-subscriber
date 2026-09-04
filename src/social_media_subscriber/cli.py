@@ -6,7 +6,7 @@ import json
 import os
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Annotated, Never, TypedDict
+from typing import Annotated, Never, TypedDict, cast
 
 import typer
 from pydantic import SecretStr, ValidationError
@@ -19,11 +19,16 @@ from social_media_subscriber.application.results import (
     CollectionResult,
     aborted_result,
 )
+from social_media_subscriber.application.x_media_backfill import (
+    XMediaBackfillCommand,
+    XMediaBackfillInputError,
+)
 from social_media_subscriber.cli_application import (
     DIST_BRANCH,
     CliApplication,
     DefaultCliApplication,
     PublicationCommand,
+    XMediaCliApplication,
 )
 from social_media_subscriber.cli_logging import log_exception
 from social_media_subscriber.publishing.git import (
@@ -66,13 +71,30 @@ class _PublishReport(TypedDict):
     sha: str
 
 
+class _XMediaBackfillReport(TypedDict):
+    command: str
+    digest: str
+    eligible_posts: int
+    enriched_posts: int
+    exit_code: int
+    media_items: int
+    missed_posts: int
+    scanned_posts: int
+
+
 class _FailureReport(TypedDict):
     command: str
     error_category: str
     exit_code: int
 
 
-type _MachineReport = _CollectReport | _SnapshotReport | _PublishReport | _FailureReport
+type _MachineReport = (
+    _CollectReport
+    | _SnapshotReport
+    | _PublishReport
+    | _XMediaBackfillReport
+    | _FailureReport
+)
 
 
 def _emit(report: _MachineReport, summary: str) -> None:
@@ -130,9 +152,69 @@ def create_app(application: CliApplication | None = None) -> typer.Typer:
     service = DefaultCliApplication() if application is None else application
     app = typer.Typer(no_args_is_help=True, pretty_exceptions_enable=False)
     _register_collect(app, service)
+    _register_x_media_backfill(app, cast("XMediaCliApplication", service))
     _register_verification(app, service)
     _register_publication(app, service)
     return app
+
+
+def _register_x_media_backfill(app: typer.Typer, service: XMediaCliApplication) -> None:
+    @app.command("enrich-x-media")
+    def enrich_x_media_command(
+        snapshot: Annotated[Path, typer.Option("--snapshot")],
+        output: Annotated[Path, typer.Option("--output")],
+    ) -> None:
+        try:
+            result = service.enrich_x_media(XMediaBackfillCommand(snapshot, output))
+        except XMediaBackfillInputError:
+            _emit(
+                {
+                    "command": "enrich-x-media",
+                    "error_category": "input",
+                    "exit_code": int(CollectionExitCode.INPUT),
+                },
+                "X media enrichment rejected: invalid input",
+            )
+            raise typer.Exit(int(CollectionExitCode.INPUT)) from None
+        except SnapshotIntegrityError:
+            _emit(
+                {
+                    "command": "enrich-x-media",
+                    "error_category": "integrity",
+                    "exit_code": int(CollectionExitCode.INTEGRITY),
+                },
+                "X media enrichment failed: integrity",
+            )
+            raise typer.Exit(int(CollectionExitCode.INTEGRITY)) from None
+        except Exception as error:  # noqa: BLE001, BROAD_EXCEPT_OK
+            log_exception(error)
+            _emit(
+                {
+                    "command": "enrich-x-media",
+                    "error_category": "integrity",
+                    "exit_code": int(CollectionExitCode.INTEGRITY),
+                },
+                "X media enrichment failed: integrity",
+            )
+            raise typer.Exit(int(CollectionExitCode.INTEGRITY)) from None
+        _emit(
+            {
+                "command": "enrich-x-media",
+                "digest": result.digest,
+                "eligible_posts": result.eligible_posts,
+                "enriched_posts": result.enriched_posts,
+                "exit_code": 0,
+                "media_items": result.media_items,
+                "missed_posts": result.missed_posts,
+                "scanned_posts": result.scanned_posts,
+            },
+            (
+                "X media enrichment complete: "
+                f"enriched={result.enriched_posts}; missed={result.missed_posts}"
+            ),
+        )
+
+    _ = enrich_x_media_command
 
 
 def _register_collect(app: typer.Typer, service: CliApplication) -> None:

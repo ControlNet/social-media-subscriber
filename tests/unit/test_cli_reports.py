@@ -210,3 +210,33 @@ def test_collect_reports_canonical_failed_account_urls_with_exact_keys() -> None
         "succeeded_accounts": 0,
     }
     assert "canary-secret" not in result.output
+
+
+def test_enrich_x_media_emits_safe_complete_report() -> None:
+    application = FakeApplication()
+
+    result = CliRunner().invoke(
+        create_app(application),
+        [
+            "enrich-x-media",
+            "--snapshot",
+            "previous",
+            "--output",
+            "candidate",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert len(application.enrich_calls) == 1
+    assert application.enrich_calls[0].snapshot.name == "previous"
+    assert application.enrich_calls[0].output.name == "candidate"
+    assert json_report(result.output) == {
+        "command": "enrich-x-media",
+        "digest": "e" * 64,
+        "eligible_posts": 41,
+        "enriched_posts": 37,
+        "exit_code": 0,
+        "media_items": 24,
+        "missed_posts": 4,
+        "scanned_posts": 90,
+    }

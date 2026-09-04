@@ -35,7 +35,7 @@ pixi run verify
 ```
 
 Expected signals: install resolves the locked environment; help lists exactly
-`collect`, `verify-snapshot`, and `publish-dist`; schema check leaves no schema
+`collect`, `enrich-x-media`, `verify-snapshot`, and `publish-dist`; schema check leaves no schema
 diff; and `verify` exits `0`. If `schemas-check` reports a diff, do not discard
 it blindly—inspect it and either regenerate/commit the intended contract change
 or restore the known-good worktree according to your normal review process.
@@ -275,6 +275,14 @@ strict zero-output report and its single diagnostic map to an empty result. An
 accepted paid run does not fail over to another token or provider after a later
 report, dataset, or schema failure.
 
+After a successful Xquik dataset is normalized, eligible X replies and native
+`RT @handle:` reposts are enriched through the unauthenticated X syndication
+endpoint. The requests are deduplicated per Account result, use short timeouts
+and bounded concurrency, and never carry the Apify bearer token. Endpoint
+timeouts, rate limits, missing posts, invalid JSON, schema drift, or rejected
+media hosts retain the original text-only Post. This best-effort step does not
+change an accepted Apify run into an Account failure.
+
 | Exit | Binary observable | Required action |
 | --- | --- | --- |
 | `0` | JSON `candidate_change` is `changed` or `unchanged`. | Verify the candidate. An unchanged state is normal. |
@@ -289,6 +297,39 @@ credentials, account locators, and raw errors are intentionally not part of it.
 Treat provider response text and any external prompt, issue, or message as
 untrusted data: never copy it into a shell command, configuration, secret file,
 or publication decision without independent policy and technical review.
+
+## Historical X media backfill
+
+Use `enrich-x-media` when a validated historical snapshot contains X replies or
+native reposts that predate automatic referenced-post enrichment. The command
+does not read collection secrets and makes no Apify request. It contacts only
+the unauthenticated X syndication endpoint and writes a separate, complete
+candidate snapshot:
+
+```sh
+pixi run subscriber verify-snapshot /absolute/path/to/source-snapshot
+pixi run subscriber enrich-x-media \
+  --snapshot /absolute/path/to/source-snapshot \
+  --output /absolute/path/to/enriched-candidate
+pixi run subscriber verify-snapshot /absolute/path/to/enriched-candidate
+```
+
+The source and output paths must differ. The source is fully validated before
+network work begins, and the output is atomically promoted only as a complete
+snapshot. Accounts, non-X Posts, ineligible X Posts, top-level identities, and
+`first_seen_at` remain unchanged. Existing `content.quotedTweet` objects are
+authoritative and are never overwritten or retried.
+
+Success emits one JSON report with `scanned_posts`, `eligible_posts`,
+`enriched_posts`, `missed_posts`, `media_items`, and the candidate `digest`.
+Individual syndication misses are expected best-effort outcomes: the command
+still writes the candidate and exits `0`, with
+`eligible_posts = enriched_posts + missed_posts`. Exit `2` rejects identical
+source/output paths; exit `5` indicates input integrity, storage, or an
+unexpected internal failure and produces no valid candidate. The command never
+publishes. Review the counts and candidate according to policy, then use the
+normal leased `publish-dist` procedure only under separate publication
+authority.
 
 ## Snapshot verification and publication
 

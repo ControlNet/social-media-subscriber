@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Protocol, final
 
+import structlog
+
 from social_media_subscriber.adapters import AdapterMetadata, AdapterOperation, adapter
 from social_media_subscriber.adapters.instance import (
     AdapterInstanceOrdinal,
@@ -20,6 +22,11 @@ from social_media_subscriber.providers.apify.adapter import (
 from social_media_subscriber.providers.apify.errors import ApifyError
 from social_media_subscriber.providers.apify.x_normalize import normalize_posts
 from social_media_subscriber.providers.apify.x_requests import ApifyXPostInput
+from social_media_subscriber.providers.x_syndication import (
+    XMediaEnricher,
+    XMediaEnricherContract,
+    XMediaSyndicationClient,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -33,6 +40,8 @@ if TYPE_CHECKING:
     )
     from social_media_subscriber.adapters.protocol import AdapterDriver
     from social_media_subscriber.providers.apify.x_models import ApifyXPost
+
+_LOGGER = structlog.stdlib.get_logger()
 
 
 class ApifyXClientContract(Protocol):
@@ -64,18 +73,23 @@ class ApifyXAdapter(_DeclaredAdapter):
     def __init__(
         self,
         client: ApifyXClientContract,
+        enricher: XMediaEnricherContract,
         ordinal: AdapterInstanceOrdinal,
         config: ApifyAdapterConfig,
     ) -> None:
         """Bind one client and run timestamp to an opaque ordinal."""
         self._client = client
+        self._enricher = enricher
         self.ordinal = ordinal
         self.driver_class: type[AdapterDriver] = ApifyXAdapter
         self._config = config
 
     async def aclose(self) -> None:
         """Close the credential-bound provider client."""
-        await self._client.aclose()
+        try:
+            await self._client.aclose()
+        finally:
+            await self._enricher.aclose()
 
     async def collect(self, batch: AdapterBatch) -> AdapterAttempt:
         """Collect one X profile and map failures into router outcomes."""
@@ -96,7 +110,15 @@ class ApifyXAdapter(_DeclaredAdapter):
             )
         except ApifyError as error:
             return map_apify_error(error)
+        try:
+            posts = (await self._enricher.enrich(posts)).posts
+        except Exception:  # noqa: BLE001, BROAD_EXCEPT_OK
+            await _LOGGER.awarning("x.media_enrichment.unavailable")
         return BatchCompleted((CollectedAccount(request.account.id, posts),))
+
+
+def _build_x_media_enricher() -> XMediaEnricher:
+    return XMediaEnricher(XMediaSyndicationClient())
 
 
 @final
@@ -106,11 +128,15 @@ class ApifyXAdapterFactory:
 
     config: ApifyAdapterConfig
     client_builder: Callable[[str], ApifyXClientContract]
+    enricher_builder: Callable[[], XMediaEnricherContract] = _build_x_media_enricher
 
     def create(
         self, credential: SecretStr, ordinal: AdapterInstanceOrdinal
     ) -> AdapterInstance:
         """Bind one approved credential to an Xquik adapter instance."""
         return ApifyXAdapter(
-            self.client_builder(credential.get_secret_value()), ordinal, self.config
+            self.client_builder(credential.get_secret_value()),
+            self.enricher_builder(),
+            ordinal,
+            self.config,
         )

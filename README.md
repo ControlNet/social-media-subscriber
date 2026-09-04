@@ -17,13 +17,14 @@ See [operations](docs/operations.md) for the required policy gates and
 
 ## Quick orientation
 
-There are three CLI commands, all run through the repository's Pixi `default`
+There are four CLI commands, all run through the repository's Pixi `default`
 environment (Python 3.13):
 
 ```sh
 pixi install --locked
 pixi run subscriber --help
 pixi run subscriber collect --help
+pixi run subscriber enrich-x-media --help
 pixi run subscriber verify-snapshot --help
 pixi run subscriber publish-dist --help
 ```
@@ -42,6 +43,16 @@ the previous snapshot uses a bounded `Latest` search for the requested date
 window, which lowers incremental cost and latency but can omit replies. Both
 routes enforce the inclusive date window locally and require strict completion
 evidence. Neither route sends an item limit or run-level USD charge limit.
+After an accepted Xquik result is normalized, the X adapter makes short-lived,
+unauthenticated syndication requests for referenced posts in replies and native
+`RT @handle:` reposts. That best-effort step adds `content.quotedTweet` when the
+referenced post is valid. It does not make another Apify request, does not send
+the Apify token to syndication, and never turns an accepted Xquik result into a
+collection failure.
+`enrich-x-media` performs the same best-effort operation over one validated
+historical snapshot and writes a separate complete candidate. It does not read
+`ACCOUNTS` or `SOURCES`, call Apify, verify the candidate for publication, or
+publish it.
 `verify-snapshot` is local and read-only.
 `publish-dist` mutates the selected Git remote and must be used only under the
 immutable lease described in the runbook; do not run it as a casual local test.
@@ -107,6 +118,13 @@ provider-neutral identity, ownership, URL, timestamp, and type fields plus an
 open `content` object. LinkedIn adapters use shared canonical keys for text,
 image/video objects, links, author, engagement, document, and repost data while
 retaining safe future provider fields that have no canonical mapping yet.
+For an X reply or flattened native repost, `content.quotedTweet` may contain the
+referenced status ID, canonical URL, timestamp, text, author, and filtered media.
+Media image URLs are limited to HTTPS `pbs.twimg.com`; media marker URLs are
+limited to HTTPS `t.co`; and MP4 variants are limited to HTTPS
+`video.twimg.com`. This optional nested content is a compatible extension of
+the existing open `content` object. Top-level Post fields, types, paths, and
+indexes are unchanged, and older records without it remain valid.
 Transport, authentication, request, response, and error metadata are rejected
 before persistence.
 
@@ -148,7 +166,7 @@ process status and `exit_code` together; do not scrape provider text.
 
 | Exit | Meaning | Operator action |
 | --- | --- | --- |
-| `0` | Success. Collection has a valid candidate, or verification/publishing completed. | Inspect `candidate_change` or publication `result`; `unchanged` is a normal outcome. |
+| `0` | Success. Collection or media enrichment has a valid candidate, or verification/publishing completed. Media enrichment may report nonzero `missed_posts`. | Inspect `candidate_change`, enrichment counts, or publication `result`; `unchanged` and best-effort enrichment misses are normal outcomes. |
 | `2` | Invalid CLI input, date window, account locator, or source definition. No candidate exists. | Correct the local input or secret value; do not retry unchanged input. |
 | `3` | Provider pool exhausted before a candidate could be built. No candidate exists. | Pause, inspect authorized credential capacity and provider status, then retry only after remediation. |
 | `4` | Partial collection with a valid candidate (changed or unchanged). | Treat as an alert. The scheduled workflow verifies and publishes that candidate, then fails visibly so the account-level issue is investigated. |

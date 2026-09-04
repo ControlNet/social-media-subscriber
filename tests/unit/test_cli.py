@@ -13,6 +13,10 @@ from social_media_subscriber.application.results import (
     CollectionExitCode,
     CollectionResult,
 )
+from social_media_subscriber.application.x_media_backfill import (
+    XMediaBackfillCommand,
+    XMediaBackfillResult,
+)
 from social_media_subscriber.cli import create_app
 from social_media_subscriber.publishing.git import (
     Published,
@@ -55,6 +59,17 @@ class FakeApplication:
     collect_calls: list[CollectionRequest] = field(default_factory=list)
     publish_calls: list[PublicationCommand] = field(default_factory=list)
     publish_error: Exception | None = None
+    enrich_result: XMediaBackfillResult = field(
+        default_factory=lambda: XMediaBackfillResult(
+            digest="e" * 64,
+            scanned_posts=90,
+            eligible_posts=41,
+            enriched_posts=37,
+            missed_posts=4,
+            media_items=24,
+        )
+    )
+    enrich_calls: list[XMediaBackfillCommand] = field(default_factory=list)
 
     def collect(self, request: CollectionRequest) -> CollectionResult:
         self.collect_calls.append(request)
@@ -73,6 +88,10 @@ class FakeApplication:
         if self.publish_error is not None:
             raise self.publish_error
         return Published("c" * 40)
+
+    def enrich_x_media(self, command: XMediaBackfillCommand) -> XMediaBackfillResult:
+        self.enrich_calls.append(command)
+        return self.enrich_result
 
 
 def json_report(output: str) -> dict[str, str | int | list[str] | None]:
@@ -93,16 +112,30 @@ def test_help_exposes_only_approved_public_inputs() -> None:
     root = runner.invoke(create_app(application), ["--help"])
     collect = runner.invoke(create_app(application), ["collect", "--help"])
     publish = runner.invoke(create_app(application), ["publish-dist", "--help"])
+    enrich = runner.invoke(create_app(application), ["enrich-x-media", "--help"])
 
     # Then
-    assert root.exit_code == collect.exit_code == publish.exit_code == 0
+    assert (
+        root.exit_code
+        == collect.exit_code
+        == publish.exit_code
+        == enrich.exit_code
+        == 0
+    )
     root_help = _plain_terminal_text(root.output)
     collect_help = _plain_terminal_text(collect.output)
     publish_help = _plain_terminal_text(publish.output)
-    assert {"collect", "verify-snapshot", "publish-dist"} <= set(root_help.split())
+    assert {
+        "collect",
+        "enrich-x-media",
+        "verify-snapshot",
+        "publish-dist",
+    } <= set(root_help.split())
     assert "--previous-snapshot" in collect_help
     assert "--output" in collect_help
     assert "--expected-sha" in publish_help
+    assert "--snapshot" in _plain_terminal_text(enrich.output)
+    assert "--output" in _plain_terminal_text(enrich.output)
     forbidden = ("api-key", "base-url", "platform", "payload", "fixture")
     assert all(
         token not in (collect_help + publish_help).lower() for token in forbidden

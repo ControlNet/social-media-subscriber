@@ -13,6 +13,11 @@ from social_media_subscriber.application.collect import (
     CollectionRequest,
     collect_snapshot,
 )
+from social_media_subscriber.application.x_media_backfill import (
+    XMediaBackfillCommand,
+    XMediaBackfillResult,
+    backfill_x_media,
+)
 from social_media_subscriber.publishing.git import (
     InvalidPublicationCategory,
     InvalidPublicationError,
@@ -65,6 +70,14 @@ class CliApplication(Protocol):
 
     def publish(self, command: PublicationCommand) -> PublishResult:
         """Publish a validated snapshot under its immutable lease."""
+        ...
+
+
+class XMediaCliApplication(Protocol):
+    """Additional CLI capability for standalone X media backfill."""
+
+    def enrich_x_media(self, command: XMediaBackfillCommand) -> XMediaBackfillResult:
+        """Build a complete media-enriched snapshot candidate."""
         ...
 
 
@@ -126,6 +139,10 @@ class DefaultCliApplication:
                 ),
                 runner=self.git_runner,
             )
+
+    def enrich_x_media(self, command: XMediaBackfillCommand) -> XMediaBackfillResult:
+        """Run snapshot enrichment through AnyIO at the synchronous boundary."""
+        return anyio.run(backfill_x_media, command)
 
 
 def _checked_git(runner: GitRunner, cwd: Path, arguments: tuple[str, ...]) -> str:
