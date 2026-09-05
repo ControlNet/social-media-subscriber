@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import tempfile
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import anyio
+import structlog
 from pydantic_core import PydanticCustomError
 
 from social_media_subscriber.accounts.errors import AccountInputError
@@ -30,6 +32,7 @@ from social_media_subscriber.application.windows import (
 from social_media_subscriber.bootstrap import bootstrap_runtime
 from social_media_subscriber.domain.time import canonical_utc
 from social_media_subscriber.media.archive import archive_media
+from social_media_subscriber.media.slots import media_slots
 from social_media_subscriber.providers.apify.adapter import ApifyClientContract
 from social_media_subscriber.providers.apify.client import ApifyClient
 from social_media_subscriber.providers.apify.x_adapter import ApifyXClientContract
@@ -45,7 +48,7 @@ from social_media_subscriber.storage.repository import (
     SnapshotRepository,
 )
 from social_media_subscriber.storage.run_state import RunState
-from social_media_subscriber.storage.snapshot import SnapshotState
+from social_media_subscriber.storage.snapshot import SnapshotState, SnapshotSummary
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -64,6 +67,7 @@ type ApifyXClientBuilder = Callable[[str], ApifyXClientContract]
 
 
 type RuntimeBuilder = Callable[[RuntimeInput, datetime], SubscriberRuntime]
+_LOGGER = structlog.stdlib.get_logger()
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +81,7 @@ class CollectionRequest:
     start_date: date | None = None
     end_date: date | None = None
     local_media_root: Path | None = None
+    work_dir: Path | None = None
 
 
 def _build_client(credential: str) -> BrightDataClient:
@@ -150,18 +155,11 @@ async def _collect_with_runtime(
         candidate = replace(
             candidate, run_state=progress.model_copy(update={"accounts": watermarks})
         )
-        with tempfile.TemporaryDirectory(prefix="snapshot-media-") as temporary:
-            candidate, media_failures = await archive_media(
-                candidate,
-                Path(temporary),
-                refreshed_post_ids=frozenset(
-                    str(post.id) for post in post_phase.current.posts
-                ),
-            )
-            summary = SnapshotRepository(
-                request.candidate_snapshot_dir,
-                local_media_root=request.local_media_root,
-            ).write(candidate)
+        candidate, media_failures, summary = await _archive_candidate(
+            request,
+            candidate,
+            frozenset(str(post.id) for post in post_phase.current.posts),
+        )
     except (SnapshotConflictError, SnapshotIntegrityError):
         return aborted_result(CollectionExitCode.INTEGRITY)
     exit_code = (
@@ -180,6 +178,69 @@ async def _collect_with_runtime(
     )
 
 
+async def _archive_candidate(
+    request: CollectionRequest,
+    candidate: SnapshotState,
+    refreshed_post_ids: frozenset[str],
+) -> tuple[SnapshotState, int, SnapshotSummary]:
+    if request.work_dir is not None:
+        if candidate.run_state is not None and refreshed_post_ids:
+            sources = {
+                slot.key(post): slot.source_url
+                for post in candidate.posts
+                if str(post.id) in refreshed_post_ids
+                for slot in media_slots(post)
+            }
+            candidate = replace(
+                candidate,
+                run_state=candidate.run_state.model_copy(
+                    update={
+                        "pending_media": tuple(
+                            item.model_copy(
+                                update={
+                                    "source_url": sources.get(
+                                        (item.post_id, item.scope, item.index),
+                                        item.source_url,
+                                    )
+                                }
+                            )
+                            for item in candidate.run_state.pending_media
+                        )
+                    }
+                ),
+            )
+        # Save collected posts before any slow media work, including first backfills.
+        _ = SnapshotRepository(
+            request.work_dir / "snapshot", local_media_root=request.local_media_root
+        ).write(candidate)
+    workspace = (
+        nullcontext(str(request.work_dir))
+        if request.work_dir is not None
+        else tempfile.TemporaryDirectory(prefix="snapshot-media-")
+    )
+    with workspace as directory:
+        candidate, failures = await archive_media(
+            candidate,
+            Path(directory),
+            enable_compression=request.settings.enable_media_compression,
+            refreshed_post_ids=refreshed_post_ids,
+        )
+        await _LOGGER.ainfo(
+            "snapshot.write.started",
+            posts=len(candidate.posts),
+            media=len(candidate.media),
+        )
+        summary = SnapshotRepository(
+            request.candidate_snapshot_dir, local_media_root=request.local_media_root
+        ).write(candidate)
+        await _LOGGER.ainfo(
+            "snapshot.write.completed",
+            posts=summary.post_count,
+            accounts=summary.account_count,
+        )
+    return candidate, failures, summary
+
+
 async def collect_snapshot(
     request: CollectionRequest,
     client_builder: ClientBuilder = _build_client,
@@ -189,6 +250,30 @@ async def collect_snapshot(
     apify_x_client_builder: ApifyXClientBuilder = _build_apify_x_client,
 ) -> CollectionResult:
     """Build one validated complete candidate without publishing it."""
+    if request.work_dir is not None:
+        try:
+            saved = SnapshotRepository(
+                request.work_dir / "snapshot",
+                local_media_root=request.local_media_root,
+            ).load_optional()
+            if saved is not None:
+                await _LOGGER.ainfo("collection.resumed", posts=len(saved.posts))
+                _, failures, summary = await _archive_candidate(
+                    request, saved, frozenset()
+                )
+                # Resuming media performs no new provider/account collection.
+                return CollectionResult(
+                    CollectionExitCode.PARTIAL
+                    if failures
+                    else CollectionExitCode.SUCCESS,
+                    CandidateChange.CHANGED,
+                    summary.digest,
+                    0,
+                    0,
+                    (),
+                )
+        except SnapshotIntegrityError:
+            return aborted_result(CollectionExitCode.INTEGRITY)
     prepared = _prepare(request)
     match prepared:
         case CollectionResult() as terminal:

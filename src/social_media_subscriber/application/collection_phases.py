@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import structlog
+
 from social_media_subscriber.adapters.router_outcomes import (
     AccountRouteFailed,
     AccountRouteFailureCategory,
@@ -23,8 +25,10 @@ from social_media_subscriber.application.windows import (
     build_post_requests,
 )
 from social_media_subscriber.domain.account import Account
-from social_media_subscriber.domain.ids import AccountId
+from social_media_subscriber.domain.ids import AccountId, record_filename
 from social_media_subscriber.storage.snapshot import SnapshotState
+
+_LOGGER = structlog.stdlib.get_logger()
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -117,7 +121,28 @@ async def collect_posts(
     )
     if not requests:
         return CollectedPosts(SnapshotState((), ()), 0, 0, (), 0)
+    await _LOGGER.ainfo("collection.posts.started", accounts=len(requests))
     result = await runtime.router.route(requests)
+    await _LOGGER.ainfo(
+        "collection.posts.completed",
+        posts=len(result.posts),
+        succeeded_accounts=result.aggregate.succeeded_accounts,
+        failed_accounts=result.aggregate.failed_accounts,
+        status=result.aggregate.status.value,
+    )
+    for outcome in result.accounts:
+        if isinstance(outcome, AccountRouteSucceeded):
+            await _LOGGER.ainfo(
+                "collection.account.completed",
+                account_record=record_filename(outcome.account_id),
+                posts=len(outcome.post_ids),
+            )
+        else:
+            await _LOGGER.awarning(
+                "collection.account.failed",
+                account_record=record_filename(outcome.account_id),
+                category=outcome.category.value,
+            )
     match result.aggregate.status:  # The status enum is exhaustively grouped.
         case RouterRunStatus.ABORTED:
             return aborted_result(CollectionExitCode.INTEGRITY)

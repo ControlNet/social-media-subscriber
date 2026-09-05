@@ -3,23 +3,30 @@
 from __future__ import annotations
 
 import ipaddress
+import shutil
 import socket
-import tempfile
+import time
 from http import HTTPStatus
-from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import anyio
 import httpx2
+import structlog
 from anyio.to_thread import run_sync
 from PIL import Image, ImageOps
 
 from social_media_subscriber.media.errors import MediaError
+from social_media_subscriber.media.ffmpeg import run_ffmpeg
+from social_media_subscriber.media.formats import original_extension
+from social_media_subscriber.media.workspace import require_private_path
 
 MAX_ATTEMPTS = 3
+_LOGGER = structlog.stdlib.get_logger()
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from social_media_subscriber.media.slots import MediaSlot
 
 
@@ -79,12 +86,18 @@ async def _download_once(  # noqa: C901 - validate each redirect and streamed re
             ):
                 raise MediaError(category="mime")
             size = 0
+            next_log = time.monotonic() + 30
             with target.open("wb") as output:
                 async for chunk in response.aiter_bytes(1024 * 1024):
                     size += len(chunk)
                     if size > limit:
                         raise MediaError(category="size")
                     _ = output.write(chunk)
+                    if time.monotonic() >= next_log:
+                        await _LOGGER.ainfo(
+                            "media.download.progress", bytes_received=size
+                        )
+                        next_log = time.monotonic() + 30
             if not size:
                 raise MediaError(category="empty")
             return
@@ -113,6 +126,13 @@ async def download(url: str, target: Path, limit: int) -> None:
                     retry_after = error.response.headers.get("retry-after", "")
                     if retry_after.isdigit():
                         delay = min(max(delay, float(retry_after)), 60)
+                await _LOGGER.awarning(
+                    "media.download.retry",
+                    attempt=attempt + 1,
+                    next_attempt=attempt + 2,
+                    delay_seconds=delay,
+                    error_type=type(error).__name__,
+                )
                 await anyio.sleep(delay)
             else:
                 return
@@ -144,30 +164,53 @@ def convert_image(source: Path, destination: Path) -> None:
         raise MediaError(category="conversion") from None
 
 
-async def materialize_media(slot: MediaSlot, destination: Path) -> None:
+async def materialize_media(
+    slot: MediaSlot, destination: Path, *, enable_compression: bool = True
+) -> Path:
     """Download privately and expose an output only after successful validation."""
-    with tempfile.TemporaryDirectory(prefix="media-input-") as temporary:
-        source = Path(temporary) / "input"
+    source = destination.with_suffix(".input")
+    partial = destination.with_suffix(".download")
+    for path in (source, partial, destination):
+        require_private_path(path)
+    if not source.exists():
+        started = time.monotonic()
+        await _LOGGER.ainfo("media.download.started")
         limit = 50 * 1024 * 1024 if slot.kind == "image" else 1024 * 1024 * 1024
-        await download(slot.source_url, source, limit)
+        await download(slot.source_url, partial, limit)
+        _ = partial.replace(source)
+        await _LOGGER.ainfo(
+            "media.download.completed",
+            bytes_received=(await anyio.Path(source).stat()).st_size,
+            elapsed_seconds=round(time.monotonic() - started, 1),
+        )
+    else:
+        await _LOGGER.ainfo(
+            "media.download.reused",
+            bytes_received=(await anyio.Path(source).stat()).st_size,
+        )
+    try:
+        if not enable_compression:
+            extension = await run_sync(original_extension, source, slot.kind)
+            destination = destination.with_suffix("." + extension)
+            require_private_path(destination)
+            _ = await run_sync(shutil.copyfile, source, destination)
+            return destination
         if slot.kind == "image":
             await run_sync(convert_image, source, destination)
-            return
-        try:
-            with anyio.fail_after(3600):
-                await _convert_video(source, destination)
-        except TimeoutError:
-            raise MediaError(category="conversion") from None
+            return destination
+        await _convert_video(source, destination)
+    except MediaError:
+        # Bad source bytes must not prevent the next run trying a refreshed URL.
+        source.unlink(missing_ok=True)
+        raise
+    else:
+        return destination
 
 
 async def _convert_video(source: Path, destination: Path) -> None:
     """Encode and decode-check a video with local-only FFmpeg inputs."""
-    result = await anyio.run_process(
+    await run_ffmpeg(
         [
-            "ffmpeg",
-            "-nostdin",
-            "-v",
-            "error",
             "-protocol_whitelist",
             "file,pipe",
             "-format_whitelist",
@@ -188,8 +231,6 @@ async def _convert_video(source: Path, destination: Path) -> None:
             "0",
             "-cpu-used",
             "4",
-            "-threads",
-            "2",
             "-c:a",
             "libopus",
             "-b:a",
@@ -199,16 +240,10 @@ async def _convert_video(source: Path, destination: Path) -> None:
             "-y",
             str(destination),
         ],
-        check=False,
+        phase="encode",
     )
-    if result.returncode:
-        raise MediaError(category="conversion")
-    verified = await anyio.run_process(
+    await run_ffmpeg(
         [
-            "ffmpeg",
-            "-nostdin",
-            "-v",
-            "error",
             "-xerror",
             "-i",
             str(destination),
@@ -216,7 +251,7 @@ async def _convert_video(source: Path, destination: Path) -> None:
             "null",
             "-",
         ],
-        check=False,
+        phase="validate",
     )
-    if verified.returncode or not (await anyio.Path(destination).stat()).st_size:
+    if not (await anyio.Path(destination).stat()).st_size:
         raise MediaError(category="conversion")

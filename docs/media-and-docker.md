@@ -31,15 +31,21 @@ This updates the registry tag only and does not restart deployed containers.
 
 ## Archival and retries
 
-Media paths are `media/{platform}/{post_id}/{scope}/{original_index}.webp` or
-`.webm`; JSON references use `/social-media/media/...`. Once a slot has been
+Media paths are `media/{platform}/{post_id}/{scope}/{original_index}.{extension}`;
+JSON references use `/social-media/media/...`. Once a slot has been
 successfully published, its file and owned URL are reused permanently, including
 when the provider returns a different signed URL or omits the media on refresh.
 Old media is not downloaded or converted again. All retained posts are inspected
 for unarchived slots, including historical posts outside the collection window.
 
-Images, avatars, document covers, job logos, and video posters become WebP.
-Videos become VP9/Opus WebM at their original dimensions. X videos and animated
+With `ENABLE_MEDIA_COMPRESSION=true` (the default), images, avatars, document
+covers, job logos, and video posters become WebP; videos become VP9/Opus WebM at
+their original dimensions. Set it to `false` to preserve downloaded bytes without
+image re-encoding or FFmpeg invocation. Supported originals are JPEG, PNG, GIF,
+WebP, AVIF, MP4, MOV, and WebM; extensions are detected from the downloaded content,
+not signed URL suffixes. Unsupported content keeps its source URL and follows the
+media failure policy. Changing the setting affects only unarchived slots and retries,
+never existing files. X videos and animated
 GIFs use one highest-bitrate progressive variant and its poster, including
 quoted/referenced-post media. HLS playlists and navigation links are excluded.
 No format can guarantee a particular file size or browser compatibility.
@@ -59,9 +65,10 @@ Previously permanent entries still require the manual repair described below.
 
 `state.json` contains:
 
-- `accounts`: canonical account URL to last successful collection timestamp.
-  The next collection starts three days before that timestamp and ends on the
-  current UTC date. Failed accounts do not advance; successful accounts advance
+- `accounts`: canonical account URL to last successful collection timestamp,
+  retained for status only. Existing accounts always collect from the current UTC
+  run date minus three days through the run date; this does not expand after downtime.
+  Failed accounts do not advance; successful accounts advance
   even if some media fails. Explicit date overrides retain their existing behavior.
 - `pending_media` and `failed_media`: entries with `post_id` (platform-qualified
   Post ID), `scope`, `index`, `source_url`, `failed_runs`, and a safe `error` category.
@@ -82,8 +89,8 @@ Do not delete archived files or change their owned paths to request a re-encode.
 
 The image uses `WORKDIR /app`, public snapshot volume `/data`, and private service
 volume `/state`. Host paths are entirely operator-selected. `/state` contains the
-lock, scheduler status, and candidate JSON plus newly archived media used for
-interrupted publication recovery; never expose it through Apache. Historical
+lock, scheduler status, collected posts, media work files, and the candidate used
+for interrupted publication recovery; never expose it through Apache. Historical
 media remains in `/data` and is not copied into the candidate. Back up both volumes.
 
 The included `docker-compose.yaml` uses the published image and bind-mounts
@@ -121,9 +128,10 @@ Optional runtime environment settings (defaults shown):
 | Setting | Default |
 | --- | --- |
 | `CRON_SCHEDULE` | `17 3 * * *` |
+| `ENABLE_MEDIA_COMPRESSION` | `true` |
 | `TIMEZONE` | Unset: use the host-mounted `/etc/localtime` |
 | `REFRESH_ON_STARTUP` | `true` |
-| `WORKER_TIMEOUT_SECONDS` | `7200` |
+| `WORKER_TIMEOUT_SECONDS` | `0` (no deadline) |
 | `PUID`, `PGID` | `1000`, `1000` |
 
 Compose and the README's Linux `docker run` example mount the host's
@@ -147,7 +155,50 @@ docker compose exec subscriber python -m social_media_subscriber refresh-local
 ```
 
 Exit `75` means another worker holds the lock; no overlapping collection starts.
-Timeout exits `124`, and shutdown terminates the worker and FFmpeg process group.
+There is no per-video encoding deadline or default whole-worker deadline. If an
+explicit positive `WORKER_TIMEOUT_SECONDS` is set, timeout exits `124`. Set an old
+deployment's `7200` value to `0` to disable its previous limit. Shutdown still
+terminates the worker and FFmpeg process group, and the lock prevents overlap.
+
+Before media processing, `/state/work/snapshot` saves collected posts and their
+existing media references. `/state/work/media/...` holds completed new media;
+per-slot `.encoding-<index>` directories hold inputs and unfinished outputs.
+A completed download is atomically renamed from `.download` to `.input`. Only a
+validated media output receives its final slot filename. The next run resumes the
+saved posts without another provider call, reuses completed media and inputs, and
+restarts interrupted encodes/downloads rather than treating partial files as valid.
+Resumed runs report zero newly collected accounts. Failure queues are committed
+with the final snapshot, not after each individual media attempt.
+
+The work directory is removed only after successful publication, including a
+publication with media failures retained in `state.json`. Do not remove `/state`
+when recreating the container. Old versions' random `/tmp` directories are not
+automatically imported into this layout.
+
+### Runtime logs
+
+```sh
+docker compose logs -f --tail=100 subscriber
+```
+
+Docker logs default to INFO, with UTC timestamps. Routine HTTP debug requests are
+hidden. Logs distinguish account collection/windows, provider task status, dataset
+counts, media download/retry/reuse, encoding, decode validation, snapshot writing,
+publication, and the next scheduled run. Accounts use their existing record filenames
+so they can be matched to `accounts.json` without logging input URLs. Media events
+carry the post ID, scope, original index, and batch position/total.
+
+Long video encoding and validation emit a heartbeat every 30 seconds with elapsed
+time and the latest numeric FFmpeg progress: `frames`, `fps`, `media_seconds`, and
+`speed_x`. Missing fields mean FFmpeg has not supplied a valid value yet; these are
+not completion percentages. Provider polling logs status changes and a periodic
+30-second update instead of every HTTP request. Tokens, signed media URLs, raw
+provider responses, and raw FFmpeg diagnostics are not logged.
+
+The command does not specify `-threads`: FFmpeg and its codecs select their default
+threading automatically. There is no application-enforced two-thread limit, and
+codec auto-detection is not a guarantee of respecting a VM/container CPU quota.
+
 Completed candidates are replayed after interrupted publication. Media publishes
 first, then records and indexes, with business state last. Publication is per-file
 atomic, not a transaction across all JSON files. Interrupted temporary files use

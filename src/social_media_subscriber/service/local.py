@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import fcntl
 import shutil
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import anyio
+import structlog
 
 from social_media_subscriber.application.collect import (
     CollectionRequest,
@@ -19,6 +21,8 @@ from social_media_subscriber.application.results import (
 )
 from social_media_subscriber.publishing.local import publish_local
 from social_media_subscriber.storage.safe_directory import UnsafePathError
+
+_LOGGER = structlog.stdlib.get_logger()
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -48,18 +52,34 @@ def refresh_local(
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
+            _LOGGER.info("service.refresh.skipped", reason="lock_held")
             return None
-        return _refresh_locked(snapshot, state_dir, settings)
+        started = time.monotonic()
+        _LOGGER.info("service.refresh.started")
+        result = _refresh_locked(snapshot, state_dir, settings)
+        _LOGGER.info(
+            "service.refresh.completed",
+            exit_code=int(result.exit_code),
+            elapsed_seconds=round(time.monotonic() - started, 1),
+        )
+        return result
 
 
 def _refresh_locked(
     snapshot: Path, state_dir: Path, settings: Settings
 ) -> CollectionResult:
     candidate = state_dir / "candidate"
+    work = state_dir / "work"
+    if work.is_symlink():
+        raise UnsafePathError
     if candidate.exists():
+        _LOGGER.info("snapshot.publish.started", recovery=True)
         # Promoted candidates contain complete JSON and any newly archived media.
         publish_local(candidate, snapshot)
+        if work.exists():
+            shutil.rmtree(work)
         shutil.rmtree(candidate)
+        _LOGGER.info("snapshot.publish.completed", recovery=True)
     previous = snapshot
     if not snapshot.exists() or not any(snapshot.iterdir()):
         previous = state_dir / "absent-baseline"
@@ -73,9 +93,14 @@ def _refresh_locked(
             candidate,
             datetime.now(UTC),
             local_media_root=snapshot,
+            work_dir=work,
         ),
     )
     if result.exit_code in (CollectionExitCode.SUCCESS, CollectionExitCode.PARTIAL):
+        _LOGGER.info("snapshot.publish.started", recovery=False)
         publish_local(candidate, snapshot)
+        if work.exists():
+            shutil.rmtree(work)
         shutil.rmtree(candidate)
+        _LOGGER.info("snapshot.publish.completed", recovery=False)
     return result

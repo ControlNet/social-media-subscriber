@@ -31,14 +31,21 @@ _DEFAULT_CONFIG: Final = HttpClientConfig()
 
 
 def _endpoint_name(path: str) -> str:
-    if path == "/datasets/v3/scrape":
-        return "scrape"
-    if path == "/datasets/v3/trigger":
-        return "trigger"
-    if path.startswith("/datasets/v3/progress/"):
-        return "snapshot_progress"
-    if path.startswith("/datasets/v3/snapshot/"):
-        return "snapshot_download"
+    exact = {"/datasets/v3/scrape": "scrape", "/datasets/v3/trigger": "trigger"}
+    if path in exact:
+        return exact[path]
+    for prefix, name in (
+        ("/datasets/v3/progress/", "snapshot_progress"),
+        ("/datasets/v3/snapshot/", "snapshot_download"),
+        ("/v2/actor-runs/", "actor_progress"),
+        ("/v2/key-value-stores/", "actor_record"),
+    ):
+        if path.startswith(prefix):
+            return name
+    if path.startswith("/v2/acts/") and path.endswith("/runs"):
+        return "actor_start"
+    if path.startswith("/v2/datasets/") and path.endswith("/items"):
+        return "actor_dataset"
     return "unsupported"
 
 

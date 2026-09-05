@@ -59,24 +59,24 @@ async def test_unexpected_converter_errors_are_not_reclassified(
     monkeypatch.setattr(convert, "download", download)
     monkeypatch.setattr(convert, "convert_image", broken)
     with pytest.raises(type(error)) as caught:
-        await convert.materialize_media(
+        _ = await convert.materialize_media(
             media_slots(synthetic_post())[0], tmp_path / "result.webp"
         )
     assert caught.value is error
 
 
 @pytest.mark.anyio
-async def test_video_timeout_is_an_expected_conversion_failure(
+async def test_video_conversion_has_no_deadline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def download(_url: str, target: Path, _limit: int) -> None:
         _ = await anyio.Path(target).write_bytes(b"synthetic video input")
 
-    async def timeout(_source: Path, _destination: Path) -> None:
-        raise TimeoutError
+    async def encode(_source: Path, destination: Path) -> None:
+        assert anyio.current_effective_deadline() == float("inf")
+        _ = await anyio.Path(destination).write_bytes(b"synthetic encoded video")
 
     monkeypatch.setattr(convert, "download", download)
-    monkeypatch.setattr(convert, "_convert_video", timeout)
+    monkeypatch.setattr(convert, "_convert_video", encode)
     slot = replace(media_slots(synthetic_post())[0], kind="video")
-    with pytest.raises(MediaError, match="conversion"):
-        await convert.materialize_media(slot, tmp_path / "result.webm")
+    _ = await convert.materialize_media(slot, tmp_path / "result.webm")

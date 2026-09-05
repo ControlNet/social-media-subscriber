@@ -263,7 +263,7 @@ async def test_git_snapshot_contains_media_and_reuses_complete_previous(
     )
 
 
-def test_watermark_catches_up_after_long_gap() -> None:
+def test_window_starts_three_days_before_run_even_after_long_gap() -> None:
     account = _account()
     progress = RunState(accounts={str(account.id): datetime(2026, 8, 1, tzinfo=UTC)})
     state = SnapshotState((account,), (), progress)
@@ -272,7 +272,7 @@ def test_watermark_catches_up_after_long_gap() -> None:
         state,
         WindowContext(datetime(2026, 9, 1, tzinfo=UTC), ExplicitWindow(None, None)),
     )
-    assert requests[0].start_date.isoformat() == "2026-07-29"
+    assert requests[0].start_date.isoformat() == "2026-08-29"
     assert requests[0].end_date.isoformat() == "2026-09-01"
 
 
@@ -337,7 +337,7 @@ async def test_video_conversion_uses_real_ffmpeg(
     monkeypatch.setattr(convert, "download", download)
 
     target = tmp_path / "output.webm"
-    await convert.materialize_media(
+    _ = await convert.materialize_media(
         MediaSlot(
             "main-videos",
             0,

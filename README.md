@@ -32,7 +32,7 @@ collection with GitHub Actions.
 
 - Collect posts from LinkedIn people/company pages and X profiles.
 - Keep historical posts and collect updates incrementally.
-- Archive images as WebP and videos as WebM, reusing previously saved media.
+- Archive original media or compress images to WebP and videos to WebM, reusing saved files.
 - Keep posts available when media downloads fail, with automatic media retries.
 - Export posts and media as static files for your existing web server.
 
@@ -78,6 +78,13 @@ The default data directory is `./social-media`. Serve it at `/social-media/`
 through your existing web server. Runtime state is stored in `./state`, mounted
 at `/state` inside the container; keep it private.
 
+Set `ENABLE_MEDIA_COMPRESSION` to `false` to archive original images and videos
+without conversion. The default is `true`; already archived files stay unchanged.
+
+Slow conversions have no default time limit. Interrupted runs resume from
+`./state`, reusing completed media and fully downloaded inputs; unfinished videos
+restart encoding. Keep this directory when recreating the container.
+
 ## Docker
 
 Prefer a standalone container? Replace the `YOUR_...` values and run:
@@ -91,6 +98,7 @@ docker run -d \
   --env SOURCES='apify:YOUR_APIFY_TOKEN,brightdata:YOUR_BRIGHTDATA_TOKEN' \
   --env PUID="$(id -u)" \
   --env PGID="$(id -g)" \
+  --env ENABLE_MEDIA_COMPRESSION=true \
   --volume "$PWD/social-media:/data" \
   --volume "$PWD/state:/state" \
   --volume /etc/localtime:/etc/localtime:ro \

@@ -83,15 +83,8 @@ def build_post_requests(
             if end_date is None:
                 raise WindowInputError(WindowInputErrorCategory.INCOMPLETE)
         else:
-            last_collected = (
-                previous.run_state.accounts.get(str(account.id))
-                if previous is not None and previous.run_state is not None
-                else None
-            )
             start_date = (
-                last_collected.date() - timedelta(days=_OVERLAP_DAYS)
-                if last_collected is not None
-                else run_date - timedelta(days=_OVERLAP_DAYS)
+                run_date - timedelta(days=_OVERLAP_DAYS)
                 if account.id in prior_account_ids
                 else earliest_collection_date(account.platform)
             )

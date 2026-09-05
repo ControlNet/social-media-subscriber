@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Final, Self, final
 
 import anyio
@@ -160,6 +161,9 @@ class BrightDataClient:
     async def _await_snapshot[ModelT](
         self, snapshot_id: BrightDataSnapshotId, item_type: type[ModelT]
     ) -> tuple[ModelT, ...]:
+        started = time.monotonic()
+        next_log = started
+        previous_status = ""
         polls = int(self._snapshot_timeout_seconds / SNAPSHOT_POLL_SECONDS)
         for _poll in range(polls):
             await self._sleeper(SNAPSHOT_POLL_SECONDS)
@@ -175,6 +179,22 @@ class BrightDataClient:
                     BrightDataErrorCategory.SCHEMA, snapshot_accepted=True
                 ) from None
             status = progress.status.casefold()
+            if status != previous_status or time.monotonic() >= next_log:
+                await _LOGGER.ainfo(
+                    "provider.run.progress",
+                    provider="brightdata",
+                    status=status
+                    if status
+                    in (
+                        _ACTIVE_SNAPSHOT_STATUSES
+                        | _TERMINAL_SNAPSHOT_STATUSES
+                        | {"ready"}
+                    )
+                    else "unknown",
+                    elapsed_seconds=round(time.monotonic() - started, 1),
+                )
+                previous_status = status
+                next_log = time.monotonic() + 30
             if status == "ready":
                 downloaded = await self._snapshot_request(
                     "GET",

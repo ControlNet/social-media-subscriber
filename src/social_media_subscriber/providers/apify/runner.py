@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Final, Self, final
 
 import anyio
 import httpx2
+import structlog
 from pydantic import TypeAdapter, ValidationError
 
 from social_media_subscriber.providers.apify.constants import (
@@ -36,6 +38,24 @@ _ACTIVE_STATUSES: Final = frozenset({"READY", "RUNNING"})
 _SUCCESS_STATUS: Final = "SUCCEEDED"
 _DATASET_PAGE_SIZE: Final = 1_000
 _JSON_VALUES: Final[TypeAdapter[list[JsonValue]]] = TypeAdapter(list[JsonValue])
+_LOGGER = structlog.stdlib.get_logger()
+_RUN_STATUSES = _ACTIVE_STATUSES | {
+    "SUCCEEDED",
+    "FAILED",
+    "TIMED-OUT",
+    "ABORTED",
+    "ABORTING",
+    "TIMING-OUT",
+}
+
+
+async def _log_progress(status: str, started: float) -> None:
+    await _LOGGER.ainfo(
+        "provider.run.progress",
+        provider="apify",
+        status=status if status in _RUN_STATUSES else "UNKNOWN",
+        elapsed_seconds=round(time.monotonic() - started, 1),
+    )
 
 
 @final
@@ -124,6 +144,9 @@ class ApifyActorRunner:
             except ValidationError:
                 raise ApifyError(ApifyErrorCategory.SCHEMA, run_accepted=True) from None
             values.extend(page)
+            await _LOGGER.ainfo(
+                "provider.dataset.progress", provider="apify", records=len(values)
+            )
             if len(page) < _DATASET_PAGE_SIZE:
                 return tuple(values)
             offset += len(page)
@@ -136,13 +159,20 @@ class ApifyActorRunner:
         return response.content
 
     async def _await_run(self, run: ApifyRun) -> ApifyRun:
+        started = time.monotonic()
+        next_log = started + 30
+        await _log_progress(run.status, started)
         polls = max(1, int(self._run_timeout_seconds / RUN_POLL_SECONDS))
         for _poll in range(polls):
             if run.status not in _ACTIVE_STATUSES:
                 return run
             await self._sleeper(RUN_POLL_SECONDS)
             response = await self._accepted_request("GET", f"/v2/actor-runs/{run.id}")
+            previous_status = run.status
             run = self._parse_run(response, accepted=True)
+            if run.status != previous_status or time.monotonic() >= next_log:
+                await _log_progress(run.status, started)
+                next_log = time.monotonic() + 30
         raise ApifyError(ApifyErrorCategory.TIMEOUT, run_accepted=True)
 
     @staticmethod

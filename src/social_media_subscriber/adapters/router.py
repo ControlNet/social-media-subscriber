@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import time
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Final, final
+
+import structlog
 
 from social_media_subscriber.adapters import instance as instance_contract
 from social_media_subscriber.adapters.operations import AdapterOperation
@@ -16,6 +19,7 @@ from social_media_subscriber.adapters.router_outcomes import (
     RouterRunStatus,
 )
 from social_media_subscriber.adapters.router_state import RouterRunState
+from social_media_subscriber.domain.ids import record_filename
 from social_media_subscriber.domain.platform import AccountKind, Platform
 
 if TYPE_CHECKING:
@@ -28,6 +32,36 @@ if TYPE_CHECKING:
     from social_media_subscriber.domain.ids import AccountId
 
 _MAX_BATCH_SIZE: Final = 20
+_LOGGER = structlog.stdlib.get_logger()
+
+
+async def _collect_with_logs(
+    adapter_instance: AdapterInstance, batch: instance_contract.AdapterBatch
+) -> instance_contract.AdapterAttempt:
+    started = time.monotonic()
+    for request in batch.requests:
+        await _LOGGER.ainfo(
+            "collection.account.started",
+            account_record=record_filename(request.account.id),
+            platform=request.account.platform.value,
+            driver=adapter_instance.driver_class.__name__,
+            start_date=request.start_date.isoformat(),
+            end_date=request.end_date.isoformat(),
+            initial=request.is_initial_collection,
+        )
+    with structlog.contextvars.bound_contextvars(
+        account_records=[record_filename(account.id) for account in batch.accounts],
+        driver=adapter_instance.driver_class.__name__,
+    ):
+        attempt = await adapter_instance.collect(batch)
+    await _LOGGER.ainfo(
+        "collection.batch.completed",
+        accounts=len(batch.accounts),
+        driver=adapter_instance.driver_class.__name__,
+        outcome=type(attempt).__name__,
+        elapsed_seconds=round(time.monotonic() - started, 1),
+    )
+    return attempt
 
 
 @final
@@ -162,7 +196,7 @@ class Router:
         for adapter_instance in compatible:
             if not state.is_healthy(adapter_instance):
                 continue
-            attempt = await adapter_instance.collect(batch)
+            attempt = await _collect_with_logs(adapter_instance, batch)
             match attempt:
                 case instance_contract.BatchCompleted(outcomes=account_outcomes):
                     return not state.accept(batch, account_outcomes)

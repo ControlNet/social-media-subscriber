@@ -9,8 +9,9 @@ services:
       PUID: "1000"
       PGID: "1000"
       CRON_SCHEDULE: "17 3 * * *"
+      ENABLE_MEDIA_COMPRESSION: "true"
       REFRESH_ON_STARTUP: "true"
-      WORKER_TIMEOUT_SECONDS: "7200"
+      WORKER_TIMEOUT_SECONDS: "0"
     volumes:
       - ./social-media:/data
       - ./state:/state

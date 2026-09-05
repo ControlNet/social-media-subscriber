@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import ClassVar, Protocol, cast
 from zoneinfo import ZoneInfo
 
+import structlog
 from apscheduler.triggers.cron import (  # pyright: ignore[reportMissingTypeStubs]
     CronTrigger,
 )
@@ -27,6 +28,7 @@ from social_media_subscriber.serialization.json import (
 )
 
 _LOCALTIME = Path("/etc/localtime")
+_LOGGER = structlog.stdlib.get_logger()
 
 
 def schedule_timezone(name: str | None) -> ZoneInfo:
@@ -44,15 +46,21 @@ class ServiceSettings(BaseSettings):
     cron_schedule: str = "17 3 * * *"
     timezone: str | None = None
     refresh_on_startup: bool = True
-    worker_timeout_seconds: int = Field(default=7200, gt=0)
+    worker_timeout_seconds: int = Field(default=0, ge=0)
 
 
-def run_worker(argv: list[str], stop: threading.Event, timeout: int) -> int:
+def run_worker(argv: list[str], stop: threading.Event, timeout: int = 0) -> int:
     """Terminate the complete worker/FFmpeg process group on stop or timeout."""
     with subprocess.Popen(argv, shell=False, start_new_session=True) as process:  # noqa: S603 - application-owned argv, no shell
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + timeout if timeout else None
         while process.poll() is None:
-            if stop.wait(0.2) or time.monotonic() >= deadline:
+            if stop.wait(0.2) or (
+                deadline is not None and time.monotonic() >= deadline
+            ):
+                _LOGGER.warning(
+                    "service.worker.stopping",
+                    reason="shutdown" if stop.is_set() else "timeout",
+                )
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(process.pid, signal.SIGTERM)
                 try:
@@ -123,6 +131,11 @@ def serve(settings: ServiceSettings, snapshot: Path, state_dir: Path) -> None:
             }
         )
         atomic_file(state_dir, Path("status.json"), canonical_json_value_bytes(status))
+        _LOGGER.info(
+            "service.scheduled",
+            next_run_at=next_run.isoformat(),
+            worker_timeout_seconds=settings.worker_timeout_seconds,
+        )
         if stop.wait(max(0, (next_run - datetime.now(UTC)).total_seconds())):
             break
         startup = False
@@ -145,6 +158,7 @@ def serve(settings: ServiceSettings, snapshot: Path, state_dir: Path) -> None:
             settings.worker_timeout_seconds,
         )
         finished = datetime.now(UTC).isoformat()
+        _LOGGER.info("service.worker.finished", exit_code=result)
         if result in (0, 4):
             last_success = finished
         status.update(

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from dataclasses import asdict, dataclass
 from enum import StrEnum
+
+import structlog
 
 from social_media_subscriber.publishing.git import (
     InvalidPublicationError,
@@ -17,6 +20,20 @@ from social_media_subscriber.publishing.process import (
     GitInterruptedError,
 )
 from social_media_subscriber.storage.repository import SnapshotIntegrityError
+
+
+def configure_logging() -> None:
+    """Send useful INFO progress to stderr, keeping stdout for CLI result JSON."""
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            structlog.dev.ConsoleRenderer(colors=False),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+    )
 
 
 class CliFailureCategory(StrEnum):

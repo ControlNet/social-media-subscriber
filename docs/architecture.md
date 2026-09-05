@@ -183,9 +183,9 @@ filter:
 - An account absent from the previous snapshot's Account set starts at its
   platform boundary and ends at `run_start_date`: LinkedIn uses `2003-05-05` and
   X uses `2006-03-21`.
-- An account with a successful timestamp in `state.json` starts three days
-  before that timestamp and ends at `run_start_date`, catching up after downtime.
-  Legacy snapshots without that timestamp use `run_start_date - 3 days`.
+- An existing account starts at `run_start_date - 3 days` and ends at
+  `run_start_date`, regardless of its latest post or last successful collection.
+  A long outage does not expand this window; use explicit dates for manual catch-up.
 - Account presence, not Post presence, determines the default. An Account that
   previously produced zero Posts still uses the three-day window on its next
   run.
@@ -270,7 +270,7 @@ records are deterministic JSON.
 ├── accounts.json                         # profile_url → record path map
 ├── posts.json                            # newest-first Post locator list
 ├── state.json                            # account progress and media retry queues
-├── media/<platform>/<post_id>/<scope>/<index>.webp-or-webm
+├── media/<platform>/<post_id>/<scope>/<index>.<extension>
 └── posts/<platform>/<encoded runtime Post ID>.json
 ```
 

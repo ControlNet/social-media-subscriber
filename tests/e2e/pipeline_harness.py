@@ -52,10 +52,12 @@ async def _isolated_archive(
     state: SnapshotState,
     directory: Path,
     *,
+    enable_compression: bool = True,
     refreshed_post_ids: frozenset[str] = frozenset(),  # pyright: ignore[reportCallInDefaultInitializer]
 ) -> tuple[SnapshotState, int]:
     """Synthetic provider scenarios leave media to dedicated archive tests."""
     assert directory.is_absolute()
+    assert isinstance(enable_compression, bool)
     assert isinstance(refreshed_post_ids, frozenset)
     return state, 0
 

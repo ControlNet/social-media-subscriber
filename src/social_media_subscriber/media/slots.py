@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from social_media_subscriber.media.formats import IMAGE_EXTENSIONS, VIDEO_MIME_TYPES
 from social_media_subscriber.storage.safe_directory import UnsafePathError
 
 if TYPE_CHECKING:
@@ -35,7 +36,9 @@ SCOPES = (
 _MEDIA_PATH = re.compile(
     r"media/(linkedin|x)/[A-Za-z0-9_-][A-Za-z0-9._-]*/("
     + "|".join(SCOPES)
-    + r")/(0|[1-9][0-9]*)\.(webp|webm)\Z"
+    + r")/(0|[1-9][0-9]*)\.("
+    + "|".join((*IMAGE_EXTENSIONS.values(), *VIDEO_MIME_TYPES))
+    + r")\Z"
 )
 type Location = tuple[str | int, ...]
 
@@ -86,9 +89,21 @@ class MediaSlot:
     source_url: str
     kind: Literal["image", "video"]
 
-    def path(self, post: Post) -> Path:
+    def path(self, post: Post, *, extension: str | None = None) -> Path:
         """Build a constrained public storage path."""
-        extension = "webp" if self.kind == "image" else "webm"
+        if extension is None:
+            extension = (
+                Path(self.source_url).suffix.removeprefix(".")
+                if self.source_url.startswith(PREFIX)
+                else "webp"
+                if self.kind == "image"
+                else "webm"
+            )
+        allowed = (
+            IMAGE_EXTENSIONS.values() if self.kind == "image" else VIDEO_MIME_TYPES
+        )
+        if extension not in allowed:
+            raise UnsafePathError
         path = (
             f"media/{post.platform.value}/{post.platform_post_id}/"
             f"{self.scope}/{self.index}.{extension}"
@@ -229,7 +244,7 @@ def _selected_variant(variants: JsonValue) -> int | None:
     for index, variant in enumerate(_items(variants)):
         value = object_value(variant)
         url = value.get("url")
-        if value.get("contentType") in ("video/mp4", "video/webm") and isinstance(
+        if value.get("contentType") in VIDEO_MIME_TYPES.values() and isinstance(
             url, str
         ):
             bitrate = value.get("bitrate")
@@ -247,7 +262,11 @@ def set_archived(content: dict[str, JsonValue], slot: MediaSlot, url: str) -> No
     """Rewrite one slot, including the selected X variant MIME type."""
     write_at(content, slot.location, url)
     if "videoVariants" in slot.location:
-        write_at(content, (*slot.location[:-1], "contentType"), "video/webm")
+        write_at(
+            content,
+            (*slot.location[:-1], "contentType"),
+            VIDEO_MIME_TYPES[Path(url).suffix.removeprefix(".")],
+        )
 
 
 def reconcile_media(previous: Post, current: Post) -> Post:
@@ -299,6 +318,8 @@ def validate_media_inventory(state: SnapshotState) -> None:
     for path in state.media:
         if not _MEDIA_PATH.fullmatch(path.as_posix()):
             raise UnsafePathError
+    if len({path.with_suffix("") for path in state.media}) != len(state.media):
+        raise UnsafePathError
     for post in state.posts:
         for slot in media_slots(post):
             if slot.source_url.startswith(PREFIX):
