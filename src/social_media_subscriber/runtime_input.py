@@ -48,7 +48,12 @@ class RuntimeInput(BaseModel):
 
 
 def _normalized_lines(secret: SecretStr) -> tuple[str, ...]:
-    normalized = secret.get_secret_value().replace("\r\n", "\n").replace("\r", "\n")
+    normalized = (
+        secret.get_secret_value()
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace(",", "\n")
+    )
     return tuple(line.strip() for line in normalized.split("\n") if line.strip())
 
 

@@ -26,12 +26,19 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-def test_settings_load_multiline_secrets_from_environment(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("separator", ["\n", ",", ",\r\n"])
+def test_settings_load_delimited_secrets_from_environment(
+    monkeypatch: pytest.MonkeyPatch, separator: str
 ) -> None:
     # Given
-    monkeypatch.setenv("ACCOUNTS", "https://linkedin.com/in/Ada")
-    monkeypatch.setenv("SOURCES", "brightdata:synthetic-key")
+    monkeypatch.setenv(
+        "ACCOUNTS",
+        separator.join(("https://linkedin.com/in/Ada", "https://x.com/synthetic/")),
+    )
+    monkeypatch.setenv(
+        "SOURCES",
+        separator.join(("brightdata:synthetic-key", "apify:synthetic-apify-key")),
+    )
 
     # When
     settings = Settings.model_validate({})
@@ -41,6 +48,9 @@ def test_settings_load_multiline_secrets_from_environment(
     assert isinstance(settings.sources, SecretStr)
     assert "Ada" not in repr(settings)
     assert "synthetic-key" not in repr(settings)
+    runtime = load_runtime_input(settings)
+    assert len(runtime.locators) == 2
+    assert len(runtime.sources) == 2
 
 
 def test_settings_are_frozen() -> None:
@@ -198,7 +208,10 @@ def test_locator_preserves_segment_spelling_when_generated_slug_is_valid(
     assert locator.canonical_url == f"https://www.linkedin.com/in/{segment}/"
 
 
-def test_runtime_input_normalizes_deduplicates_and_preserves_source_order() -> None:
+@pytest.mark.parametrize("separator", ["\n", "\r\n", "\r", ",", ",\r\n"])
+def test_runtime_input_normalizes_deduplicates_and_preserves_source_order(
+    separator: str,
+) -> None:
     # Given
     account_lines = (
         "\r\n  https://linkedin.com/in/Ada?trk=one  \r\n",
@@ -213,8 +226,8 @@ def test_runtime_input_normalizes_deduplicates_and_preserves_source_order() -> N
         "apify:synthetic-apify-two\r\n",
     )
     settings = Settings(
-        accounts=SecretStr("".join(account_lines)),
-        sources=SecretStr("".join(source_lines)),
+        accounts=SecretStr("".join(account_lines).replace("\r\n", separator)),
+        sources=SecretStr("".join(source_lines).replace("\r\n", separator)),
     )
 
     # When
@@ -244,6 +257,18 @@ def test_runtime_input_normalizes_deduplicates_and_preserves_source_order() -> N
 @pytest.mark.parametrize(
     ("accounts", "sources", "category", "field"),
     [
+        (
+            " , \r\n, ",
+            "brightdata:synthetic-key",
+            AccountInputErrorCategory.EMPTY_ACCOUNTS,
+            AccountInputField.ACCOUNTS,
+        ),
+        (
+            "https://linkedin.com/in/Ada",
+            " , \r\n, ",
+            AccountInputErrorCategory.EMPTY_SOURCES,
+            AccountInputField.SOURCES,
+        ),
         (
             " \r\n\n ",
             "brightdata:synthetic-key",
@@ -288,6 +313,14 @@ def test_runtime_input_is_rejected_when_required_set_is_empty(
         (":credential", AccountInputErrorCategory.INVALID_SOURCE),
         ("brightdata:", AccountInputErrorCategory.INVALID_SOURCE),
         ("unknown:credential", AccountInputErrorCategory.UNSUPPORTED_SOURCE),
+        (
+            "apify:synthetic-valid,missing-separator",
+            AccountInputErrorCategory.INVALID_SOURCE,
+        ),
+        (
+            "apify:synthetic-valid,unknown:synthetic-private",
+            AccountInputErrorCategory.UNSUPPORTED_SOURCE,
+        ),
     ],
 )
 def test_source_line_is_rejected_atomically_without_exposing_credential(

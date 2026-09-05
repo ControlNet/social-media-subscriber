@@ -1,0 +1,20 @@
+services:
+  subscriber:
+    image: controlnet/social-media-subscriber:latest
+    restart: unless-stopped
+    environment:
+      # Replace all YOUR_... placeholders before starting; never commit real credentials.
+      ACCOUNTS: "https://www.linkedin.com/in/YOUR_LINKEDIN_PROFILE/,https://www.linkedin.com/company/YOUR_COMPANY/,https://x.com/YOUR_X_HANDLE/"
+      SOURCES: "apify:YOUR_APIFY_TOKEN,brightdata:YOUR_BRIGHTDATA_TOKEN"
+      PUID: "1000"
+      PGID: "1000"
+      CRON_SCHEDULE: "17 3 * * *"
+      TIMEZONE: UTC
+      REFRESH_ON_STARTUP: "true"
+      WORKER_TIMEOUT_SECONDS: "7200"
+    volumes:
+      - ./social-media:/data
+      - subscriber-state:/state
+
+volumes:
+  subscriber-state:

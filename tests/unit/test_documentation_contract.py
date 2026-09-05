@@ -9,22 +9,48 @@ ARCHITECTURE: Final = (PROJECT_ROOT / "docs/architecture.md").read_text(
     encoding="utf-8"
 )
 OPERATIONS: Final = (PROJECT_ROOT / "docs/operations.md").read_text(encoding="utf-8")
-ALL_IDENTITY_DOCS: Final = f"{README}\n{ARCHITECTURE}\n{OPERATIONS}"
+ALL_IDENTITY_DOCS: Final = f"{ARCHITECTURE}\n{OPERATIONS}"
 NORMALIZED_IDENTITY_DOCS: Final = " ".join(ALL_IDENTITY_DOCS.replace("`", "").split())
 
 
 def test_readme_has_docker_run_example_with_persistent_volumes() -> None:
     for command in (
         "docker run -d",
-        "--env ACCOUNTS",
-        "--env SOURCES",
+        "--env-file .env.local",
         '--volume "$PWD/social-media:/data"',
         "--volume social-media-subscriber-state:/state",
         "controlnet/social-media-subscriber:latest",
     ):
         assert command in README
     assert "provider charges" in README
-    assert "multiline values" in README
+    assert "Both accept commas, newlines" in README
+    assert "--platform linux/amd64" not in README
+
+
+def test_readme_focuses_on_features_and_usage() -> None:
+    for heading in (
+        "## Features",
+        "## Configuration",
+        "## Docker Compose",
+        "## Docker",
+        "## GitHub Actions",
+        "## Local use",
+        "## Documentation",
+    ):
+        assert heading in README
+    for detail in (
+        "## Exit contract",
+        "## Persisted data boundary",
+        "profileReplies",
+        "Account.id",
+    ):
+        assert detail not in README
+    for document in (
+        "docs/operations.md",
+        "docs/architecture.md",
+        "docs/media-and-docker.md",
+    ):
+        assert document in README
 
 
 def test_url_identity_docs_define_the_exact_persisted_identity() -> None:
