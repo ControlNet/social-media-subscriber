@@ -5,6 +5,7 @@ from datetime import date
 
 import httpx2
 import pytest
+from structlog.testing import capture_logs
 
 from social_media_subscriber.providers.apify.constants import (
     APIFY_X_ACTOR,
@@ -167,7 +168,10 @@ async def test_x_client_maps_strict_zero_output_diagnostic_to_empty_posts() -> N
 
 
 @pytest.mark.anyio
-async def test_x_client_rejects_budget_limited_run_before_dataset_download() -> None:
+@pytest.mark.parametrize("completion_reason", ["budget_limited", "upstream_limit"])
+async def test_x_client_accepts_partial_run_with_valid_posts(
+    completion_reason: str,
+) -> None:
     dataset_requests = 0
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -178,12 +182,11 @@ async def test_x_client_rejects_budget_limited_run_before_dataset_download() -> 
             return httpx2.Response(
                 200,
                 json=_report(
-                    completion_reason="budget_limited",
-                    real_rows=16,
+                    completion_reason=completion_reason,
                 ),
             )
         dataset_requests += 1
-        return httpx2.Response(200, json=[])
+        return httpx2.Response(200, json=[_POST])
 
     client = ApifyXClient(
         "synthetic-token",
@@ -191,8 +194,8 @@ async def test_x_client_rejects_budget_limited_run_before_dataset_download() -> 
         transport=httpx2.MockTransport(handler),
     )
 
-    with pytest.raises(ApifyError) as captured:
-        _ = await client.collect_posts(
+    with capture_logs() as logs:
+        posts = await client.collect_posts(
             ApifyXPostInput(
                 "https://x.com/synthetic_ada/",
                 date(2006, 3, 21),
@@ -200,9 +203,9 @@ async def test_x_client_rejects_budget_limited_run_before_dataset_download() -> 
             )
         )
 
-    assert captured.value.category is ApifyErrorCategory.INCOMPLETE
-    assert captured.value.run_accepted is True
-    assert dataset_requests == 0
+    assert tuple(post.id for post in posts) == ("2001",)
+    assert dataset_requests == 1
+    assert any(log["event"] == "provider.x.partial_results" for log in logs)
     await client.aclose()
 
 
@@ -236,12 +239,17 @@ async def test_x_client_rejects_untyped_or_mock_dataset_rows() -> None:
 
 
 @pytest.mark.anyio
-async def test_x_client_rejects_report_dataset_count_mismatch() -> None:
+@pytest.mark.parametrize("completion_reason", ["source_exhausted", "budget_limited"])
+async def test_x_client_rejects_report_dataset_count_mismatch(
+    completion_reason: str,
+) -> None:
     def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == f"/v2/acts/{APIFY_X_ACTOR}/runs":
             return httpx2.Response(201, json=_run())
         if request.url.path.endswith("/records/run-report"):
-            return httpx2.Response(200, json=_report(real_rows=2))
+            return httpx2.Response(
+                200, json=_report(real_rows=2, completion_reason=completion_reason)
+            )
         return httpx2.Response(200, json=[_POST])
 
     client = ApifyXClient(
@@ -265,9 +273,7 @@ async def test_x_client_rejects_report_dataset_count_mismatch() -> None:
 
 
 @pytest.mark.anyio
-async def test_x_client_rejects_nonzero_report_anomaly_before_dataset_download() -> (
-    None
-):
+async def test_x_client_accepts_report_anomalies_with_safe_warning() -> None:
     dataset_requests = 0
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -276,10 +282,14 @@ async def test_x_client_rejects_nonzero_report_anomaly_before_dataset_download()
             return httpx2.Response(201, json=_run())
         if request.url.path.endswith("/records/run-report"):
             report = _report()
-            report["anomalyCounts"] = {"syntheticAnomaly": 1}
+            report["anomalyCounts"] = {
+                "non-retryable-http-error": 1,
+                "target-not-found": 1,
+                "synthetic-private-anomaly": 0,
+            }
             return httpx2.Response(200, json=report)
         dataset_requests += 1
-        return httpx2.Response(200, json=[])
+        return httpx2.Response(200, json=[_POST])
 
     client = ApifyXClient(
         "synthetic-token",
@@ -287,8 +297,8 @@ async def test_x_client_rejects_nonzero_report_anomaly_before_dataset_download()
         transport=httpx2.MockTransport(handler),
     )
 
-    with pytest.raises(ApifyError) as captured:
-        _ = await client.collect_posts(
+    with capture_logs() as logs:
+        posts = await client.collect_posts(
             ApifyXPostInput(
                 "https://x.com/synthetic_ada/",
                 date(2026, 8, 17),
@@ -296,19 +306,43 @@ async def test_x_client_rejects_nonzero_report_anomaly_before_dataset_download()
             )
         )
 
-    assert captured.value.category is ApifyErrorCategory.INCOMPLETE
-    assert captured.value.run_accepted is True
-    assert dataset_requests == 0
+    assert tuple(post.id for post in posts) == ("2001",)
+    assert dataset_requests == 1
+    warning = next(log for log in logs if log["event"] == "provider.x.partial_results")
+    assert warning["log_level"] == "warning"
+    assert warning["posts"] == 1
+    assert warning["anomaly_count"] == 2
+    assert "synthetic-private-anomaly" not in json.dumps(warning)
+    assert "synthetic-token" not in json.dumps(warning)
+    assert "Synthetic X post" not in json.dumps(warning)
     await client.aclose()
 
 
 @pytest.mark.anyio
-async def test_x_client_rejects_exhausted_nonzero_outcome_with_empty_dataset() -> None:
+@pytest.mark.parametrize(
+    ("completion_reason", "failed_subtargets", "anomaly_count"),
+    [
+        ("source_exhausted", 0, 0),
+        ("budget_limited", 0, 0),
+        ("source_exhausted", 1, 0),
+        ("source_exhausted", 0, 1),
+        ("pagination_safety_limit", 0, 1),
+    ],
+)
+async def test_x_client_rejects_incomplete_empty_dataset(
+    completion_reason: str, failed_subtargets: int, anomaly_count: int
+) -> None:
     def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == f"/v2/acts/{APIFY_X_ACTOR}/runs":
             return httpx2.Response(201, json=_run())
         if request.url.path.endswith("/records/run-report"):
-            return httpx2.Response(200, json=_report(real_rows=0))
+            report = _report(
+                real_rows=0,
+                completion_reason=completion_reason,
+                failed_subtargets=failed_subtargets,
+            )
+            report["anomalyCounts"] = {"syntheticAnomaly": anomaly_count}
+            return httpx2.Response(200, json=report)
         return httpx2.Response(200, json=[])
 
     client = ApifyXClient(
@@ -332,7 +366,7 @@ async def test_x_client_rejects_exhausted_nonzero_outcome_with_empty_dataset() -
 
 
 @pytest.mark.anyio
-async def test_x_client_rejects_failed_subtargets_before_dataset_download() -> None:
+async def test_x_client_accepts_valid_posts_despite_failed_subtargets() -> None:
     dataset_requests = 0
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -342,7 +376,7 @@ async def test_x_client_rejects_failed_subtargets_before_dataset_download() -> N
         if request.url.path.endswith("/records/run-report"):
             return httpx2.Response(200, json=_report(failed_subtargets=1))
         dataset_requests += 1
-        return httpx2.Response(200, json=[])
+        return httpx2.Response(200, json=[_POST])
 
     client = ApifyXClient(
         "synthetic-token",
@@ -350,8 +384,8 @@ async def test_x_client_rejects_failed_subtargets_before_dataset_download() -> N
         transport=httpx2.MockTransport(handler),
     )
 
-    with pytest.raises(ApifyError) as captured:
-        _ = await client.collect_posts(
+    with capture_logs() as logs:
+        posts = await client.collect_posts(
             ApifyXPostInput(
                 "https://x.com/synthetic_ada/",
                 date(2026, 8, 17),
@@ -359,9 +393,10 @@ async def test_x_client_rejects_failed_subtargets_before_dataset_download() -> N
             )
         )
 
-    assert captured.value.category is ApifyErrorCategory.INCOMPLETE
-    assert captured.value.run_accepted is True
-    assert dataset_requests == 0
+    assert tuple(post.id for post in posts) == ("2001",)
+    assert dataset_requests == 1
+    warning = next(log for log in logs if log["event"] == "provider.x.partial_results")
+    assert warning["failed_subtargets"] == 1
     await client.aclose()
 
 

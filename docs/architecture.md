@@ -243,18 +243,19 @@ The run request also omits `maxTotalChargeUsd`; pricing and budget approval are
 operational controls rather than client-side truncation mechanisms. Xquik
 1.12.65 and later store their completion report under `run-report` and may use
 `outcome=partial` even when a selected route finishes normally.
-The adapter accepts `outcome=complete` or `outcome=partial` with zero failed
-subtargets when `completionReason=source_exhausted` or
-`completionReason=pagination_safety_limit`. A pagination safety limit is a
-deliberate best-effort result: accepted rows are published, and a validated
-empty dataset maps to no new Posts, even though the search did not prove source
-exhaustion. Both completion paths require report counts to exactly match the
-downloaded dataset, no diagnostic rows, and no nonzero anomaly count. A
-validated `zero-output` report plus its single diagnostic also maps to an empty
-Post tuple; an exhausted nonzero outcome with an empty dataset remains
-incomplete. Budget-limited, failed-subtarget, count-mismatched,
-diagnostic-mixed, or unknown results are rejected as accepted-run failures, so
-the Router does not start a second paid fallback.
+For a succeeded Actor run, the adapter accepts valid Posts with
+`outcome=complete` or `outcome=partial` regardless of completion reason,
+reported anomalies, or failed subtargets. Budget limits and upstream failures
+must not discard usable data. Except for clean `source_exhausted` results,
+acceptance logs `provider.x.partial_results` with Post, failed-subtarget, and
+anomaly counts; it does not guarantee complete historical coverage.
+Report counts must still exactly match the downloaded dataset, and mixed
+diagnostic rows are rejected. Schema and Account ownership validation remain
+unchanged. An empty dataset is accepted for `pagination_safety_limit` only
+without anomalies or failed subtargets. A clean `zero-output` report plus its
+single diagnostic also maps to an empty Post tuple. Other empty or invalid
+results remain accepted-run failures, so the Router does not start a second
+paid fallback.
 Rich tweet content remains open after recursive credential and transport-field
 rejection; canonical engagement keys are `bookmarks`, `likes`, `quotes`,
 `replies`, `reposts`, and `views`.

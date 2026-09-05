@@ -289,17 +289,19 @@ route sends `maxItems` or `maxTotalChargeUsd`. The client validates the returned
 provider dataset and applies the requested inclusive UTC date window locally.
 The incremental search route can omit replies even when it reports source
 exhaustion, so it is a cost control rather than a completeness boundary.
-Publication requires the Actor's `run-report` record to show zero failed
-subtargets and either `source_exhausted` or `pagination_safety_limit`, plus exact
-report/dataset row counts and zero reported anomalies. Source-exhausted
-nonzero outcomes require a nonempty tweet dataset. A pagination safety limit is
-accepted as best effort and may publish a validated empty dataset, even though
-it does not prove window completeness. Current Actor versions may pair either
-completion reason with `outcome=partial`, so the adapter accepts that outcome as
-well as `outcome=complete`; budget-limited and unknown completion reasons remain
-incomplete. A strict zero-output report and its single diagnostic map to an
-empty result. An accepted paid run does not fail over to another token or
-provider after a later report, dataset, or schema failure.
+For a succeeded Actor run with `outcome=complete` or `outcome=partial`, valid
+Posts are retained even with reported anomalies, failed subtargets, budget
+limits, or an unfamiliar completion reason. The warning
+`provider.x.partial_results` records the retained dataset Post count and
+failed-subtarget/anomaly counts without logging raw provider content. These
+results may be incomplete; acceptance does not establish historical coverage.
+Exact report/dataset row counts, Post schemas, and Account ownership are still
+validated, and mixed diagnostic rows are rejected. An empty dataset is accepted
+for `pagination_safety_limit` only without anomalies or failed subtargets; a
+strict zero-output report and its single diagnostic also map to an empty result.
+Other incomplete empty results fail the Account attempt. An accepted paid run
+does not fail over to another token or provider after a later report, dataset,
+or schema failure.
 
 After a successful Xquik dataset is normalized, eligible X replies and native
 `RT @handle:` reposts are enriched through the unauthenticated X syndication

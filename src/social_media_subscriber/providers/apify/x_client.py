@@ -6,6 +6,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Final, Self, final
 
 import anyio
+import structlog
 from pydantic import ValidationError
 
 from social_media_subscriber.accounts.errors import AccountInputError
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from social_media_subscriber.serialization.json import JsonValue
 
 _DEFAULT_HTTP_CONFIG: Final = HttpClientConfig(base_url="https://api.apify.com")
+_LOGGER = structlog.stdlib.get_logger()
 
 
 class _Completion(StrEnum):
@@ -104,8 +106,20 @@ class ApifyXClient:
             _validate_counts(report, len(posts), len(diagnostics), len(values))
             if diagnostics:
                 raise ApifyError(ApifyErrorCategory.SCHEMA, run_accepted=True)
-            if completion is _Completion.COMPLETE and not posts:
+            empty_pagination_result = (
+                report.results.completion_reason == "pagination_safety_limit"
+                and report.results.failed_subtargets == 0
+                and not any(report.anomaly_counts.values())
+            )
+            if not posts and not empty_pagination_result:
                 raise ApifyError(ApifyErrorCategory.INCOMPLETE, run_accepted=True)
+            if completion is _Completion.BEST_EFFORT:
+                _LOGGER.warning(
+                    "provider.x.partial_results",
+                    posts=len(posts),
+                    failed_subtargets=report.results.failed_subtargets,
+                    anomaly_count=sum(report.anomaly_counts.values()),
+                )
             return tuple(
                 post
                 for post in posts
@@ -128,24 +142,19 @@ class ApifyXClient:
 
 def _completion(report: ApifyXRunReport) -> _Completion:
     results = report.results
-    if any(report.anomaly_counts.values()):
-        raise ApifyError(ApifyErrorCategory.INCOMPLETE, run_accepted=True)
-    if (
-        report.outcome in {"complete", "partial"}
-        and results.completion_reason == "source_exhausted"
-        and results.failed_subtargets == 0
-    ):
-        return _Completion.COMPLETE
-    if (
-        report.outcome in {"complete", "partial"}
-        and results.completion_reason == "pagination_safety_limit"
-        and results.failed_subtargets == 0
-    ):
+    if report.outcome in {"complete", "partial"}:
+        if (
+            results.completion_reason == "source_exhausted"
+            and results.failed_subtargets == 0
+            and not any(report.anomaly_counts.values())
+        ):
+            return _Completion.COMPLETE
         return _Completion.BEST_EFFORT
     if (
         report.outcome == "zero-output"
         and results.completion_reason == "zero_output"
         and results.failed_subtargets == 0
+        and not any(report.anomaly_counts.values())
     ):
         return _Completion.ZERO_OUTPUT
     raise ApifyError(ApifyErrorCategory.INCOMPLETE, run_accepted=True)
