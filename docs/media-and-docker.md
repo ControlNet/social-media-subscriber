@@ -96,9 +96,10 @@ deployment copy containing real credentials.
 The host data path may be an ignored directory inside the website checkout.
 
 Both values accept comma-separated entries, newline-separated entries, or a
-mixture. For `docker run --env-file .env.local`, keep each variable on one physical
-line with comma-separated entries and no surrounding shell quotes. Existing
-multiline environment variables continue to work with `--env ACCOUNTS --env SOURCES`.
+mixture. The README's `docker run` command supplies both values inline using
+`--env ACCOUNTS='...'` and `--env SOURCES='...'`, with comma-separated entries.
+Existing multiline environment variables continue to work with
+`--env ACCOUNTS --env SOURCES`.
 Commas are always delimiters; CSV quoting/escaping is not supported.
 
 ```sh

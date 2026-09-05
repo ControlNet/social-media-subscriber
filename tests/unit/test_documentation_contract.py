@@ -16,7 +16,8 @@ NORMALIZED_IDENTITY_DOCS: Final = " ".join(ALL_IDENTITY_DOCS.replace("`", "").sp
 def test_readme_has_docker_run_example_with_persistent_volumes() -> None:
     for command in (
         "docker run -d",
-        "--env-file .env.local",
+        "--env ACCOUNTS=",
+        "--env SOURCES=",
         '--volume "$PWD/social-media:/data"',
         "--volume social-media-subscriber-state:/state",
         "controlnet/social-media-subscriber:latest",
@@ -25,6 +26,7 @@ def test_readme_has_docker_run_example_with_persistent_volumes() -> None:
     assert "provider charges" in README
     assert "Both accept commas, newlines" in README
     assert "--platform linux/amd64" not in README
+    assert "--env-file" not in README
 
 
 def test_readme_focuses_on_features_and_usage() -> None:

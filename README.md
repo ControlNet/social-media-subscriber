@@ -79,14 +79,15 @@ through your existing web server. Keep the separate `/state` volume private.
 
 ## Docker
 
-Prefer a standalone container? Use this instead of Compose:
+Prefer a standalone container? Replace the `YOUR_...` values and run:
 
 ```sh
 mkdir -p ./social-media
 docker run -d \
   --name social-media-subscriber \
   --restart unless-stopped \
-  --env-file .env.local \
+  --env ACCOUNTS='https://www.linkedin.com/in/YOUR_LINKEDIN_PROFILE/,https://www.linkedin.com/company/YOUR_COMPANY/,https://x.com/YOUR_X_HANDLE/' \
+  --env SOURCES='apify:YOUR_APIFY_TOKEN,brightdata:YOUR_BRIGHTDATA_TOKEN' \
   --env PUID="$(id -u)" \
   --env PGID="$(id -g)" \
   --volume "$PWD/social-media:/data" \
