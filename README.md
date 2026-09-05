@@ -1,5 +1,29 @@
 # Social Media Subscriber
 
+<div align="center">
+    <a href="https://github.com/ControlNet/social-media-subscriber/issues">
+        <img src="https://img.shields.io/github/issues/ControlNet/social-media-subscriber?style=flat-square" alt="GitHub issues">
+    </a>
+    <a href="https://github.com/ControlNet/social-media-subscriber/network/members">
+        <img src="https://img.shields.io/github/forks/ControlNet/social-media-subscriber?style=flat-square" alt="GitHub forks">
+    </a>
+    <a href="https://github.com/ControlNet/social-media-subscriber/stargazers">
+        <img src="https://img.shields.io/github/stars/ControlNet/social-media-subscriber?style=flat-square" alt="GitHub stars">
+    </a>
+    <a href="https://github.com/ControlNet/social-media-subscriber/actions/workflows/collect.yml">
+        <img src="https://img.shields.io/github/actions/workflow/status/ControlNet/social-media-subscriber/collect.yml?branch=master&amp;style=flat-square&amp;logo=githubactions&amp;label=Collection" alt="Post collection workflow status">
+    </a>
+    <a href="https://github.com/ControlNet/social-media-subscriber/actions/workflows/ci.yml">
+        <img src="https://img.shields.io/github/actions/workflow/status/ControlNet/social-media-subscriber/ci.yml?branch=master&amp;style=flat-square&amp;logo=githubactions&amp;label=CI" alt="CI workflow status">
+    </a>
+    <a href="https://hub.docker.com/r/controlnet/social-media-subscriber">
+        <img src="https://img.shields.io/docker/image-size/controlnet/social-media-subscriber/latest?style=flat-square&amp;logo=docker&amp;label=Docker" alt="Docker image size for latest">
+    </a>
+    <a href="https://hub.docker.com/r/controlnet/social-media-subscriber">
+        <img src="https://img.shields.io/docker/pulls/controlnet/social-media-subscriber?style=flat-square&amp;logo=docker" alt="Docker Hub pulls">
+    </a>
+</div>
+
 Collect LinkedIn and X posts, archive their images and videos, and make them
 available to your website. Run on your own server with Docker or automate
 collection with GitHub Actions.
@@ -41,7 +65,8 @@ pairs a provider name with its API token, separated by a colon.
 
 Edit [docker-compose.yaml](docker-compose.yaml) to set `ACCOUNTS`, `SOURCES`, your
 data directory, UID/GID, and schedule. Do not commit real credentials.
-The image collects on startup and then daily at **03:17 UTC** by default.
+The image collects on startup and then daily at **03:17 in the host's timezone**
+by default, using the read-only `/etc/localtime` mount.
 
 ```sh
 docker compose pull
@@ -66,6 +91,7 @@ docker run -d \
   --env PGID="$(id -g)" \
   --volume "$PWD/social-media:/data" \
   --volume social-media-subscriber-state:/state \
+  --volume /etc/localtime:/etc/localtime:ro \
   controlnet/social-media-subscriber:latest
 ```
 

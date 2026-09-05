@@ -25,6 +25,7 @@ def test_compose_runs_published_image_with_editable_settings() -> None:
     assert subscriber["volumes"] == [
         "./social-media:/data",
         "subscriber-state:/state",
+        "/etc/localtime:/etc/localtime:ro",
     ]
     assert "subscriber-state" in mapping(configuration["volumes"])
     assert mapping(subscriber["environment"]) == {
@@ -33,7 +34,6 @@ def test_compose_runs_published_image_with_editable_settings() -> None:
         "PUID": "1000",
         "PGID": "1000",
         "CRON_SCHEDULE": "17 3 * * *",
-        "TIMEZONE": "UTC",
         "REFRESH_ON_STARTUP": "true",
         "WORKER_TIMEOUT_SECONDS": "7200",
     }

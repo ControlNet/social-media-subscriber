@@ -26,13 +26,23 @@ from social_media_subscriber.serialization.json import (
     canonical_json_value_bytes,
 )
 
+_LOCALTIME = Path("/etc/localtime")
+
+
+def schedule_timezone(name: str | None) -> ZoneInfo:
+    """Use an explicit zone or the host-mounted TZif file with full DST rules."""
+    if name:
+        return ZoneInfo(name)
+    with _LOCALTIME.open("rb") as localtime:
+        return ZoneInfo.from_file(localtime)
+
 
 class ServiceSettings(BaseSettings):
     """Small environment-configurable container schedule."""
 
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(extra="ignore")
     cron_schedule: str = "17 3 * * *"
-    timezone: str = "UTC"
+    timezone: str | None = None
     refresh_on_startup: bool = True
     worker_timeout_seconds: int = Field(default=7200, gt=0)
 
@@ -84,7 +94,7 @@ def serve(settings: ServiceSettings, snapshot: Path, state_dir: Path) -> None:
     _ = signal.signal(signal.SIGTERM, shutdown)
     _ = signal.signal(signal.SIGINT, shutdown)
     trigger = cast("CronFactory", CronTrigger).from_crontab(
-        settings.cron_schedule, timezone=ZoneInfo(settings.timezone)
+        settings.cron_schedule, timezone=schedule_timezone(settings.timezone)
     )
     last_success: str | None = None
     status_path = state_dir / "status.json"

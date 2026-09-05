@@ -119,10 +119,19 @@ Optional runtime environment settings (defaults shown):
 | Setting | Default |
 | --- | --- |
 | `CRON_SCHEDULE` | `17 3 * * *` |
-| `TIMEZONE` | `UTC` |
+| `TIMEZONE` | Unset: use the host-mounted `/etc/localtime` |
 | `REFRESH_ON_STARTUP` | `true` |
 | `WORKER_TIMEOUT_SECONDS` | `7200` |
 | `PUID`, `PGID` | `1000`, `1000` |
+
+Compose and the README's Linux `docker run` example mount the host's
+`/etc/localtime` read-only. The scheduler reads its timezone rules, including
+daylight-saving changes, so the default job runs at 03:17 host local time.
+Remove an existing `TIMEZONE=UTC` setting to inherit the host timezone; explicitly
+setting `TIMEZONE` to an IANA name still overrides it. Without the mount, the
+container uses its own `/etc/localtime`, not the host's timezone. Recreate the
+container after changing the host timezone. Stored timestamps and GitHub Actions
+cron schedules remain UTC.
 
 The entrypoint sets ownership of the two volume roots and then drops privileges.
 It does not recursively change existing files. Match `PUID`/`PGID` to their owner;

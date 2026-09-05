@@ -9,12 +9,12 @@ services:
       PUID: "1000"
       PGID: "1000"
       CRON_SCHEDULE: "17 3 * * *"
-      TIMEZONE: UTC
       REFRESH_ON_STARTUP: "true"
       WORKER_TIMEOUT_SECONDS: "7200"
     volumes:
       - ./social-media:/data
       - subscriber-state:/state
+      - /etc/localtime:/etc/localtime:ro
 
 volumes:
   subscriber-state:
