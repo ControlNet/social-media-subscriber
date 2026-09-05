@@ -19,7 +19,7 @@ def test_readme_has_docker_run_example_with_persistent_volumes() -> None:
         "--env ACCOUNTS=",
         "--env SOURCES=",
         '--volume "$PWD/social-media:/data"',
-        "--volume social-media-subscriber-state:/state",
+        '--volume "$PWD/state:/state"',
         "controlnet/social-media-subscriber:latest",
     ):
         assert command in README

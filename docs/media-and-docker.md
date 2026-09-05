@@ -86,8 +86,9 @@ lock, scheduler status, and candidate JSON plus newly archived media used for
 interrupted publication recovery; never expose it through Apache. Historical
 media remains in `/data` and is not copied into the candidate. Back up both volumes.
 
-The included `docker-compose.yaml` uses the published image and mounts `./social-media`
-at `/data`, with a named volume at `/state`. Edit the host path and the settings
+The included `docker-compose.yaml` uses the published image and bind-mounts
+`./social-media` at `/data` and `./state` at `/state`, without Docker named volumes.
+Both local directories are ignored by Git. Edit the host paths and the settings
 in its `environment` section directly, including `ACCOUNTS` and `SOURCES`.
 These two required values contain `YOUR_...` placeholders; replace them with your
 account URLs and provider tokens before starting the service.

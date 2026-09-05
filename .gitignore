@@ -4,6 +4,7 @@
 !.env.example
 .artifacts/
 /social-media/
+/state/
 .omo/
 
 __pycache__/

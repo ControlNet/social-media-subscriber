@@ -75,14 +75,15 @@ docker compose logs --tail=50 subscriber
 ```
 
 The default data directory is `./social-media`. Serve it at `/social-media/`
-through your existing web server. Keep the separate `/state` volume private.
+through your existing web server. Runtime state is stored in `./state`, mounted
+at `/state` inside the container; keep it private.
 
 ## Docker
 
 Prefer a standalone container? Replace the `YOUR_...` values and run:
 
 ```sh
-mkdir -p ./social-media
+mkdir -p ./social-media ./state
 docker run -d \
   --name social-media-subscriber \
   --restart unless-stopped \
@@ -91,7 +92,7 @@ docker run -d \
   --env PUID="$(id -u)" \
   --env PGID="$(id -g)" \
   --volume "$PWD/social-media:/data" \
-  --volume social-media-subscriber-state:/state \
+  --volume "$PWD/state:/state" \
   --volume /etc/localtime:/etc/localtime:ro \
   controlnet/social-media-subscriber:latest
 ```

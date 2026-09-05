@@ -24,10 +24,10 @@ def test_compose_runs_published_image_with_editable_settings() -> None:
     assert "build" not in subscriber
     assert subscriber["volumes"] == [
         "./social-media:/data",
-        "subscriber-state:/state",
+        "./state:/state",
         "/etc/localtime:/etc/localtime:ro",
     ]
-    assert "subscriber-state" in mapping(configuration["volumes"])
+    assert "volumes" not in configuration
     assert mapping(subscriber["environment"]) == {
         "ACCOUNTS": _EXAMPLE_ACCOUNTS,
         "SOURCES": _EXAMPLE_SOURCES,

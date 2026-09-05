@@ -13,8 +13,5 @@ services:
       WORKER_TIMEOUT_SECONDS: "7200"
     volumes:
       - ./social-media:/data
-      - subscriber-state:/state
+      - ./state:/state
       - /etc/localtime:/etc/localtime:ro
-
-volumes:
-  subscriber-state:
