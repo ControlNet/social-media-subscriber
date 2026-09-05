@@ -45,7 +45,7 @@ class XMediaBackfillInputError(Exception):
 class XMediaBackfillResult:
     """Safe machine report for a completed candidate write."""
 
-    digest: str
+    digest: str | None
     scanned_posts: int
     eligible_posts: int
     enriched_posts: int

@@ -12,6 +12,7 @@ import pytest
 from social_media_subscriber.domain.ids import AccountId, PlatformPostId
 from social_media_subscriber.domain.post import Post
 from social_media_subscriber.media.archive import archive_media
+from social_media_subscriber.media.errors import MediaError
 from social_media_subscriber.media.slots import MediaSlot, reconcile_media
 from social_media_subscriber.storage.run_state import RunState
 from social_media_subscriber.storage.snapshot import SnapshotState
@@ -42,8 +43,7 @@ async def test_five_posts_publish_and_retry_without_rediscovery(tmp_path: Path) 
     async def convert(slot: MediaSlot, destination: Path) -> None:
         calls.append(slot.source_url)
         if fail and slot.source_url.endswith("synthetic-5.jpg"):
-            msg = "download"
-            raise ValueError(msg)
+            raise MediaError(category="download")
         _ = await anyio.Path(destination).write_bytes(b"explicitly synthetic media")
 
     initial = SnapshotState(
@@ -75,8 +75,7 @@ async def test_permanent_failure_requires_manual_requeue(tmp_path: Path) -> None
         assert slot.source_url
         assert destination.suffix == ".webp"
         calls += 1
-        msg = "download"
-        raise ValueError(msg)
+        raise MediaError(category="download")
 
     state = SnapshotState((), (synthetic_post(),), RunState())
     for _ in range(5):
@@ -125,8 +124,7 @@ async def test_manual_retry_url_is_used_without_post_rediscovery(
     async def fail(slot: MediaSlot, destination: Path) -> None:
         assert slot.source_url
         assert destination.suffix == ".webp"
-        message = "download"
-        raise ValueError(message)
+        raise MediaError(category="download")
 
     state, _ = await archive_media(
         SnapshotState((), (synthetic_post(),), RunState()), tmp_path, materialize=fail
@@ -148,3 +146,64 @@ async def test_manual_retry_url_is_used_without_post_rediscovery(
     assert failures == 0
     assert saved.run_state is not None
     assert saved.run_state.pending_media == ()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("error_type", [TypeError, AttributeError, ValueError, OSError])
+async def test_internal_errors_do_not_exhaust_media_retries(
+    tmp_path: Path, error_type: type[Exception], capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = 0
+
+    async def broken(_slot: MediaSlot, _destination: Path) -> None:
+        nonlocal calls
+        calls += 1
+        message = "explicitly synthetic internal failure"
+        raise error_type(message)
+
+    state = SnapshotState((), (synthetic_post(),), RunState())
+    for _ in range(4):
+        state, failures = await archive_media(state, tmp_path, materialize=broken)
+        assert failures == 1
+        assert len(state.posts) == 1
+        assert state.run_state is not None
+        assert state.run_state.failed_media == ()
+        assert state.run_state.pending_media[0].failed_runs == 0
+        assert state.run_state.pending_media[0].error == "internal"
+    assert calls == 4
+    logs = capsys.readouterr().out
+    assert "explicitly synthetic internal failure" not in logs
+    assert error_type.__name__ in logs
+
+    async def repaired(_slot: MediaSlot, destination: Path) -> None:
+        _ = await anyio.Path(destination).write_bytes(b"explicit synthetic test media")
+
+    state, failures = await archive_media(state, tmp_path, materialize=repaired)
+    assert failures == 0
+    assert state.run_state is not None
+    assert state.run_state.pending_media == ()
+
+
+@pytest.mark.anyio
+async def test_internal_error_preserves_existing_expected_failure_count(
+    tmp_path: Path,
+) -> None:
+    async def unavailable(_slot: MediaSlot, _destination: Path) -> None:
+        raise MediaError(category="download")
+
+    async def broken(_slot: MediaSlot, _destination: Path) -> None:
+        message = "synthetic internal bug"
+        raise TypeError(message)
+
+    state = SnapshotState((), (synthetic_post(),), RunState())
+    for _ in range(2):
+        state, _ = await archive_media(state, tmp_path, materialize=unavailable)
+    for _ in range(4):
+        state, _ = await archive_media(state, tmp_path, materialize=broken)
+        assert state.run_state is not None
+        assert state.run_state.pending_media[0].failed_runs == 2
+        assert state.run_state.failed_media == ()
+    state, _ = await archive_media(state, tmp_path, materialize=unavailable)
+    assert state.run_state is not None
+    assert state.run_state.pending_media == ()
+    assert state.run_state.failed_media[0].failed_runs == 3

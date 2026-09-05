@@ -27,6 +27,7 @@ from social_media_subscriber.application.windows import (
 from social_media_subscriber.domain.account import Account
 from social_media_subscriber.domain.platform import AccountKind, Platform
 from social_media_subscriber.media import archive, convert
+from social_media_subscriber.media.errors import MediaError
 from social_media_subscriber.media.slots import MediaSlot
 from social_media_subscriber.providers.brightdata.errors import (
     BrightDataError,
@@ -86,8 +87,7 @@ async def test_real_collection_partial_media_then_retry_advances_progress(
     async def materialize(slot: MediaSlot, destination: Path) -> None:
         calls.append(slot.source_url)
         if failures and "image-5" in slot.source_url:
-            message = "download"
-            raise ValueError(message)
+            raise MediaError(category="download")
         await run_sync(Image.new("RGB", (16, 12)).save, destination, "WEBP")
 
     monkeypatch.setattr(archive, "materialize_media", materialize)
@@ -143,6 +143,54 @@ async def test_real_collection_partial_media_then_retry_advances_progress(
     assert len(calls) == 6
     if provider_unavailable:
         assert recovered.run_state.accounts == saved.run_state.accounts
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("local_publication", [False, True])
+async def test_internal_media_failure_survives_snapshot_reload_without_exhaustion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, local_publication: bool
+) -> None:
+    calls = 0
+
+    async def broken(_slot: MediaSlot, _destination: Path) -> None:
+        nonlocal calls
+        calls += 1
+        message = "synthetic internal converter failure"
+        raise TypeError(message)
+
+    monkeypatch.setattr(archive, "materialize_media", broken)
+    record = post("1")
+    record = type(record).model_validate(
+        record.payload | {"images": ["https://media.licdn.com/synthetic-image"]}
+    )
+    previous = tmp_path / "public"
+    for iteration in range(4):
+        candidate = tmp_path / f"candidate-{iteration}"
+        command = replace(
+            request(tmp_path, settings(PERSON_URL)),
+            previous_snapshot_dir=previous,
+            candidate_snapshot_dir=candidate,
+            local_media_root=previous if local_publication else None,
+        )
+        result = await collect_snapshot(
+            command,
+            lambda _, first=iteration == 0: ApplicationClient(
+                person_posts=(record,) if first else ()
+            ),
+        )
+        assert result.exit_code == CollectionExitCode.PARTIAL
+        if local_publication:
+            publish_local(candidate, previous)
+        else:
+            previous = candidate
+        saved = SnapshotRepository(previous).load_optional()
+        assert saved is not None
+        assert len(saved.posts) == 1
+        assert saved.run_state is not None
+        assert saved.run_state.failed_media == ()
+        assert saved.run_state.pending_media[0].failed_runs == 0
+        assert saved.run_state.pending_media[0].error == "internal"
+    assert calls == 4
 
 
 @pytest.mark.anyio

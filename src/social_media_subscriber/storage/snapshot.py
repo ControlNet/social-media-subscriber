@@ -26,8 +26,8 @@ class SnapshotState:
 
 @dataclass(frozen=True, slots=True)
 class SnapshotSummary:
-    """Derived run result returned to callers but never persisted."""
+    """Record counts and a full-tree digest, omitted during local refresh."""
 
     account_count: int
     post_count: int
-    digest: str
+    digest: str | None

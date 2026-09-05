@@ -284,8 +284,11 @@ deterministic identity tie-breaker. Every entry has `path`,
 `{ "posts": [] }`. Verification reloads the complete tree, regenerates both
 indexes and all record paths, and rejects inventory, index, schema, ownership,
 or byte inconsistencies. Counts and a SHA-256 digest of the complete tree are
-calculated with bounded streaming for CLI and CI comparison, but are not persisted into the
-collected dataset.
+calculated with bounded streaming for explicit verification and the GitHub path,
+but are not persisted into the collected dataset. Routine Docker refreshes skip
+historical media content reads and report no whole-tree digest. Their private
+candidates contain JSON and new media only; validation resolves existing media
+against the public snapshot directory.
 
 See [media-and-docker.md](media-and-docker.md) for the shared archival contract,
 human-editable business state, and independent local publisher/scheduler.

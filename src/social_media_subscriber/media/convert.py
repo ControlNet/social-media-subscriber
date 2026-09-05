@@ -15,6 +15,8 @@ import httpx2
 from anyio.to_thread import run_sync
 from PIL import Image, ImageOps
 
+from social_media_subscriber.media.errors import MediaError
+
 MAX_ATTEMPTS = 3
 
 if TYPE_CHECKING:
@@ -23,7 +25,11 @@ if TYPE_CHECKING:
 
 def validate_source(url: str) -> str:
     """Allow HTTPS media origins, never embedded credentials or arbitrary ports."""
-    parsed = urlsplit(url)
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError:
+        raise MediaError(category="source") from None
     host = parsed.hostname or ""
     allowed = host in {"pbs.twimg.com", "video.twimg.com"} or host.endswith(
         ".licdn.com"
@@ -31,16 +37,15 @@ def validate_source(url: str) -> str:
     if (
         not allowed
         or parsed.scheme != "https"
-        or parsed.port not in (None, 443)
+        or port not in (None, 443)
         or parsed.username
         or parsed.password
     ):
-        msg = "source"
-        raise ValueError(msg)
+        raise MediaError(category="source")
     return host
 
 
-async def _download_once(
+async def _download_once(  # noqa: C901 - validate each redirect and streamed response together
     client: httpx2.AsyncClient, url: str, target: Path, limit: int
 ) -> None:
     for _ in range(6):
@@ -49,11 +54,13 @@ async def _download_once(
         if not addresses or any(
             not ipaddress.ip_address(str(item[4][0])).is_global for item in addresses
         ):
-            msg = "source"
-            raise ValueError(msg)
+            raise MediaError(category="source")
         async with client.stream("GET", url) as response:
             if response.is_redirect:
-                url = str(response.url.join(response.headers["location"]))
+                location = response.headers.get("location")
+                if not location:
+                    raise MediaError(category="redirect")
+                url = str(response.url.join(location))
                 continue
             if (
                 response.status_code in (408, 429)
@@ -64,29 +71,24 @@ async def _download_once(
                     msg, request=response.request, response=response
                 )
             if response.status_code != HTTPStatus.OK:
-                msg = "http"
-                raise ValueError(msg)
+                raise MediaError(category="http")
             content_type = response.headers.get("content-type", "").split(";", 1)[0]
             if (
                 not content_type.startswith(("image/", "video/"))
                 and content_type != "application/octet-stream"
             ):
-                msg = "mime"
-                raise ValueError(msg)
+                raise MediaError(category="mime")
             size = 0
             with target.open("wb") as output:
                 async for chunk in response.aiter_bytes(1024 * 1024):
                     size += len(chunk)
                     if size > limit:
-                        msg = "size"
-                        raise ValueError(msg)
+                        raise MediaError(category="size")
                     _ = output.write(chunk)
             if not size:
-                msg = "empty"
-                raise ValueError(msg)
+                raise MediaError(category="empty")
             return
-    msg = "redirect"
-    raise ValueError(msg)
+    raise MediaError(category="redirect")
 
 
 async def download(url: str, target: Path, limit: int) -> None:
@@ -102,10 +104,10 @@ async def download(url: str, target: Path, limit: int) -> None:
                 httpx2.TransportError,
                 httpx2.HTTPStatusError,
                 TimeoutError,
+                socket.gaierror,
             ) as error:
                 if attempt == MAX_ATTEMPTS - 1:
-                    msg = "download"
-                    raise ValueError(msg) from None
+                    raise MediaError(category="download") from None
                 delay = (1.0, 2.0, 4.0)[attempt]
                 if isinstance(error, httpx2.HTTPStatusError):
                     retry_after = error.response.headers.get("retry-after", "")
@@ -118,19 +120,28 @@ async def download(url: str, target: Path, limit: int) -> None:
 
 def convert_image(source: Path, destination: Path) -> None:
     """Keep dimensions, orientation, transparency, and animated image frames."""
-    with Image.open(source) as image:
-        if getattr(image, "is_animated", False):
-            image.save(destination, format="WEBP", quality=82, save_all=True)
-        else:
-            oriented = ImageOps.exif_transpose(image)
-            converted = oriented.convert(
-                "RGBA"
-                if "A" in oriented.getbands() or "transparency" in oriented.info
-                else "RGB"
-            )
-            converted.save(destination, format="WEBP", quality=82)
-    with Image.open(destination) as verified:
-        verified.verify()
+    try:
+        with Image.open(source) as image:
+            if getattr(image, "is_animated", False):
+                image.save(destination, format="WEBP", quality=82, save_all=True)
+            else:
+                oriented = ImageOps.exif_transpose(image)
+                converted = oriented.convert(
+                    "RGBA"
+                    if "A" in oriented.getbands() or "transparency" in oriented.info
+                    else "RGB"
+                )
+                converted.save(destination, format="WEBP", quality=82)
+        with Image.open(destination) as verified:
+            verified.verify()
+    except (ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning):
+        raise MediaError(category="conversion") from None
+    except OSError as error:
+        # Pillow decoder errors have no errno; disk/permission failures belong
+        # to the worker, not this media's permanent-failure budget.
+        if error.errno is not None:
+            raise
+        raise MediaError(category="conversion") from None
 
 
 async def materialize_media(slot: MediaSlot, destination: Path) -> None:
@@ -142,67 +153,70 @@ async def materialize_media(slot: MediaSlot, destination: Path) -> None:
         if slot.kind == "image":
             await run_sync(convert_image, source, destination)
             return
-        with anyio.fail_after(3600):
-            result = await anyio.run_process(
-                [
-                    "ffmpeg",
-                    "-nostdin",
-                    "-v",
-                    "error",
-                    "-protocol_whitelist",
-                    "file,pipe",
-                    "-format_whitelist",
-                    "mov,matroska,webm",
-                    "-i",
-                    str(source),
-                    "-map",
-                    "0:v:0",
-                    "-map",
-                    "0:a:0?",
-                    "-map_metadata",
-                    "-1",
-                    "-c:v",
-                    "libvpx-vp9",
-                    "-crf",
-                    "32",
-                    "-b:v",
-                    "0",
-                    "-cpu-used",
-                    "4",
-                    "-threads",
-                    "2",
-                    "-c:a",
-                    "libopus",
-                    "-b:a",
-                    "96k",
-                    "-f",
-                    "webm",
-                    "-y",
-                    str(destination),
-                ],
-                check=False,
-            )
-            if result.returncode:
-                msg = "conversion"
-                raise ValueError(msg)
-            verified = await anyio.run_process(
-                [
-                    "ffmpeg",
-                    "-nostdin",
-                    "-v",
-                    "error",
-                    "-xerror",
-                    "-i",
-                    str(destination),
-                    "-f",
-                    "null",
-                    "-",
-                ],
-                check=False,
-            )
-            if (
-                verified.returncode
-                or not (await anyio.Path(destination).stat()).st_size
-            ):
-                msg = "conversion"
-                raise ValueError(msg)
+        try:
+            with anyio.fail_after(3600):
+                await _convert_video(source, destination)
+        except TimeoutError:
+            raise MediaError(category="conversion") from None
+
+
+async def _convert_video(source: Path, destination: Path) -> None:
+    """Encode and decode-check a video with local-only FFmpeg inputs."""
+    result = await anyio.run_process(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-format_whitelist",
+            "mov,matroska,webm",
+            "-i",
+            str(source),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0?",
+            "-map_metadata",
+            "-1",
+            "-c:v",
+            "libvpx-vp9",
+            "-crf",
+            "32",
+            "-b:v",
+            "0",
+            "-cpu-used",
+            "4",
+            "-threads",
+            "2",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "96k",
+            "-f",
+            "webm",
+            "-y",
+            str(destination),
+        ],
+        check=False,
+    )
+    if result.returncode:
+        raise MediaError(category="conversion")
+    verified = await anyio.run_process(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-i",
+            str(destination),
+            "-f",
+            "null",
+            "-",
+        ],
+        check=False,
+    )
+    if verified.returncode or not (await anyio.Path(destination).stat()).st_size:
+        raise MediaError(category="conversion")

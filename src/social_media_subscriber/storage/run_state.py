@@ -16,7 +16,7 @@ class MediaFailure(BaseModel):
     scope: str
     index: int = Field(ge=0)
     source_url: str
-    failed_runs: int = Field(ge=1)
+    failed_runs: int = Field(ge=0)
     error: str
 
 

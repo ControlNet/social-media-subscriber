@@ -34,11 +34,21 @@ class DirectoryTree:
     directories: frozenset[Path]
 
 
-def read_directory_tree(descriptor: int, root: Path | None = None) -> DirectoryTree:
-    """Read a tree without following a symlink or reopening an absolute path."""
+def read_directory_tree(
+    descriptor: int,
+    root: Path | None = None,
+    *,
+    hash_media: bool = True,
+    prefix: str = ".",
+) -> DirectoryTree:
+    """Read JSON and inspect media beneath verified directory descriptors."""
     files: dict[Path, FilePayload] = {}
     directories: set[Path] = set()
-    _read_directory(descriptor, Path(), files, directories, root)
+    _read_directory(
+        descriptor, Path(prefix), files, directories, root, hash_media=hash_media
+    )
+    if prefix != "." and (files or directories):
+        directories.add(Path(prefix))
     return DirectoryTree(files, frozenset(directories))
 
 
@@ -84,12 +94,14 @@ def expected_directories(files: dict[Path, FilePayload]) -> frozenset[Path]:
     return frozenset(directories)
 
 
-def _read_directory(
+def _read_directory(  # noqa: PLR0913 - recursive traversal carries one media-read policy
     descriptor: int,
     prefix: Path,
     files: dict[Path, FilePayload],
     directories: set[Path],
     root: Path | None,
+    *,
+    hash_media: bool,
 ) -> None:
     with os.scandir(descriptor) as entries:
         ordered = sorted(entries, key=lambda entry: entry.name)
@@ -100,13 +112,30 @@ def _read_directory(
             directories.add(relative_path)
             child = _open_verified(entry.name, descriptor, scanned, directory=True)
             try:
-                _read_directory(child, relative_path, files, directories, root)
+                _read_directory(
+                    child,
+                    relative_path,
+                    files,
+                    directories,
+                    root,
+                    hash_media=hash_media,
+                )
                 _require_identity(child, scanned)
             finally:
                 os.close(child)
         elif stat.S_ISREG(scanned.st_mode):
             if root is not None and relative_path.parts[0] == "media":
-                media = BinaryFile.inspect(root / relative_path)
+                if not scanned.st_size:
+                    raise UnsafePathError
+                media = (
+                    BinaryFile.inspect(root / relative_path)
+                    if hash_media
+                    else BinaryFile(
+                        (root / relative_path).absolute(),
+                        FileIdentity.from_stat(scanned),
+                        None,
+                    )
+                )
                 if media.identity != FileIdentity.from_stat(scanned):
                     raise UnsafePathError
                 files[relative_path] = media

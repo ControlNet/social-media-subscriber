@@ -18,7 +18,6 @@ from social_media_subscriber.application.results import (
     CollectionResult,
 )
 from social_media_subscriber.publishing.local import publish_local
-from social_media_subscriber.storage.repository import SnapshotRepository
 from social_media_subscriber.storage.safe_directory import UnsafePathError
 
 if TYPE_CHECKING:
@@ -41,7 +40,7 @@ def refresh_local(
         raise UnsafePathError
     if snapshot.is_symlink() or state_dir.is_symlink():
         raise UnsafePathError
-    state_dir.mkdir(parents=True, exist_ok=True)
+    state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     lock_path = state_dir / "run.lock"
     if lock_path.is_symlink():
         raise UnsafePathError
@@ -58,7 +57,7 @@ def _refresh_locked(
 ) -> CollectionResult:
     candidate = state_dir / "candidate"
     if candidate.exists():
-        # Candidate exists only after SnapshotRepository's complete promotion.
+        # Promoted candidates contain complete JSON and any newly archived media.
         publish_local(candidate, snapshot)
         shutil.rmtree(candidate)
     previous = snapshot
@@ -73,10 +72,10 @@ def _refresh_locked(
             previous,
             candidate,
             datetime.now(UTC),
+            local_media_root=snapshot,
         ),
     )
     if result.exit_code in (CollectionExitCode.SUCCESS, CollectionExitCode.PARTIAL):
-        _ = SnapshotRepository(candidate).read_optional()
         publish_local(candidate, snapshot)
         shutil.rmtree(candidate)
     return result

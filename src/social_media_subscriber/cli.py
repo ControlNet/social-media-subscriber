@@ -65,7 +65,7 @@ _SERVICE_DIRECTORY = Path("/state")
 class _SnapshotReport(TypedDict):
     account_count: int
     command: str
-    digest: str
+    digest: str | None
     exit_code: int
     post_count: int
 
@@ -79,7 +79,7 @@ class _PublishReport(TypedDict):
 
 class _XMediaBackfillReport(TypedDict):
     command: str
-    digest: str
+    digest: str | None
     eligible_posts: int
     enriched_posts: int
     exit_code: int

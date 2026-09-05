@@ -50,6 +50,13 @@ runs moves from `pending_media` to `failed_media` and stops retrying. A run with
 new media failures publishes a valid candidate with exit `4`. Existing permanent
 failures do not repeatedly fail otherwise successful runs.
 
+Only expected source/download/decoding/conversion failures consume that retry
+budget. Internal program or filesystem failures keep the post and source URL,
+remain pending with `error: "internal"`, and do not increment `failed_runs`.
+New entries of this kind start at `0`. Logs report the exception type, not its
+raw message. Correct the worker problem and the next run retries automatically.
+Previously permanent entries still require the manual repair described below.
+
 `state.json` contains:
 
 - `accounts`: canonical account URL to last successful collection timestamp.
@@ -75,8 +82,9 @@ Do not delete archived files or change their owned paths to request a re-encode.
 
 The image uses `WORKDIR /app`, public snapshot volume `/data`, and private service
 volume `/state`. Host paths are entirely operator-selected. `/state` contains the
-lock, scheduler status, and complete candidate used for interrupted publication
-recovery; never expose it through Apache. Back up both volumes.
+lock, scheduler status, and candidate JSON plus newly archived media used for
+interrupted publication recovery; never expose it through Apache. Historical
+media remains in `/data` and is not copied into the candidate. Back up both volumes.
 
 The included `docker-compose.yaml` uses the published image and mounts `./social-media`
 at `/data`, with a named volume at `/state`. Edit the host path and the settings
@@ -134,9 +142,13 @@ first, then records and indexes, with business state last. Publication is per-fi
 atomic, not a transaction across all JSON files. Interrupted temporary files use
 reserved `.publishing-*` names and are removed during candidate replay.
 
-Allow disk space for the complete candidate in `/state` as well as `/data` and
-temporary conversion input/output. Historical media is streamed, not held in RAM,
-but complete-candidate validation and publication still require local disk I/O.
+Allow disk space in `/state` for candidate JSON and newly archived media, plus
+temporary conversion input/output. Normal Docker refreshes check media paths,
+regular-file existence, and nonzero sizes without reading or hashing historical
+media contents. They report `digest: null`; use `verify-snapshot /data` for an
+explicit full-content read and snapshot digest. JSON validation remains enabled
+on every refresh. GitHub collection still builds and validates a self-contained
+snapshot, including all media. Old complete local candidates can also be replayed.
 
 The Astro website fetches `/social-media/posts.json` and records at runtime. It can
 build without any snapshot directory. Keep source HTTPS fallbacks supported while

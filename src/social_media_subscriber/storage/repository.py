@@ -81,13 +81,21 @@ class SnapshotRepository:
 
     _root: Path
     _encoder: SnapshotEncoder
+    _local_media_root: Path | None
 
     def __init__(
-        self, root: Path, encoder: SnapshotEncoder = canonical_json_bytes
+        self,
+        root: Path,
+        encoder: SnapshotEncoder = canonical_json_bytes,
+        *,
+        local_media_root: Path | None = None,
     ) -> None:
-        """Bind a snapshot root and deterministic boundary encoder."""
+        """Bind records, optionally reusing a local public media inventory."""
         self._root = root
         self._encoder = encoder
+        self._local_media_root = (
+            local_media_root.absolute() if local_media_root is not None else None
+        )
 
     def load_optional(self) -> SnapshotState | None:
         """Load a fully validated snapshot or return None when absent."""
@@ -95,7 +103,7 @@ class SnapshotRepository:
         return None if validated is None else validated.state
 
     def read_optional(self) -> ValidatedSnapshot | None:
-        """Read one validated immutable tree through anchored descriptors."""
+        """Validate JSON and inventory; hash media unless using local reuse."""
         try:
             with DirectoryAnchor.open(
                 self._root, create_parent=False, require_owner=False
@@ -105,7 +113,7 @@ class SnapshotRepository:
                     return None
                 anchor.verify_parent_path()
                 with anchor.open_entry(expected=identity) as root:
-                    tree = read_directory_tree(root.descriptor, self._root)
+                    tree = self._read_tree(root.descriptor, self._root)
                     state, summary = self._load_tree(tree)
                     anchor.verify_parent_path()
                     require_entry_identity(anchor, identity)
@@ -133,12 +141,23 @@ class SnapshotRepository:
                 )
                 try:
                     files = self._files(state)
+                    if self._local_media_root is not None:
+                        # Existing immutable media stays in the public volume. Only
+                        # new media needs space in the recoverable candidate.
+                        files = {
+                            path: payload
+                            for path, payload in files.items()
+                            if not (
+                                isinstance(payload, BinaryFile)
+                                and payload.path == self._local_media_root / path
+                            )
+                        }
                     with anchor.open_entry(
                         temporary_name, expected=temporary_identity
                     ) as candidate:
                         write_directory_tree(candidate.descriptor, files)
                         _, summary = self._load_tree(
-                            read_directory_tree(
+                            self._read_tree(
                                 candidate.descriptor, self._root.parent / temporary_name
                             )
                         )
@@ -197,16 +216,45 @@ class SnapshotRepository:
         return state, SnapshotSummary(
             account_count=len(accounts),
             post_count=len(posts),
-            digest=snapshot_digest(files),
+            digest=snapshot_digest(files) if self._local_media_root is None else None,
         )
 
     def _validate_existing_snapshot(
         self, anchor: DirectoryAnchor, identity: FileIdentity
     ) -> None:
         with anchor.open_entry(expected=identity) as root:
-            tree = read_directory_tree(root.descriptor, self._root)
+            tree = self._read_tree(root.descriptor, self._root)
             if tree.files or tree.directories:
                 _ = self._load_tree(tree)
+
+    def _read_tree(self, descriptor: int, root: Path) -> DirectoryTree:
+        tree = read_directory_tree(
+            descriptor, root, hash_media=self._local_media_root is None
+        )
+        media_root = self._local_media_root
+        if media_root is None or root.absolute() == media_root:
+            return tree
+        # A local candidate is completed by the immutable media already in /data.
+        # Read only that directory: public JSON may be midway through publication.
+        try:
+            anchor = DirectoryAnchor.open(
+                media_root / "media", create_parent=False, require_owner=False
+            )
+        except FileNotFoundError:
+            return tree
+        with anchor:
+            identity = anchor.entry_identity()
+            if identity is None:
+                return tree
+            with anchor.open_entry(expected=identity) as media:
+                external = read_directory_tree(
+                    media.descriptor, media_root, hash_media=False, prefix="media"
+                )
+            anchor.verify_parent_path()
+            require_entry_identity(anchor, identity)
+        return DirectoryTree(
+            external.files | tree.files, external.directories | tree.directories
+        )
 
     def _files(self, state: SnapshotState) -> dict[Path, FilePayload]:
         files: dict[Path, FilePayload] = {

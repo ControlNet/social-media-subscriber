@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from social_media_subscriber.media.convert import materialize_media
+from social_media_subscriber.media.errors import MediaError
 from social_media_subscriber.media.slots import (
     PREFIX,
     MediaSlot,
@@ -35,8 +36,7 @@ MAX_FAILED_RUNS = 3
 
 def _require_output(path: Path) -> None:
     if not path.is_file() or not path.stat().st_size:
-        message = "conversion"
-        raise ValueError(message)
+        raise MediaError(category="conversion")
 
 
 async def archive_media(
@@ -89,24 +89,11 @@ async def archive_media(
                     await operation(source, converted)
                     _require_output(converted)
                 except Exception as error:  # noqa: BLE001 - one failed media never discards posts
-                    previous = pending.get(key)
-                    runs = 1 if previous is None else previous.failed_runs + 1
-                    category = (
-                        str(error)
-                        if isinstance(error, ValueError)
-                        and str(error)
-                        in {
-                            "source",
-                            "http",
-                            "mime",
-                            "size",
-                            "empty",
-                            "redirect",
-                            "download",
-                            "conversion",
-                        }
-                        else "media"
+                    expected = isinstance(error, MediaError)
+                    runs = (0 if previous is None else previous.failed_runs) + int(
+                        expected
                     )
+                    category = error.category if expected else "internal"
                     item = MediaFailure(
                         post_id=str(post.id),
                         scope=slot.scope,
@@ -116,7 +103,9 @@ async def archive_media(
                         error=category,
                     )
                     _ = pending.pop(key, None)
-                    (failed if runs >= MAX_FAILED_RUNS else pending)[key] = item
+                    (failed if expected and runs >= MAX_FAILED_RUNS else pending)[
+                        key
+                    ] = item
                     failures += 1
                     await _LOGGER.awarning(
                         "media.archive.failed",
@@ -125,6 +114,7 @@ async def archive_media(
                         index=slot.index,
                         category=category,
                         failed_runs=runs,
+                        error_type=type(error).__name__ if not expected else None,
                     )
                     continue
                 # A slot is exposed only once its complete output has been validated.

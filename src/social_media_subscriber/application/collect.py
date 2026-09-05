@@ -76,6 +76,7 @@ class CollectionRequest:
     run_started_at: datetime
     start_date: date | None = None
     end_date: date | None = None
+    local_media_root: Path | None = None
 
 
 def _build_client(credential: str) -> BrightDataClient:
@@ -100,7 +101,9 @@ def _prepare(request: CollectionRequest) -> PreparedCollection | CollectionResul
         runtime_input = load_runtime_input(request.settings)
         run_started_at = canonical_utc(request.run_started_at)
         override = ExplicitWindow.parse(request.start_date, request.end_date)
-        previous = SnapshotRepository(request.previous_snapshot_dir).load_optional()
+        previous = SnapshotRepository(
+            request.previous_snapshot_dir, local_media_root=request.local_media_root
+        ).load_optional()
     except (AccountInputError, WindowInputError, PydanticCustomError):
         return aborted_result(CollectionExitCode.INPUT)
     except SnapshotIntegrityError:
@@ -155,9 +158,10 @@ async def _collect_with_runtime(
                     str(post.id) for post in post_phase.current.posts
                 ),
             )
-            summary = SnapshotRepository(request.candidate_snapshot_dir).write(
-                candidate
-            )
+            summary = SnapshotRepository(
+                request.candidate_snapshot_dir,
+                local_media_root=request.local_media_root,
+            ).write(candidate)
     except (SnapshotConflictError, SnapshotIntegrityError):
         return aborted_result(CollectionExitCode.INTEGRITY)
     exit_code = (

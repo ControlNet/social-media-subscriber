@@ -12,10 +12,10 @@ from social_media_subscriber.storage.binary import (
     payload_chunks,
 )
 from social_media_subscriber.storage.repository import SnapshotRepository
-from social_media_subscriber.storage.safe_directory import UnsafePathError
+from social_media_subscriber.storage.safe_directory import FileIdentity, UnsafePathError
 
 
-def atomic_file(
+def atomic_file(  # noqa: C901 - retain path checks alongside the two immutable reuse cases
     root: Path, relative: Path, payload: FilePayload, *, immutable: bool = False
 ) -> None:
     """Finish a file on the destination filesystem before exposing its final name."""
@@ -31,10 +31,15 @@ def atomic_file(
     if destination.is_symlink():
         raise UnsafePathError
     if immutable and destination.exists():
-        if (
-            not isinstance(payload, BinaryFile)
-            or BinaryFile.inspect(destination) != payload
-        ):
+        if isinstance(payload, BinaryFile) and payload.path == destination.absolute():
+            # The local inventory already verified this regular, nonempty file.
+            # Its contents are immutable; routine refresh never rehashes them.
+            if payload.identity != FileIdentity.from_stat(destination.lstat()):
+                raise UnsafePathError
+            return
+        if not isinstance(payload, BinaryFile) or BinaryFile.inspect(
+            destination
+        ).digest != (payload.digest or BinaryFile.inspect(payload.path).digest):
             raise UnsafePathError
         return
     descriptor, temporary = tempfile.mkstemp(prefix=".publishing-", dir=parent)
@@ -55,7 +60,9 @@ def atomic_file(
 
 def publish_local(candidate: Path, destination: Path) -> None:
     """Publish complete media, records, indexes, then shared business state."""
-    validated = SnapshotRepository(candidate).read_optional()
+    validated = SnapshotRepository(
+        candidate, local_media_root=destination
+    ).read_optional()
     if validated is None:
         raise UnsafePathError
     files = validated.files

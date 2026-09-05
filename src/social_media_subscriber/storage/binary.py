@@ -17,11 +17,11 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class BinaryFile:
-    """Reference immutable media without retaining its bytes in memory."""
+    """Reference immutable media; local inventory reads omit the content digest."""
 
     path: Path = field(compare=False)
     identity: FileIdentity = field(compare=False)
-    digest: str
+    digest: str | None
 
     @classmethod
     def inspect(cls, path: Path) -> BinaryFile:
