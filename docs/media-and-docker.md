@@ -78,14 +78,23 @@ volume `/state`. Host paths are entirely operator-selected. `/state` contains th
 lock, scheduler status, and complete candidate used for interrupted publication
 recovery; never expose it through Apache. Back up both volumes.
 
-Create an ignored `.env.local` using the existing `ACCOUNTS` and `SOURCES` format
-documented in [operations.md](operations.md). Do not put these values in Docker
-build arguments or image layers. Set `SOCIAL_MEDIA_DATA_DIR` to an absolute host
-directory before invoking Compose; it may be an ignored `social-media` directory
-inside the website checkout.
+The included `docker-compose.yaml` uses the published image and mounts `./social-media`
+at `/data`, with a named volume at `/state`. Edit the host path and the settings
+in its `environment` section directly, including `ACCOUNTS` and `SOURCES`.
+These two required values contain `YOUR_...` placeholders; replace them with your
+account URLs and provider tokens before starting the service.
+No environment file is loaded by this Compose configuration. Do not commit a
+deployment copy containing real credentials.
+The host data path may be an ignored directory inside the website checkout.
+
+Both values accept comma-separated entries, newline-separated entries, or a
+mixture. For `docker run --env-file .env.local`, keep each variable on one physical
+line with comma-separated entries and no surrounding shell quotes. Existing
+multiline environment variables continue to work with `--env ACCOUNTS --env SOURCES`.
+Commas are always delimiters; CSV quoting/escaping is not supported.
 
 ```sh
-docker compose build
+docker compose pull
 docker compose up -d
 docker compose logs --tail=50 subscriber
 docker compose exec subscriber python -m social_media_subscriber verify-snapshot /data

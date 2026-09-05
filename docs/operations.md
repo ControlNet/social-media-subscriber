@@ -41,6 +41,10 @@ diff; and `verify` exits `0`. If `schemas-check` reports a diff, do not discard
 it blindly—inspect it and either regenerate/commit the intended contract change
 or restore the known-good worktree according to your normal review process.
 
+The test suite uses synthetic data. Passing local verification does not authorize
+a live provider call, does not authorize publication, and does not perform a remote
+cutover. Those operations require separate approval.
+
 The persisted data documentation and repository contracts can be checked
 without a provider, credential, Git remote, or publication target. From the
 repository root, these are copy-pastable offline Pixi commands:
@@ -64,11 +68,14 @@ pixi run subscriber verify-snapshot /absolute/path/to/snapshot
 It exits `0` with JSON counts/digest when valid and `5` on any snapshot
 integrity failure. It does not contact a provider or Git remote.
 
-## Secrets: multiline, non-repository handling
+## Secrets: comma/newline lists, non-repository handling
 
-`ACCOUNTS` and `SOURCES` are newline-delimited values. For `ACCOUNTS`, each line
+`ACCOUNTS` and `SOURCES` accept comma-delimited or newline-delimited values,
+including mixed separators. Surrounding whitespace and empty entries are ignored.
+Commas are always delimiters; CSV quoting and escaping are not supported.
+For `ACCOUNTS`, each entry
 must be an approved public LinkedIn person/company or X profile locator;
-credentials and query parameters are rejected. Each non-empty `SOURCES` line must follow
+credentials and query parameters are rejected. Each non-empty `SOURCES` entry must follow
 `<source_id>:<api_token>`. The parser splits only the first colon, so provider
 tokens may contain additional colons. Source IDs are case-normalized, unknown
 IDs reject the whole input, and exact source/token duplicates keep only their
@@ -164,6 +171,21 @@ does not cancel an in-progress job. Do not change the job permission or
 concurrency policy to make an ad-hoc test easier.
 
 ## Collection operation and exit response
+
+Collection and verification emit a JSON summary on standard output. Treat the
+process status and `exit_code` together; do not scrape provider text.
+
+| Exit | Meaning | Operator action |
+| --- | --- | --- |
+| `0` | Successful collection, verification, or publication. | Inspect the summary; unchanged snapshots and best-effort enrichment misses are normal outcomes. |
+| `2` | Invalid configuration, account locator, source definition, or date window. | Correct the input before retrying. |
+| `3` | Provider pool exhausted before a candidate could be built. | Check authorized provider capacity and status before retrying. |
+| `4` | Partial collection with a valid candidate, including media failures. | Publish the valid candidate and investigate failed accounts or the media retry queue. |
+| `5` | Integrity, schema, merge, or storage abort. | Preserve redacted diagnostics and investigate before retrying. |
+| `6` | Publication rejection or failure, including a stale lease. | Observe the current `dist` and start a new run; do not reuse a stale candidate. |
+
+For Docker worker overlap, timeout, and shutdown behavior, see
+[media-and-docker.md](media-and-docker.md).
 
 ### Persisted data operator contract
 

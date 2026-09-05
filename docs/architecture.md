@@ -65,7 +65,7 @@ schemas`; `pixi run schemas-check` proves the checked-in files match it.
 
 ## Account and post identity
 
-`ACCOUNTS` is newline-delimited public account locators. The parser accepts
+`ACCOUNTS` is a comma/newline-delimited list of public account locators. The parser accepts
 LinkedIn person/company URLs and X profile URLs, canonicalizes them,
 de-duplicates them while preserving first occurrence, and rejects malformed
 hosts, credentials-in-URLs, ports, query-like path variations, control
@@ -141,7 +141,7 @@ Apify instances before Bright Data instances. Production X composition
 registers one Xquik adapter per Apify credential; Bright Data instances remain
 ineligible for X routing.
 
-`SOURCES` is a newline-delimited ordered list. Every non-empty line is parsed by
+`SOURCES` is a comma/newline-delimited ordered list. Every non-empty entry is parsed by
 splitting only its first colon into `<source_id>:<api_token>`. Source IDs are
 case-normalized and resolved through a code-owned explicit allowlist; malformed
 or unsupported IDs reject the complete input before client creation. Exact
