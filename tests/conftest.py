@@ -46,6 +46,12 @@ class FixtureContext(Protocol):
     node: pytest.Item
 
 
+@pytest.fixture
+def enable_media_compression(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Conversion-specific scenarios explicitly opt into compression."""
+    monkeypatch.setenv("ENABLE_MEDIA_COMPRESSION", "true")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def private_test_directories() -> Iterator[None]:
     """Tests create owner-controlled snapshot parents regardless of host umask."""

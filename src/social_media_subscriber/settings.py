@@ -18,4 +18,4 @@ class Settings(BaseSettings):
 
     accounts: SecretStr
     sources: SecretStr
-    enable_media_compression: bool = True
+    enable_media_compression: bool = False

@@ -39,7 +39,10 @@ if TYPE_CHECKING:
     from social_media_subscriber.media.slots import MediaSlot
     from social_media_subscriber.storage.binary import FilePayload
 
-pytestmark = pytest.mark.media_pipeline
+pytestmark = [
+    pytest.mark.media_pipeline,
+    pytest.mark.usefixtures("enable_media_compression"),
+]
 _OLD_MEDIA = "media/linkedin/1/main-images/0.webp"
 _NEW_MEDIA = "media/linkedin/2/main-images/0.webp"
 

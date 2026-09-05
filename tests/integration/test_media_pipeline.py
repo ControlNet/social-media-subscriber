@@ -64,7 +64,10 @@ from tests.unit.test_media_archive import synthetic_post
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = pytest.mark.media_pipeline
+pytestmark = [
+    pytest.mark.media_pipeline,
+    pytest.mark.usefixtures("enable_media_compression"),
+]
 
 
 def _account() -> Account:

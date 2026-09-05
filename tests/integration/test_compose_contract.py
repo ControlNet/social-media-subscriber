@@ -34,7 +34,7 @@ def test_compose_runs_published_image_with_editable_settings() -> None:
         "PUID": "1000",
         "PGID": "1000",
         "CRON_SCHEDULE": "17 3 * * *",
-        "ENABLE_MEDIA_COMPRESSION": "true",
+        "ENABLE_MEDIA_COMPRESSION": "false",
         "REFRESH_ON_STARTUP": "true",
         "WORKER_TIMEOUT_SECONDS": "0",
     }

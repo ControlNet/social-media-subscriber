@@ -38,7 +38,10 @@ if TYPE_CHECKING:
     from social_media_subscriber.application.results import CollectionResult
     from social_media_subscriber.media.slots import MediaSlot
 
-pytestmark = pytest.mark.media_pipeline
+pytestmark = [
+    pytest.mark.media_pipeline,
+    pytest.mark.usefixtures("enable_media_compression"),
+]
 
 
 def test_worker_has_no_default_deadline(monkeypatch: pytest.MonkeyPatch) -> None:

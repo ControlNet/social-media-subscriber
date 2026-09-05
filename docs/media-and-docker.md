@@ -38,7 +38,8 @@ when the provider returns a different signed URL or omits the media on refresh.
 Old media is not downloaded or converted again. All retained posts are inspected
 for unarchived slots, including historical posts outside the collection window.
 
-With `ENABLE_MEDIA_COMPRESSION=true` (the default), images, avatars, document
+By default, `ENABLE_MEDIA_COMPRESSION=false` preserves original media without
+conversion. With `ENABLE_MEDIA_COMPRESSION=true`, images, avatars, document
 covers, job logos, and video posters become WebP; videos become VP9/Opus WebM at
 their original dimensions. Set it to `false` to preserve downloaded bytes without
 image re-encoding or FFmpeg invocation. Supported originals are JPEG, PNG, GIF,
@@ -128,7 +129,7 @@ Optional runtime environment settings (defaults shown):
 | Setting | Default |
 | --- | --- |
 | `CRON_SCHEDULE` | `17 3 * * *` |
-| `ENABLE_MEDIA_COMPRESSION` | `true` |
+| `ENABLE_MEDIA_COMPRESSION` | `false` |
 | `TIMEZONE` | Unset: use the host-mounted `/etc/localtime` |
 | `REFRESH_ON_STARTUP` | `true` |
 | `WORKER_TIMEOUT_SECONDS` | `0` (no deadline) |

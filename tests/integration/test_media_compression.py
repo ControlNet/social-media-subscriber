@@ -38,6 +38,8 @@ pytestmark = pytest.mark.media_pipeline
 
 def test_compression_setting_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ENABLE_MEDIA_COMPRESSION", raising=False)
+    assert settings(_account().profile_url).enable_media_compression is False
+    monkeypatch.setenv("ENABLE_MEDIA_COMPRESSION", "true")
     assert settings(_account().profile_url).enable_media_compression is True
     monkeypatch.setenv("ENABLE_MEDIA_COMPRESSION", "false")
     assert settings(_account().profile_url).enable_media_compression is False
@@ -173,10 +175,14 @@ async def test_uncompressed_video_never_invokes_ffmpeg(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("configured", [None, "false"])
 async def test_collection_passes_compression_environment_to_archive(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured: str | None
 ) -> None:
-    monkeypatch.setenv("ENABLE_MEDIA_COMPRESSION", "false")
+    if configured is None:
+        monkeypatch.delenv("ENABLE_MEDIA_COMPRESSION", raising=False)
+    else:
+        monkeypatch.setenv("ENABLE_MEDIA_COMPRESSION", configured)
     source = tmp_path / "synthetic.png"
     Image.new("RGB", (16, 12), "red").save(source)
     original_bytes = source.read_bytes()
