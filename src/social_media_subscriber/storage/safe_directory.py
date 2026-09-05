@@ -69,14 +69,21 @@ class DirectoryAnchor:
     entry_name: str
 
     @classmethod
-    def open(cls, entry_path: Path, *, create_parent: bool) -> Self:
+    def open(
+        cls, entry_path: Path, *, create_parent: bool, require_owner: bool = True
+    ) -> Self:
         """Open the owner-controlled parent of one named snapshot entry."""
         absolute = _absolute_path(entry_path)
         if not absolute.name:
             raise UnsafePathError
         descriptor = _open_directory_chain(absolute.parent, create=create_parent)
         result = os.fstat(descriptor)
-        _require_private_owner_directory(result)
+        if require_owner:
+            try:
+                _require_private_owner_directory(result)
+            except BaseException:
+                os.close(descriptor)
+                raise
         return cls(
             descriptor,
             absolute.parent,
@@ -210,7 +217,7 @@ def _open_directory_chain(path: Path, *, create: bool) -> int:
         for component in absolute.parts[1:]:
             if create:
                 with suppress(FileExistsError):
-                    os.mkdir(component, dir_fd=descriptor)
+                    os.mkdir(component, mode=0o700, dir_fd=descriptor)
             try:
                 child = os.open(component, _DIRECTORY_FLAGS, dir_fd=descriptor)
             except OSError as error:

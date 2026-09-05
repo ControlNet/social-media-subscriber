@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import tempfile
+from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from pathlib import Path
 
+from social_media_subscriber.media.archive import archive_media
 from social_media_subscriber.providers.x_syndication import (
     XMediaEnricher,
     XMediaEnricherContract,
@@ -16,10 +18,6 @@ from social_media_subscriber.storage.repository import (
     SnapshotIntegrityError,
     SnapshotRepository,
 )
-from social_media_subscriber.storage.snapshot import SnapshotState
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,9 +69,11 @@ async def backfill_x_media(
         enrichment = await selected.enrich(validated.state.posts)
     finally:
         await selected.aclose()
-    summary = SnapshotRepository(command.output).write(
-        SnapshotState(validated.state.accounts, enrichment.posts)
-    )
+    with tempfile.TemporaryDirectory(prefix="enrich-media-") as temporary:
+        candidate, _ = await archive_media(
+            replace(validated.state, posts=enrichment.posts), Path(temporary)
+        )
+        summary = SnapshotRepository(command.output).write(candidate)
     report = enrichment.report
     return XMediaBackfillResult(
         summary.digest,

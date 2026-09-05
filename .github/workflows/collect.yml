@@ -42,7 +42,7 @@ jobs:
     needs: preflight
     if: needs.preflight.outputs.enabled == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 180
     permissions:
       contents: write
     env:
@@ -79,6 +79,7 @@ jobs:
       - name: Materialize exact previous snapshot
         run: |
           set -euo pipefail
+          umask 077
           run_root="$RUNNER_TEMP/social-media-subscriber/$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT"
           previous="$run_root/previous"
           candidate="$run_root/candidate"

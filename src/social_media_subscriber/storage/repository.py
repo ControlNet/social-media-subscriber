@@ -5,7 +5,8 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Protocol, override
+from pathlib import Path
+from typing import Protocol, override
 
 from pydantic import ValidationError
 
@@ -14,6 +15,7 @@ from social_media_subscriber.domain.ids import record_filename
 from social_media_subscriber.domain.platform import Platform
 from social_media_subscriber.domain.post import Post
 from social_media_subscriber.domain.post_index import PostIndexEntry, PostsIndex
+from social_media_subscriber.media.slots import validate_media_inventory
 from social_media_subscriber.serialization.json import (
     JsonBoundaryModel,
     JsonValue,
@@ -21,6 +23,7 @@ from social_media_subscriber.serialization.json import (
     canonical_json_value_bytes,
 )
 from social_media_subscriber.storage import safe_promotion
+from social_media_subscriber.storage.binary import BinaryFile, FilePayload
 from social_media_subscriber.storage.layout import (
     ACCOUNTS_DIRECTORY,
     ACCOUNTS_INDEX,
@@ -28,6 +31,7 @@ from social_media_subscriber.storage.layout import (
     posts_directory,
     snapshot_digest,
 )
+from social_media_subscriber.storage.run_state import RunState
 from social_media_subscriber.storage.safe_directory import (
     DirectoryAnchor,
     FileIdentity,
@@ -44,9 +48,6 @@ from social_media_subscriber.storage.validated_snapshot import (
     ValidatedSnapshot,
     require_entry_identity,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class SnapshotEncoder(Protocol):
@@ -96,13 +97,15 @@ class SnapshotRepository:
     def read_optional(self) -> ValidatedSnapshot | None:
         """Read one validated immutable tree through anchored descriptors."""
         try:
-            with DirectoryAnchor.open(self._root, create_parent=False) as anchor:
+            with DirectoryAnchor.open(
+                self._root, create_parent=False, require_owner=False
+            ) as anchor:
                 identity = anchor.entry_identity()
                 if identity is None:
                     return None
                 anchor.verify_parent_path()
                 with anchor.open_entry(expected=identity) as root:
-                    tree = read_directory_tree(root.descriptor)
+                    tree = read_directory_tree(root.descriptor, self._root)
                     state, summary = self._load_tree(tree)
                     anchor.verify_parent_path()
                     require_entry_identity(anchor, identity)
@@ -135,7 +138,9 @@ class SnapshotRepository:
                     ) as candidate:
                         write_directory_tree(candidate.descriptor, files)
                         _, summary = self._load_tree(
-                            read_directory_tree(candidate.descriptor)
+                            read_directory_tree(
+                                candidate.descriptor, self._root.parent / temporary_name
+                            )
                         )
                     safe_promotion.promote_directory(
                         anchor, temporary_name, temporary_identity, prior_identity
@@ -163,14 +168,30 @@ class SnapshotRepository:
         if ACCOUNTS_INDEX not in files or POSTS_INDEX not in files:
             raise SnapshotIntegrityError(SnapshotIntegrityCategory.INVENTORY)
         accounts = tuple(
-            Account.model_validate_json(files[path]) for path in account_paths
+            Account.model_validate_json(_json_payload(files[path]))
+            for path in account_paths
         )
-        posts = tuple(Post.model_validate_json(files[path]) for path in post_paths)
+        posts = tuple(
+            Post.model_validate_json(_json_payload(files[path])) for path in post_paths
+        )
         state = SnapshotState(
             tuple(sorted(accounts, key=lambda account: account.id)),
             tuple(sorted(posts, key=lambda post: post.id)),
+            RunState.model_validate_json(_json_payload(files[Path("state.json")]))
+            if Path("state.json") in files
+            else None,
+            {
+                path: value
+                for path, value in files.items()
+                if isinstance(value, BinaryFile)
+            },
         )
+        validate_media_inventory(state)
         expected = self._files(state)
+        if state.run_state is not None:
+            # Business state is deliberately human-editable for manual retry repair.
+            # Its schema is validated above; writers still produce canonical JSON.
+            expected[Path("state.json")] = files[Path("state.json")]
         if files != expected or tree.directories != expected_directories(expected):
             raise SnapshotIntegrityError(SnapshotIntegrityCategory.INVENTORY)
         return state, SnapshotSummary(
@@ -183,12 +204,12 @@ class SnapshotRepository:
         self, anchor: DirectoryAnchor, identity: FileIdentity
     ) -> None:
         with anchor.open_entry(expected=identity) as root:
-            tree = read_directory_tree(root.descriptor)
+            tree = read_directory_tree(root.descriptor, self._root)
             if tree.files or tree.directories:
                 _ = self._load_tree(tree)
 
-    def _files(self, state: SnapshotState) -> dict[Path, bytes]:
-        files = {
+    def _files(self, state: SnapshotState) -> dict[Path, FilePayload]:
+        files: dict[Path, FilePayload] = {
             ACCOUNTS_DIRECTORY / record_filename(account.id): self._encoder(account)
             for account in state.accounts
         }
@@ -224,10 +245,13 @@ class SnapshotRepository:
             )
         )
         files[POSTS_INDEX] = self._encoder(posts_index)
+        if state.run_state is not None:
+            files[Path("state.json")] = canonical_json_bytes(state.run_state)
+        files.update(state.media)
         return files
 
 
-def _record_paths(files: dict[Path, bytes], directory: Path) -> tuple[Path, ...]:
+def _record_paths(files: dict[Path, FilePayload], directory: Path) -> tuple[Path, ...]:
     return tuple(
         sorted(
             path
@@ -241,3 +265,9 @@ def _required_identity(identity: FileIdentity | None) -> FileIdentity:
     if identity is None:
         raise UnsafePathError
     return identity
+
+
+def _json_payload(payload: FilePayload) -> bytes:
+    if not isinstance(payload, bytes):
+        raise SnapshotIntegrityError(SnapshotIntegrityCategory.INVENTORY)
+    return payload

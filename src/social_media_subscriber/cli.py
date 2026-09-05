@@ -40,6 +40,8 @@ from social_media_subscriber.publishing.git import (
 from social_media_subscriber.publishing.process import (
     GitCommandError,
 )
+from social_media_subscriber.service.local import refresh_local
+from social_media_subscriber.service.scheduler import ServiceSettings, serve
 from social_media_subscriber.settings import Settings
 from social_media_subscriber.storage.repository import (
     SnapshotIntegrityError,
@@ -54,6 +56,10 @@ class _CollectReport(TypedDict):
     failed_account_ids: list[str]
     failed_accounts: int
     succeeded_accounts: int
+
+
+_DATA_DIRECTORY = Path("/data")
+_SERVICE_DIRECTORY = Path("/state")
 
 
 class _SnapshotReport(TypedDict):
@@ -155,7 +161,43 @@ def create_app(application: CliApplication | None = None) -> typer.Typer:
     _register_x_media_backfill(app, cast("XMediaCliApplication", service))
     _register_verification(app, service)
     _register_publication(app, service)
+    _register_local(app)
     return app
+
+
+def _register_local(app: typer.Typer) -> None:
+    @app.command("refresh-local")
+    def local_command(
+        snapshot: Annotated[Path, typer.Option("--snapshot")] = _DATA_DIRECTORY,
+        state_dir: Annotated[Path, typer.Option("--state-dir")] = _SERVICE_DIRECTORY,
+    ) -> None:
+        try:
+            settings = Settings(
+                accounts=SecretStr(os.environ.get("ACCOUNTS", "")),
+                sources=SecretStr(os.environ.get("SOURCES", "")),
+            )
+            result = refresh_local(snapshot, state_dir, settings)
+        except Exception as error:  # noqa: BLE001 - redact provider and filesystem errors
+            log_exception(error)
+            raise typer.Exit(5) from None
+        if result is None:
+            typer.echo('{"command":"refresh-local","result":"skipped"}')
+            raise typer.Exit(75)
+        _emit(_collect_report(result), "Local refresh complete")
+        raise typer.Exit(int(result.exit_code))
+
+    @app.command("serve")
+    def serve_command(
+        snapshot: Annotated[Path, typer.Option("--snapshot")] = _DATA_DIRECTORY,
+        state_dir: Annotated[Path, typer.Option("--state-dir")] = _SERVICE_DIRECTORY,
+    ) -> None:
+        try:
+            serve(ServiceSettings(), snapshot, state_dir)
+        except Exception as error:  # noqa: BLE001 - no configuration values in errors
+            log_exception(error)
+            raise typer.Exit(2) from None
+
+    _ = local_command, serve_command
 
 
 def _register_x_media_backfill(app: typer.Typer, service: XMediaCliApplication) -> None:

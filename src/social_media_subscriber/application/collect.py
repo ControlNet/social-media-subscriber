@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import tempfile
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import anyio
@@ -26,6 +29,7 @@ from social_media_subscriber.application.windows import (
 )
 from social_media_subscriber.bootstrap import bootstrap_runtime
 from social_media_subscriber.domain.time import canonical_utc
+from social_media_subscriber.media.archive import archive_media
 from social_media_subscriber.providers.apify.adapter import ApifyClientContract
 from social_media_subscriber.providers.apify.client import ApifyClient
 from social_media_subscriber.providers.apify.x_adapter import ApifyXClientContract
@@ -40,11 +44,12 @@ from social_media_subscriber.storage.repository import (
     SnapshotIntegrityError,
     SnapshotRepository,
 )
+from social_media_subscriber.storage.run_state import RunState
+from social_media_subscriber.storage.snapshot import SnapshotState
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from datetime import date, datetime
-    from pathlib import Path
+    from datetime import date
 
     from social_media_subscriber.bootstrap import SubscriberRuntime
     from social_media_subscriber.providers.brightdata.adapter_contracts import (
@@ -111,17 +116,53 @@ async def _collect_with_runtime(
     post_phase = await collect_posts(prepared, runtime)
     match post_phase:
         case CollectionResult() as terminal:
-            return terminal
+            if (
+                terminal.exit_code != CollectionExitCode.PROVIDER
+                or prepared.previous is None
+                or prepared.previous.run_state is None
+                or not prepared.previous.run_state.pending_media
+            ):
+                return terminal
+            post_phase = CollectedPosts(
+                SnapshotState((), ()),
+                0,
+                terminal.failed_accounts,
+                terminal.failed_account_ids,
+                terminal.failed_accounts,
+            )
         case CollectedPosts():
             pass
     try:
         candidate = merge_snapshot(prepared.previous, post_phase.current)
-        summary = SnapshotRepository(request.candidate_snapshot_dir).write(candidate)
+        progress = candidate.run_state or RunState()
+        watermarks = dict(progress.accounts)
+        boundary = request.run_started_at
+        if request.end_date is not None:
+            boundary = min(boundary, datetime.combine(request.end_date, time.max, UTC))
+        for account in post_phase.current.accounts:
+            previous_boundary = watermarks.get(str(account.id))
+            watermarks[str(account.id)] = (
+                max(previous_boundary, boundary) if previous_boundary else boundary
+            )
+        candidate = replace(
+            candidate, run_state=progress.model_copy(update={"accounts": watermarks})
+        )
+        with tempfile.TemporaryDirectory(prefix="snapshot-media-") as temporary:
+            candidate, media_failures = await archive_media(
+                candidate,
+                Path(temporary),
+                refreshed_post_ids=frozenset(
+                    str(post.id) for post in post_phase.current.posts
+                ),
+            )
+            summary = SnapshotRepository(request.candidate_snapshot_dir).write(
+                candidate
+            )
     except (SnapshotConflictError, SnapshotIntegrityError):
         return aborted_result(CollectionExitCode.INTEGRITY)
     exit_code = (
         CollectionExitCode.PARTIAL
-        if post_phase.failed_count
+        if post_phase.failed_count or media_failures
         else CollectionExitCode.SUCCESS
     )
     changed = prepared.previous is None or candidate != prepared.previous

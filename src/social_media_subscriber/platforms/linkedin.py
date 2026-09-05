@@ -100,7 +100,7 @@ def canonical_media_items(value: JsonValue) -> list[JsonValue]:
     for item in items:
         if isinstance(item, str):
             normalized.append({"url": item})
-        elif item is not None:
+        else:
             normalized.append(item)
     return normalized
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from social_media_subscriber.domain.platform import Platform
+from social_media_subscriber.storage.binary import FilePayload, payload_chunks
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -25,11 +26,12 @@ def posts_directory(platform: Platform) -> Path:
 POSTS_DIRECTORY: Final = posts_directory(Platform.LINKEDIN)
 
 
-def snapshot_digest(files: Mapping[Path, bytes]) -> str:
+def snapshot_digest(files: Mapping[Path, FilePayload]) -> str:
     """Hash sorted relative paths and bytes with an unambiguous separator."""
     digest = hashlib.sha256()
     for relative_path in sorted(files, key=lambda path: path.as_posix()):
         digest.update(relative_path.as_posix().encode())
         digest.update(b"\0")
-        digest.update(files[relative_path])
+        for chunk in payload_chunks(files[relative_path]):
+            digest.update(chunk)
     return digest.hexdigest()

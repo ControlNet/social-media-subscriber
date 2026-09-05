@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, override
 
+from social_media_subscriber.media.slots import normalize_content, reconcile_media
 from social_media_subscriber.storage.snapshot import SnapshotState
 
 if TYPE_CHECKING:
@@ -77,7 +78,12 @@ def _merge_posts(
         first_seen = (
             existing.first_seen_at if existing is not None else candidate.first_seen_at
         )
-        merged[candidate.id] = candidate.model_copy(
+        reconciled = (
+            normalize_content(candidate)
+            if existing is None
+            else reconcile_media(existing, candidate)
+        )
+        merged[candidate.id] = reconciled.model_copy(
             update={"first_seen_at": first_seen}
         )
     return tuple(sorted(merged.values(), key=lambda post: post.id))
@@ -95,4 +101,6 @@ def merge_snapshot(
     for post in merged_posts:
         if post.account_id not in known_accounts:
             raise SnapshotConflictError(SnapshotConflictCategory.POST_ACCOUNT, post.id)
-    return SnapshotState(merged_accounts, merged_posts)
+    return SnapshotState(
+        merged_accounts, merged_posts, baseline.run_state, baseline.media
+    )

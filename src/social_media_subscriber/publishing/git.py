@@ -14,6 +14,7 @@ from social_media_subscriber.publishing.process import (
     GitRunner,
     run_git,
 )
+from social_media_subscriber.storage.binary import FilePayload, payload_chunks
 from social_media_subscriber.storage.repository import SnapshotRepository
 
 _ABSENT: Final = "absent"
@@ -97,24 +98,26 @@ def _checked(
     return result.stdout.strip()
 
 
-def _validated_tree(root: Path) -> dict[Path, bytes]:
+def _validated_tree(root: Path) -> dict[Path, FilePayload]:
     validated = SnapshotRepository(root).read_optional()
     if validated is None:
         raise InvalidPublicationError(InvalidPublicationCategory.SNAPSHOT_REQUIRED)
     return dict(validated.files)
 
 
-def _materialize(tree: dict[Path, bytes], destination: Path) -> None:
+def _materialize(tree: dict[Path, FilePayload], destination: Path) -> None:
     for relative_path, payload in tree.items():
         target = destination / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
-        _ = target.write_bytes(payload)
+        with target.open("wb") as output:
+            for chunk in payload_chunks(payload):
+                _ = output.write(chunk)
 
 
 def _write_tree(
     runner: GitRunner,
     repository: Path,
-    tree: dict[Path, bytes],
+    tree: dict[Path, FilePayload],
     timeout_seconds: float,
 ) -> str:
     _materialize(tree, repository)
@@ -127,7 +130,7 @@ def _validate_previous_tree(
     repository: Path,
     request: PublishRequest,
     remote_url: str,
-    previous_tree: dict[Path, bytes],
+    previous_tree: dict[Path, FilePayload],
 ) -> None:
     expected_sha = request.expected_sha
     timeout_seconds = request.timeout_seconds
@@ -183,7 +186,7 @@ def publish_snapshot(
         request.source_repository,
         request.timeout_seconds,
     )
-    previous_tree: dict[Path, bytes] | None = None
+    previous_tree: dict[Path, FilePayload] | None = None
     if expected_sha == _ABSENT:
         if request.previous_snapshot is not None:
             raise InvalidPublicationError(

@@ -35,7 +35,8 @@ pixi run verify
 ```
 
 Expected signals: install resolves the locked environment; help lists exactly
-`collect`, `enrich-x-media`, `verify-snapshot`, and `publish-dist`; schema check leaves no schema
+`collect`, `enrich-x-media`, `verify-snapshot`, `publish-dist`, `refresh-local`, and
+`serve`; schema check leaves no schema
 diff; and `verify` exits `0`. If `schemas-check` reports a diff, do not discard
 it blindly—inspect it and either regenerate/commit the intended contract change
 or restore the known-good worktree according to your normal review process.
@@ -134,7 +135,8 @@ runs use the automatic per-account window policy; the workflow does not expose
 date overrides. Production collection runs once per day for the approved
 accounts in `ACCOUNTS`. New LinkedIn Accounts are backfilled from `2003-05-05`;
 new X profiles are backfilled from `2006-03-21`; existing accounts use an
-inclusive window from the UTC run date minus three days through the run date.
+inclusive window from their last successful collection in `state.json` minus
+three days through the run date (run-date fallback for legacy snapshots).
 New X profiles use complete `profileReplies`; existing X profiles use bounded
 `Latest` search with an exclusive next-day `until` boundary. The client applies
 the inclusive window locally on both routes. The adapter sends neither
@@ -232,7 +234,7 @@ approval.
 Omit both date options only for the default policy. A new LinkedIn Account starts
 at `2003-05-05`; a new X profile starts at `2006-03-21`. An Account already
 present uses the inclusive range
-from the run date minus three days through the run date, even when it has no
+from its last successful collection minus three days through the run date, even when it has no
 persisted Posts. A complete explicit pair replaces all per-account defaults.
 First-time backfills may take substantially longer and consume more provider
 credits. Both providers have a 30-minute wait limit and require a valid complete

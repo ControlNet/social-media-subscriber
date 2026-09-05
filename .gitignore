@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 .artifacts/
+/social-media/
 .omo/
 
 __pycache__/

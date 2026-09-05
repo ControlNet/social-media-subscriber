@@ -20,6 +20,9 @@ ruff = ">=0.12,<1"
 basedpyright = ">=1.31,<2"
 actionlint = ">=1.7,<2"
 pyyaml = ">=6,<7"
+ffmpeg = ">=7,<9"
+apscheduler = ">=3.11,<4"
+pillow = ">=11,<13"
 
 [pypi-dependencies]
 httpx2 = { version = ">=2,<3", extras = ["brotli", "http2", "zstd"] }

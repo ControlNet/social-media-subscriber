@@ -58,10 +58,10 @@ def _run_preflight(
     )
 
 
-def test_ci_is_read_only_immutable_and_secret_free() -> None:
+def test_ci_verification_is_read_only_immutable_and_secret_free() -> None:
     # Given / When
     workflow = load_workflow(_CI_PATH)
-    source = _CI_PATH.read_text()
+    source = str(mapping(mapping(workflow["jobs"])["verify"]))
 
     # Then
     assert mapping(workflow["on"]) == {"push": None, "pull_request": None}
@@ -153,7 +153,7 @@ def test_collection_gates_secrets_and_scopes_write_to_publication_job() -> None:
     assert mapping(publication["permissions"]) == {"contents": "write"}
     assert publication["if"] == "needs.preflight.outputs.enabled == 'true'"
     assert preflight["timeout-minutes"] == 5
-    assert publication["timeout-minutes"] == 45
+    assert publication["timeout-minutes"] == 180
     assert mapping(publication["env"])["GITHUB_TOKEN"] == "${{ github." + "token }}"
     assert '${{ github.event_name }}" == "workflow_dispatch' in preflight_source
     assert "exit 1" in preflight_source

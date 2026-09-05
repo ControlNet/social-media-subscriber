@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import Self
 
+    from social_media_subscriber.storage.binary import FilePayload
     from social_media_subscriber.storage.snapshot import SnapshotState, SnapshotSummary
 
 
@@ -26,11 +27,14 @@ class ValidatedSnapshot:
 
     state: SnapshotState
     summary: SnapshotSummary
-    files: Mapping[Path, bytes]
+    files: Mapping[Path, FilePayload]
 
     @classmethod
     def from_files(
-        cls, state: SnapshotState, summary: SnapshotSummary, files: dict[Path, bytes]
+        cls,
+        state: SnapshotState,
+        summary: SnapshotSummary,
+        files: dict[Path, FilePayload],
     ) -> Self:
         """Freeze one complete validated file inventory."""
         return cls(state, summary, MappingProxyType(dict(files)))

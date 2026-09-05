@@ -5,6 +5,8 @@ description = "A deterministic LinkedIn subscription collector"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    "apscheduler>=3.11,<4",
+    "pillow>=11,<13",
     "anyio>=4.10,<5",
     "httpx2[brotli,http2,zstd]>=2,<3",
     "pydantic>=2.12,<3",
@@ -79,6 +81,7 @@ docstring-code-line-length = "dynamic"
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+markers = ["media_pipeline: exercise the real archive application seam with synthetic downloads"]
 addopts = [
     "-ra",
     "--strict-config",

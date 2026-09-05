@@ -183,9 +183,9 @@ filter:
 - An account absent from the previous snapshot's Account set starts at its
   platform boundary and ends at `run_start_date`: LinkedIn uses `2003-05-05` and
   X uses `2006-03-21`.
-- An account already present in the previous snapshot starts at
-  `run_start_date - 3 days` and ends at `run_start_date`. Because the range is
-  inclusive, this covers the run date and the preceding three UTC dates.
+- An account with a successful timestamp in `state.json` starts three days
+  before that timestamp and ends at `run_start_date`, catching up after downtime.
+  Legacy snapshots without that timestamp use `run_start_date - 3 days`.
 - Account presence, not Post presence, determines the default. An Account that
   previously produced zero Posts still uses the three-day window on its next
   run.
@@ -269,6 +269,8 @@ records are deterministic JSON.
 ├── accounts/<encoded canonical Account ID>.json
 ├── accounts.json                         # profile_url → record path map
 ├── posts.json                            # newest-first Post locator list
+├── state.json                            # account progress and media retry queues
+├── media/<platform>/<post_id>/<scope>/<index>.webp-or-webm
 └── posts/<platform>/<encoded runtime Post ID>.json
 ```
 
@@ -282,8 +284,11 @@ deterministic identity tie-breaker. Every entry has `path`,
 `{ "posts": [] }`. Verification reloads the complete tree, regenerates both
 indexes and all record paths, and rejects inventory, index, schema, ownership,
 or byte inconsistencies. Counts and a SHA-256 digest of the complete tree are
-calculated in memory for CLI and CI comparison, but are not persisted into the
+calculated with bounded streaming for CLI and CI comparison, but are not persisted into the
 collected dataset.
+
+See [media-and-docker.md](media-and-docker.md) for the shared archival contract,
+human-editable business state, and independent local publisher/scheduler.
 
 A candidate is never assembled in the destination root. The repository writes,
 reloads, and validates a private sibling temporary tree, then promotes it

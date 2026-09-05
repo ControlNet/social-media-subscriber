@@ -9,6 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from social_media_subscriber.storage.binary import (
+    BinaryFile,
+    FilePayload,
+    payload_chunks,
+)
 from social_media_subscriber.storage.safe_directory import (
     FileIdentity,
     UnsafePathError,
@@ -25,19 +30,19 @@ _WRITE_FLAGS: Final = (
 class DirectoryTree:
     """A complete descriptor-read snapshot tree."""
 
-    files: dict[Path, bytes]
+    files: dict[Path, FilePayload]
     directories: frozenset[Path]
 
 
-def read_directory_tree(descriptor: int) -> DirectoryTree:
+def read_directory_tree(descriptor: int, root: Path | None = None) -> DirectoryTree:
     """Read a tree without following a symlink or reopening an absolute path."""
-    files: dict[Path, bytes] = {}
+    files: dict[Path, FilePayload] = {}
     directories: set[Path] = set()
-    _read_directory(descriptor, Path(), files, directories)
+    _read_directory(descriptor, Path(), files, directories, root)
     return DirectoryTree(files, frozenset(directories))
 
 
-def write_directory_tree(descriptor: int, files: dict[Path, bytes]) -> None:
+def write_directory_tree(descriptor: int, files: dict[Path, FilePayload]) -> None:
     """Create one complete tree beneath a new private directory descriptor."""
     for relative_path, payload in sorted(
         files.items(), key=lambda item: item[0].as_posix()
@@ -52,22 +57,23 @@ def write_directory_tree(descriptor: int, files: dict[Path, bytes]) -> None:
             os.close(parent)
 
 
-def write_file_at(descriptor: int, name: str, payload: bytes) -> None:
+def write_file_at(descriptor: int, name: str, payload: FilePayload) -> None:
     """Create one private file for an already validated tree path."""
     file_descriptor = os.open(name, _WRITE_FLAGS, 0o600, dir_fd=descriptor)
     try:
-        remaining = memoryview(payload)
-        while remaining:
-            written = os.write(file_descriptor, remaining)
-            if written == 0:
-                message = "snapshot file write made no progress"
-                raise OSError(message)
-            remaining = remaining[written:]
+        for chunk in payload_chunks(payload):
+            remaining = memoryview(chunk)
+            while remaining:
+                written = os.write(file_descriptor, remaining)
+                if written == 0:
+                    message = "snapshot file write made no progress"
+                    raise OSError(message)
+                remaining = remaining[written:]
     finally:
         os.close(file_descriptor)
 
 
-def expected_directories(files: dict[Path, bytes]) -> frozenset[Path]:
+def expected_directories(files: dict[Path, FilePayload]) -> frozenset[Path]:
     """Return every directory implied by a flat relative-path inventory."""
     directories: set[Path] = set()
     for relative_path in files:
@@ -81,8 +87,9 @@ def expected_directories(files: dict[Path, bytes]) -> frozenset[Path]:
 def _read_directory(
     descriptor: int,
     prefix: Path,
-    files: dict[Path, bytes],
+    files: dict[Path, FilePayload],
     directories: set[Path],
+    root: Path | None,
 ) -> None:
     with os.scandir(descriptor) as entries:
         ordered = sorted(entries, key=lambda entry: entry.name)
@@ -93,12 +100,18 @@ def _read_directory(
             directories.add(relative_path)
             child = _open_verified(entry.name, descriptor, scanned, directory=True)
             try:
-                _read_directory(child, relative_path, files, directories)
+                _read_directory(child, relative_path, files, directories, root)
                 _require_identity(child, scanned)
             finally:
                 os.close(child)
         elif stat.S_ISREG(scanned.st_mode):
-            files[relative_path] = _read_file(entry.name, descriptor, scanned)
+            if root is not None and relative_path.parts[0] == "media":
+                media = BinaryFile.inspect(root / relative_path)
+                if media.identity != FileIdentity.from_stat(scanned):
+                    raise UnsafePathError
+                files[relative_path] = media
+            else:
+                files[relative_path] = _read_file(entry.name, descriptor, scanned)
         else:
             raise UnsafePathError
 

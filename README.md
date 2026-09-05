@@ -17,7 +17,7 @@ See [operations](docs/operations.md) for the required policy gates and
 
 ## Quick orientation
 
-There are four CLI commands, all run through the repository's Pixi `default`
+There are six CLI commands, all run through the repository's Pixi `default`
 environment (Python 3.13):
 
 ```sh
@@ -27,6 +27,8 @@ pixi run subscriber collect --help
 pixi run subscriber enrich-x-media --help
 pixi run subscriber verify-snapshot --help
 pixi run subscriber publish-dist --help
+pixi run subscriber refresh-local --help
+pixi run subscriber serve --help
 ```
 
 `collect` needs the multiline `ACCOUNTS` and `SOURCES` environment variables
@@ -103,6 +105,8 @@ snapshot/
 │   └── <sha256(profile_url)>.json
 ├── accounts.json
 ├── posts.json
+├── state.json
+├── media/<platform>/<post_id>/<scope>/<index>.webp-or-webm
 └── posts/<platform>/
     └── <sha256(platform post identity)>.json
 ```
@@ -125,6 +129,8 @@ limited to HTTPS `t.co`; and MP4 variants are limited to HTTPS
 `video.twimg.com`. This optional nested content is a compatible extension of
 the existing open `content` object. Top-level Post fields, types, paths, and
 indexes are unchanged, and older records without it remain valid.
+Successful archival replaces these source media URLs with owned WebP/WebM paths;
+unsuccessful media retains its HTTPS source URL for rendering and retry.
 Transport, authentication, request, response, and error metadata are rejected
 before persistence.
 
@@ -178,16 +184,21 @@ process status and `exit_code` together; do not scrape provider text.
 GitHub Actions has two separate workflows:
 
 - CI runs `pixi run verify` for pushes and pull requests with read-only
-  repository permissions.
+  repository permissions. After successful default-branch push verification,
+  it builds and publishes the Docker image if both `DOCKERHUB_USERNAME` and
+  `DOCKERHUB_PASSWORD` Actions secrets are set. Missing credentials skip publication;
+  pull requests never publish images.
 - Collection is scheduled at `17 3 * * *` (UTC) and can be started manually
-  with a complete inclusive `start_date`/`end_date` pair. A scheduled run with
+  through `workflow_dispatch`. The CLI separately accepts a complete inclusive
+  `--start-date`/`--end-date` pair. A scheduled run with
   either provider secret missing exits successfully as disabled; a manual run
   with missing secrets fails preflight. Only the publication job has
   `contents: write`, and only after preflight succeeds.
 - By default, an Account absent from the previous snapshot is backfilled from
   its platform boundary: `2003-05-05` for LinkedIn and `2006-03-21` for X. An
-  existing Account, including one with zero Posts, is collected from the UTC run
-  date minus three days through the run date. New X Accounts use full
+  existing Account, including one with zero Posts, is collected from its last
+  successful timestamp in `state.json` minus three days through the run date
+  (legacy snapshots without state retain the run-date fallback). New X Accounts use full
   `profileReplies`; existing X Accounts use `Latest` search with
   `since:<start>` and exclusive `until:<end+1-day>`. Search is the intentional
   cost-first incremental route and has demonstrated reply false negatives even
@@ -197,3 +208,60 @@ GitHub Actions has two separate workflows:
 
 For secret setup, scheduling behavior, incident recovery, and the explicit
 operator-only live smoke procedure, use [docs/operations.md](docs/operations.md).
+
+## Media archival and self-hosting
+
+Both the GitHub Action and Docker paths archive media into the complete snapshot:
+WebP images/posters and WebM videos, named by post ID, scope, and original index.
+Successful slots are immutable and never downloaded again. Failed media retains
+its source URL without dropping the post; `state.json` manages retries and
+per-account collection progress. GitHub publishes only to `dist`; Docker writes
+only to its mounted `/data`. See [media and Docker operations](docs/media-and-docker.md)
+for deployment, configuration, failure handling, and verification commands.
+
+### Run with Docker
+
+Export `ACCOUNTS` and `SOURCES` in your shell before starting the container. Keep
+credentials in an ignored `.env.local` or your secret manager, never in command
+arguments or committed files. For a trusted, shell-compatible `.env.local`, load
+the values without printing them:
+
+```sh
+set -a
+. ./.env.local
+set +a
+```
+
+Then run:
+
+```sh
+mkdir -p ./social-media
+docker run -d \
+  --name social-media-subscriber \
+  --restart unless-stopped \
+  --platform linux/amd64 \
+  --env ACCOUNTS \
+  --env SOURCES \
+  --env PUID="$(id -u)" \
+  --env PGID="$(id -g)" \
+  --volume "$PWD/social-media:/data" \
+  --volume social-media-subscriber-state:/state \
+  controlnet/social-media-subscriber:latest
+```
+
+This starts collection immediately, then daily at **03:17 UTC**. It can incur
+provider charges. The example writes the public snapshot to `./social-media`;
+replace the host side of the `/data` mount with any directory your static server
+serves at `/social-media/`. The container working directory stays `/app`.
+The named `/state` volume stores private scheduler/recovery data; do not serve it
+publicly. `--env ACCOUNTS --env SOURCES` preserves multiline values, unlike
+Docker's line-oriented `--env-file` format.
+
+```sh
+docker logs --tail=50 social-media-subscriber
+docker exec social-media-subscriber python -m social_media_subscriber verify-snapshot /data
+```
+
+After the first completed collection, snapshot verification should exit `0`.
+For schedule settings, status inspection, and failed-media repair, see the
+[Docker operations guide](docs/media-and-docker.md).

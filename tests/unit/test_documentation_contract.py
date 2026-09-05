@@ -13,6 +13,20 @@ ALL_IDENTITY_DOCS: Final = f"{README}\n{ARCHITECTURE}\n{OPERATIONS}"
 NORMALIZED_IDENTITY_DOCS: Final = " ".join(ALL_IDENTITY_DOCS.replace("`", "").split())
 
 
+def test_readme_has_docker_run_example_with_persistent_volumes() -> None:
+    for command in (
+        "docker run -d",
+        "--env ACCOUNTS",
+        "--env SOURCES",
+        '--volume "$PWD/social-media:/data"',
+        "--volume social-media-subscriber-state:/state",
+        "controlnet/social-media-subscriber:latest",
+    ):
+        assert command in README
+    assert "provider charges" in README
+    assert "multiline values" in README
+
+
 def test_url_identity_docs_define_the_exact_persisted_identity() -> None:
     required_contract = (
         "profile_url is the only persisted Account identity",

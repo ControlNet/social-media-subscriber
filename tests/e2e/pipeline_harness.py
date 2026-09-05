@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Literal
+from unittest.mock import patch
 
 import anyio
 from anyio.lowlevel import checkpoint
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
 
     from social_media_subscriber.application.results import CollectionResult
     from social_media_subscriber.publishing.git import PublishResult
-    from social_media_subscriber.storage.snapshot import SnapshotSummary
+    from social_media_subscriber.storage.snapshot import SnapshotState, SnapshotSummary
     from tests.e2e.git_harness import CliResult
 
 _RUNNER: Final = CliRunner()
@@ -45,6 +46,18 @@ type ContainedScenario = Literal["success", "not-found"]
 
 async def _no_wait(_delay: float) -> None:
     await checkpoint()
+
+
+async def _isolated_archive(
+    state: SnapshotState,
+    directory: Path,
+    *,
+    refreshed_post_ids: frozenset[str] = frozenset(),  # pyright: ignore[reportCallInDefaultInitializer]
+) -> tuple[SnapshotState, int]:
+    """Synthetic provider scenarios leave media to dedicated archive tests."""
+    assert directory.is_absolute()
+    assert isinstance(refreshed_post_ids, frozenset)
+    return state, 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +73,11 @@ class E2eApplication:
                 sleeper=_no_wait,
             )
 
-        return anyio.run(collect_snapshot, request, build_client)
+        with patch(
+            "social_media_subscriber.application.collect.archive_media",
+            _isolated_archive,
+        ):
+            return anyio.run(collect_snapshot, request, build_client)
 
     def verify(self, snapshot: Path) -> SnapshotSummary:
         return self.delegate.verify(snapshot)
